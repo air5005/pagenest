@@ -20,6 +20,8 @@ object NativeLib {
 
     external fun loadMobi(context: Context, path: String): MetaInfo? // Array<String>?
 
+    external fun isMobiEncrypted(path: String): Boolean
+
     external fun loadEpub(context: Context, path: String): MetaInfo? // Array<String>?
 
     external fun loadFb2(context: Context, path: String): MetaInfo? // Array<String>?

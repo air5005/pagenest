@@ -8,6 +8,7 @@
 #include "util/crc_util.h"
 #include "util/log.h"
 #include "util/mobi_util.h"
+#include "libmobi/src/mobi.h"
 #include "util/app_ext.h"
 #include "util/epub_util.h"
 #include "util/fb2_util.h"
@@ -17,6 +18,32 @@
 std::shared_ptr<mobi_util> mobiutil = nullptr;
 std::shared_ptr<epub_util> epubutil = nullptr;
 std::shared_ptr<fb2_util> fb2util = nullptr;
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_wxn_mobi_inative_NativeLib_isMobiEncrypted(
+        JNIEnv *env,
+        jobject thiz,
+        jstring path) {
+    if (path == nullptr) {
+        jclass exceptionClass = env->FindClass("java/io/IOException");
+        env->ThrowNew(exceptionClass, "MOBI path is missing");
+        return JNI_FALSE;
+    }
+
+    const char *nativePath = env->GetStringUTFChars(path, nullptr);
+    if (nativePath == nullptr) {
+        return JNI_FALSE;
+    }
+    bool encrypted = false;
+    const MOBI_RET result = mobi_inspect_encrypted_file(nativePath, &encrypted);
+    env->ReleaseStringUTFChars(path, nativePath);
+    if (result != MOBI_SUCCESS) {
+        jclass exceptionClass = env->FindClass("java/io/IOException");
+        env->ThrowNew(exceptionClass, "MOBI protection metadata is unreadable");
+        return JNI_FALSE;
+    }
+    return encrypted ? JNI_TRUE : JNI_FALSE;
+}
 
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_wxn_mobi_inative_NativeLib_nativeFilesCrc(

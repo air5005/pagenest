@@ -44,8 +44,6 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         util/mobi/common.h
         util/mobi/mobimeta.c
         util/mobi/mobimeta.h
-        util/mobi/mobi_cover.c
-        util/mobi/mobi_cover.h
         util/mobi/save_epub.h
         util/mobi/save_epub.cpp
 

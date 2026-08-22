@@ -536,6 +536,7 @@ extern "C"
     MOBI_EXPORT bool mobi_exists_infl(const MOBIData *m);
     MOBI_EXPORT bool mobi_is_hybrid(const MOBIData *m);
     MOBI_EXPORT bool mobi_is_encrypted(const MOBIData *m);
+    MOBI_EXPORT MOBI_RET mobi_inspect_encrypted_file(const char *path, bool *encrypted);
     MOBI_EXPORT bool mobi_is_mobipocket(const MOBIData *m);
     MOBI_EXPORT bool mobi_is_dictionary(const MOBIData *m);
     MOBI_EXPORT bool mobi_is_kf8(const MOBIData *m);

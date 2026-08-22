@@ -537,18 +537,6 @@ int mobi_util::loadMobi(std::string fullpath,
     }
     isEncrypted = meta_isEncrypted;
 
-    auto now = std::chrono::system_clock::now();
-    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    char cover_path[4096];
-    char *targetPath = cover_path;
-    int ret = mobi_dump_cover(mobi_data, meta_title, app_ext::appFileDir.c_str(), &targetPath);
-    if (ret == SUCCESS) {
-        coverPath = targetPath;
-    }
-    auto now2 = std::chrono::system_clock::now();
-    auto timestamp2 = std::chrono::duration_cast<std::chrono::milliseconds>(now2.time_since_epoch()).count();
-    LOGD("%s: dump_cover path is [%s], use time : [%lld]ms ", __func__, coverPath.c_str(), timestamp2 - timestamp);
-
     if (meta_title) {
         free(meta_title);
     }
