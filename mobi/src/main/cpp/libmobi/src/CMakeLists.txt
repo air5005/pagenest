@@ -35,14 +35,14 @@ set(mobi_SOURCES
         write.h
 )
 
-#if(USE_ENCRYPTION)
+if(USE_ENCRYPTION)
 	list(APPEND mobi_SOURCES encryption.c
             encryption.h
             sha1.c
             sha1.h
             randombytes.c
             randombytes.h)
-#endif(USE_ENCRYPTION)
+endif(USE_ENCRYPTION)
 
 #if(USE_XMLWRITER)
 	list(APPEND mobi_SOURCES opf.c

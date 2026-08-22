@@ -541,7 +541,7 @@ int mobi_util::loadMobi(std::string fullpath,
     auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
     char cover_path[4096];
     char *targetPath = cover_path;
-    int ret = dump_cover2(mobi_data, meta_title, app_ext::appFileDir.c_str(), &targetPath);
+    int ret = mobi_dump_cover(mobi_data, meta_title, app_ext::appFileDir.c_str(), &targetPath);
     if (ret == SUCCESS) {
         coverPath = targetPath;
     }

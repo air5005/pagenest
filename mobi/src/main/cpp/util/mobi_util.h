@@ -10,7 +10,7 @@
 
 extern "C" {
 #include "mobi/common.h"
-#include "mobi/mobitool.h"
+#include "mobi/mobi_cover.h"
 
 #include "tidy.h"
 #include "tidybuffio.h"

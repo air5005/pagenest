@@ -14,6 +14,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -pthread")
 project("appmobi")
 
 add_subdirectory(unzip101e)
+set(USE_ENCRYPTION OFF CACHE BOOL "Enable encryption" FORCE)
 add_subdirectory(libmobi)
 add_subdirectory(cssparser)
 add_subdirectory(threadlibs)
@@ -43,10 +44,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         util/mobi/common.h
         util/mobi/mobimeta.c
         util/mobi/mobimeta.h
-        util/mobi/mobidrm.c
-        util/mobi/mobidrm.h
-        util/mobi/mobitool.c
-        util/mobi/mobitool.h
+        util/mobi/mobi_cover.c
+        util/mobi/mobi_cover.h
         util/mobi/save_epub.h
         util/mobi/save_epub.cpp
 

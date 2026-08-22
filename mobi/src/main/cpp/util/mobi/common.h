@@ -81,10 +81,6 @@ bool dir_exists(const char *path);
 void normalize_path(char *path);
 void print_summary(const MOBIData *m);
 void print_exth(const MOBIData *m);
-int set_decryption_key(MOBIData *m, const char *serial, const char *pid);
-int set_decryption_pid(MOBIData *m, const char *pid);
-int set_decryption_serial(MOBIData *m, const char *serial);
-int save_mobi(MOBIData *m, const char *fullpath, const char *suffix);
 
 #ifdef __cplusplus
 };

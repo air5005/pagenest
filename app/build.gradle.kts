@@ -194,8 +194,10 @@ dependencies {
 
     implementation(project(":bookparser"))
     implementation(project(":bookread"))
+    implementation(project(":mobi"))
     implementation(project(":base"))
     implementation(project(":text2speech"))
+    implementation(libs.pdfbox.android)
 
     testImplementation(libs.junit)
 }

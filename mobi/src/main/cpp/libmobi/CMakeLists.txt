@@ -23,7 +23,7 @@ set(PACKAGE_VERSION_MAJOR 0)
 set(PACKAGE_VERSION_MINOR 12)
 
 # Option to enable encryption
-option(USE_ENCRYPTION "Enable encryption" ON)
+option(USE_ENCRYPTION "Enable encryption" OFF)
 
 # Option to enable static tools compilation
 option(TOOLS_STATIC "Enable static tools compilation" OFF)
