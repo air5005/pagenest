@@ -352,6 +352,8 @@ class HomeViewModel
                 if (newBooks.isNotEmpty()) {        //有新增加的，则将新增加的加入到数据库中
                     _isAddingBooks.value = true
                     _importProgressState.value = ImportProgressState.InProgress(0, newBooks.size)
+                    val importMessages = mutableListOf<String>()
+                    var importedCount = 0
                     showSnackbar(
                         message = stringResource(R.string.adding_new_book_to_library)
                     )
@@ -362,27 +364,26 @@ class HomeViewModel
                         if (batchIndex > 0) delay(100)
 
                         batch.forEachIndexed { index, documentFile ->
-                            try {
-                                val totalProcessed = (batchIndex * 5) + index + 1
-                                _importProgressState.value =
-                                    ImportProgressState.InProgress(totalProcessed, newBooks.size)
+                            val totalProcessed = (batchIndex * 5) + index + 1
+                            _importProgressState.value =
+                                ImportProgressState.InProgress(totalProcessed, newBooks.size)
 
-                                // Update snackbar with progress
-                                showSnackbar(
-                                    message = stringResource(R.string.adding_books_num, totalProcessed, newBooks.size),
-                                    unlimited = true
-                                )
-                                importBook(documentFile.uri)
-                            } catch (cancellation: CancellationException) {
-                                throw cancellation
-                            } catch (e: Exception) {
-                                Logger.e("HomeViewModel::Error adding book: ${documentFile.name}, ${e.message}")
-                            }
+                            // Update snackbar with progress
+                            showSnackbar(
+                                message = stringResource(R.string.adding_books_num, totalProcessed, newBooks.size),
+                                unlimited = true
+                            )
+                            val request = importRequestFactory.create(documentFile.uri)
+                            val result = bookImportService.execute(request)
+                            importMessages += localizedImportResult(request.displayName, result)
+                            if (result is ImportResult.Imported) importedCount += 1
                         }
                     }
                     _importProgressState.value = ImportProgressState.Complete
                     showSnackbar(
-                        message = stringResource(R.string.added_books, newBooks.size)
+                        message = (importMessages + stringResource(R.string.added_books, importedCount))
+                            .joinToString("\n"),
+                        unlimited = importMessages.isNotEmpty(),
                     )
                     _isAddingBooks.value = false
                 }
@@ -584,11 +585,6 @@ class HomeViewModel
                 _isAddingBooks.value = false
             }
         }
-    }
-
-    private suspend fun importBook(uri: Uri): ImportResult {
-        val request = importRequestFactory.create(uri)
-        return bookImportService.execute(request)
     }
 
     private fun localizedImportResult(displayName: String, result: ImportResult): String =
