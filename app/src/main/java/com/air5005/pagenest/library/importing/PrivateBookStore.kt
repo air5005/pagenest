@@ -5,8 +5,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -46,13 +46,11 @@ class PrivateBookStore internal constructor(
 
             val sha256 = digest.digest().toHexString()
             val finalFile = File(root, "$sha256.${format.extension}")
-            val wasExisting = synchronized(PUBLISH_LOCK) {
-                if (finalFile.exists()) {
-                    true
-                } else {
-                    fileOperations.moveAtomically(part, finalFile)
-                    false
-                }
+            val wasExisting = try {
+                fileOperations.publishAtomically(part, finalFile)
+                false
+            } catch (_: FileAlreadyExistsException) {
+                true
             }
             return StoredBook(finalFile, sha256, wasExisting)
         } finally {
@@ -74,7 +72,6 @@ class PrivateBookStore internal constructor(
     private companion object {
         const val COPY_BUFFER_SIZE = 8 * 1024
         const val HEX_DIGITS = "0123456789abcdef"
-        val PUBLISH_LOCK = Any()
     }
 }
 
@@ -83,7 +80,7 @@ internal interface PrivateBookStoreFileOperations {
 
     fun openPart(file: File): DurableBookOutput
 
-    fun moveAtomically(source: File, target: File)
+    fun publishAtomically(source: File, target: File)
 }
 
 internal interface DurableBookOutput : Closeable {
@@ -104,8 +101,8 @@ internal object SystemPrivateBookStoreFileOperations : PrivateBookStoreFileOpera
 
     override fun openPart(file: File): DurableBookOutput = FileDurableBookOutput(file)
 
-    override fun moveAtomically(source: File, target: File) {
-        Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+    override fun publishAtomically(source: File, target: File) {
+        Files.createLink(target.toPath(), source.toPath())
     }
 }
 
