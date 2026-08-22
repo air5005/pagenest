@@ -6,6 +6,7 @@
 #define UREAD_ZIP_EXT_H
 
 #include <string>
+#include <cstddef>
 #include "../util/log.h"
 
 extern "C" {
@@ -23,7 +24,11 @@ public:
      */
     static std::vector<std::string> inner_zip_files(unzFile uf);
 
-    static int read_zip_file(unzFile uf, const std::string &filename, std::string &zip_file_data);
+    static int read_zip_file(
+            unzFile uf,
+            const std::string &filename,
+            std::string &zip_file_data,
+            size_t max_bytes = SIZE_MAX);
 
 /***
  * 将zip文件中的文件写入到目标文件中

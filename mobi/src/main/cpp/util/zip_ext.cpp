@@ -3,6 +3,9 @@
 //
 
 #include "zip_ext.h"
+#include "bounded_zip_reader.h"
+
+#include <cstdlib>
 
 std::vector<std::string> zip_ext::inner_zip_files(unzFile uf) {
     std::vector<std::string> ret;
@@ -10,7 +13,6 @@ std::vector<std::string> zip_ext::inner_zip_files(unzFile uf) {
     int err = unzGetGlobalInfo(uf, &gi);
     if (err != UNZ_OK || gi.number_entry <= 0) {
         LOGE("%s cannot get zip file info", __func__);
-        unzClose(uf);
         return ret;
     }
     int index = 0;
@@ -50,35 +52,23 @@ std::vector<std::string> zip_ext::inner_zip_files(unzFile uf) {
 }
 
 
-int zip_ext::read_zip_file(unzFile uf, const std::string &filename, std::string &zip_file_data) {
-    int ret = 0;
-    do {
-        int err = unzLocateFile(uf, filename.c_str(), 0);
-        if (err != UNZ_OK) {
-            LOGE("%s cannot find %s", __func__, filename.c_str());
-            ret = 0;
-            break;
-        }
-        err = unzOpenCurrentFile(uf);
-        if (err != UNZ_OK) {
-            LOGE("%s cannot open content.opf", __func__);
-            ret = 0;
-            break;
-        }
-
-        std::stringstream streambuffer;
-        char bufferRead[8192] = {0};
-        int read_bytes;
-        //将数据写出到文件中
-        while ((read_bytes = unzReadCurrentFile(uf, bufferRead, sizeof(bufferRead))) > 0) {
-            streambuffer.write(bufferRead, read_bytes);
-        }
-        //关闭输出文件，
-        unzCloseCurrentFile(uf);
-        zip_file_data = streambuffer.str();
-        ret  = 1;
-    } while(false);
-    return ret;
+int zip_ext::read_zip_file(
+        unzFile uf,
+        const std::string &filename,
+        std::string &zip_file_data,
+        size_t max_bytes) {
+    unsigned char *data = nullptr;
+    size_t data_size = 0;
+    zip_file_data.clear();
+    if (!bounded_zip_read_file(uf, filename.c_str(), max_bytes, &data, &data_size)) {
+        LOGE("%s cannot read %s", __func__, filename.c_str());
+        return 0;
+    }
+    if (data_size > 0) {
+        zip_file_data.assign(reinterpret_cast<const char *>(data), data_size);
+    }
+    std::free(data);
+    return 1;
 }
 
 /***

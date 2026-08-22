@@ -7,6 +7,7 @@ $clang = Join-Path $env:LOCALAPPDATA (
 )
 $outputDirectory = Join-Path $repoRoot 'mobi\build\native-tests'
 $outputLibrary = Join-Path $outputDirectory 'protection_test.dll'
+$archiveOwnerLibrary = Join-Path $outputDirectory 'zip_archive_owner_test.dll'
 $sourceDirectory = Join-Path $repoRoot 'mobi\src\main\cpp\libmobi\src'
 $toolchainDirectory = Split-Path $clang
 $testLinker = Join-Path $outputDirectory 'lld-link.exe'
@@ -39,6 +40,28 @@ if ($LASTEXITCODE -ne 0) {
     throw "Native protection test compilation failed with exit code $LASTEXITCODE"
 }
 
+$clangxx = Join-Path $toolchainDirectory 'clang++.exe'
+& $clangxx `
+    --target=x86_64-pc-windows-msvc `
+    -std=c++17 `
+    -fno-exceptions `
+    -fno-rtti `
+    -Wall `
+    -Wextra `
+    -Werror `
+    -mno-stack-arg-probe `
+    -nostdlib `
+    -shared `
+    -fuse-ld=lld `
+    '-Wl,/noentry' `
+    '-Wl,/export:run_zip_archive_owner_tests' `
+    -I (Join-Path $repoRoot 'mobi\src\main\cpp\util') `
+    (Join-Path $PSScriptRoot 'zip_archive_owner_test.cpp') `
+    -o $archiveOwnerLibrary
+if ($LASTEXITCODE -ne 0) {
+    throw "Native ZIP archive owner test compilation failed with exit code $LASTEXITCODE"
+}
+
 $escapedLibrary = $outputLibrary.Replace('\', '\\')
 Add-Type -TypeDefinition @"
 using System.Runtime.InteropServices;
@@ -48,6 +71,14 @@ public static class NativeProtectionTests {
 
     [DllImport("$escapedLibrary", CallingConvention = CallingConvention.Cdecl)]
     public static extern int run_safe_cover_tests();
+}
+"@
+$escapedArchiveOwnerLibrary = $archiveOwnerLibrary.Replace('\', '\\')
+Add-Type -TypeDefinition @"
+using System.Runtime.InteropServices;
+public static class NativeZipArchiveOwnerTests {
+    [DllImport("$escapedArchiveOwnerLibrary", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int run_zip_archive_owner_tests();
 }
 "@
 $failures = [NativeProtectionTests]::run_protection_tests()
@@ -60,3 +91,8 @@ if ($coverFailures -ne 0) {
     throw "$coverFailures native safe-cover fixture(s) failed"
 }
 Write-Output '9 native safe-cover fixtures passed'
+$archiveOwnerFailures = [NativeZipArchiveOwnerTests]::run_zip_archive_owner_tests()
+if ($archiveOwnerFailures -ne 0) {
+    throw "$archiveOwnerFailures native ZIP archive owner fixture(s) failed"
+}
+Write-Output '1 native ZIP archive owner fixture passed'

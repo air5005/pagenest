@@ -3,12 +3,11 @@
 //
 
 #include "epub_util.h"
-#include "safe_cover_writer.h"
+#include "publication_cover.h"
+#include "zip_archive_owner.h"
 #include <algorithm>
 
 namespace {
-
-constexpr size_t MAX_COVER_BYTES = 32 * 1024 * 1024;
 
 bool contains_token(const std::string &tokens, const std::string &expected) {
     std::istringstream stream(tokens);
@@ -314,18 +313,18 @@ int epub_util::load_epub(std::string fullpath,  //文件路径
                          bool &book_isEncrypted) {
     LOGI("%s:invoke", __func__);
 
-    unzFile uf = unzOpen(fullpath.c_str());
-    if (uf == nullptr) {
+    unzFile opened_archive = unzOpen(fullpath.c_str());
+    if (opened_archive == nullptr) {
         LOGE("%s cannot open file[%s]", __func__, fullpath.c_str());
         return 0;
     }
+    zip_archive_owner archive(opened_archive, unzClose);
+    unzFile uf = archive.get();
 
     unz_global_info gi; //获取zip文件中的条目数
     int err = unzGetGlobalInfo(uf, &gi);
     if (err != UNZ_OK) {
         LOGE("%s cannot get zip file info", __func__);
-        unzClose(uf);
-        uf = nullptr;
         return 0;
     }
 
@@ -432,30 +431,20 @@ int epub_util::load_epub(std::string fullpath,  //文件路径
             std::string cover_entry = resolved_epub_entry(content_path, cover_href);
             size_t exact_matches = static_cast<size_t>(std::count(
                     zipfiles.begin(), zipfiles.end(), cover_entry));
-            std::string cover_data;
-            if (!allowed_extension.empty() && !cover_entry.empty() && exact_matches == 1 &&
-                    zip_ext::read_zip_file(uf, cover_entry, cover_data) == 1 &&
-                    !cover_data.empty() && cover_data.size() <= MAX_COVER_BYTES) {
-                const auto *bytes = reinterpret_cast<const unsigned char *>(cover_data.data());
-                const char *detected_extension = safe_cover_extension_from_bytes(
-                        bytes,
-                        cover_data.size());
+            if (!allowed_extension.empty() && !cover_entry.empty() && exact_matches == 1) {
                 char output_path[4096];
-                if (detected_extension != nullptr && allowed_extension == detected_extension &&
-                        safe_cover_write_bytes(
-                                app_ext::appFileDir.c_str(),
-                                detected_extension,
-                                bytes,
-                                cover_data.size(),
-                                output_path,
-                                sizeof(output_path))) {
+                if (publication_cover_write_epub_entry(
+                        uf,
+                        cover_entry.c_str(),
+                        allowed_extension.c_str(),
+                        app_ext::appFileDir.c_str(),
+                        output_path,
+                        sizeof(output_path))) {
                     book_coverPath = output_path;
                 }
             }
         }
     }
-    unzClose(uf);
-
     LOGI("%s:invoke done", __func__);
     return 1;
 }

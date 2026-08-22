@@ -3,7 +3,7 @@
 //
 
 #include "mobi_util.h"
-#include "safe_cover_writer.h"
+#include "publication_cover.h"
 
 namespace {
 
@@ -559,15 +559,11 @@ int mobi_util::loadMobi(std::string fullpath,
     if (!meta_isEncrypted) {
         MOBIPdbRecord *cover_record = find_mobi_cover_record(mobi_data);
         if (cover_record != nullptr) {
-            const char *cover_extension = safe_cover_extension_from_bytes(
-                    cover_record->data,
-                    cover_record->size);
             char output_path[4096];
-            if (cover_extension != nullptr && safe_cover_write_bytes(
-                    app_ext::appFileDir.c_str(),
-                    cover_extension,
+            if (publication_cover_write_mobi_record(
                     cover_record->data,
                     cover_record->size,
+                    app_ext::appFileDir.c_str(),
                     output_path,
                     sizeof(output_path))) {
                 coverPath = output_path;
