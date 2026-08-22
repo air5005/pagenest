@@ -57,10 +57,15 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         util/zip_ext.h
         util/zip_ext.cpp
         util/zip_archive_owner.h
+        util/zip_archive_runner.h
         util/bounded_zip_reader.h
         util/bounded_zip_reader.c
         util/publication_cover.h
         util/publication_cover.c
+        util/epub_cover_selection.h
+        util/epub_cover_selection.cpp
+        util/mobi_cover_selection.h
+        util/mobi_cover_selection.c
         util/xml_ext.h
         util/xml_ext.cpp
         util/nav_point.h
