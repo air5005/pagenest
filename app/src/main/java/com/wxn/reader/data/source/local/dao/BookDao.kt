@@ -11,10 +11,13 @@ import androidx.room.Update
 import com.wxn.reader.data.dto.BookEntity
 import com.wxn.reader.data.dto.FileType
 import com.wxn.reader.data.dto.ReadingStatus
+import com.air5005.pagenest.library.importing.BookImportDataSource
+import com.air5005.pagenest.library.importing.BookImportDatabaseRow
+import com.air5005.pagenest.library.importing.BookImportDatabaseWrite
 import kotlinx.coroutines.flow.Flow
 
 @Dao
-interface BookDao {
+interface BookDao : BookImportDataSource {
     @Query("SELECT * FROM books WHERE deleted = 0")
     fun getAllBooks(): Flow<List<BookEntity>>
 
@@ -125,6 +128,26 @@ interface BookDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertBooks(books: List<BookEntity>)
+
+    @Query("SELECT id, uri FROM books WHERE sha256 = :sha256 LIMIT 1")
+    override suspend fun findImportBySha256(sha256: String): BookImportDatabaseRow?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertImportIgnoringConflict(book: BookEntity): Long
+
+    @Transaction
+    override suspend fun insertOrGetImport(entity: BookEntity): BookImportDatabaseWrite {
+        requireNotNull(entity.sha256) { "Imported books require a SHA-256 value" }
+        val insertedId = insertImportIgnoringConflict(entity)
+        val winner = checkNotNull(findImportBySha256(entity.sha256)) {
+            "INSERT IGNORE completed without a winning SHA-256 row"
+        }
+        return BookImportDatabaseWrite(
+            id = winner.id,
+            uri = winner.uri,
+            inserted = insertedId != -1L,
+        )
+    }
 
     @Transaction
     @Update

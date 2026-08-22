@@ -12,7 +12,10 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.wxn.bookparser.FileParser
 import com.wxn.base.bean.Book
-import com.wxn.bookparser.domain.file.CachedFileCompat
+import com.air5005.pagenest.library.importing.AndroidImportRequestFactory
+import com.air5005.pagenest.library.importing.BookImportService
+import com.air5005.pagenest.library.importing.ImportRejection
+import com.air5005.pagenest.library.importing.ImportResult
 import com.wxn.reader.R
 import com.wxn.reader.data.model.AppPreferences
 import com.wxn.reader.data.dto.FileType
@@ -39,7 +42,6 @@ import com.wxn.reader.presentation.home.states.ImportProgressState
 import com.wxn.reader.presentation.home.states.SnackbarState
 import com.wxn.reader.ui.theme.stringResource
 import com.wxn.base.util.Logger
-import com.wxn.base.util.retry
 import com.wxn.reader.util.PurchaseHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -54,9 +56,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.CancellationException
 import javax.inject.Inject
 import com.wxn.reader.domain.repository.PermissionRepository
 import com.wxn.reader.domain.use_case.books.GetBookByIdUseCase
@@ -84,6 +86,8 @@ class HomeViewModel
     private val appPreferencesUtil: AppPreferencesUtil,
     private val fileParser: FileParser,
     private val permissionRepository: PermissionRepository,
+    private val bookImportService: BookImportService,
+    private val importRequestFactory: AndroidImportRequestFactory,
     application: Application,
 ) : AndroidViewModel(application) {
 
@@ -325,8 +329,6 @@ class HomeViewModel
         }) {
             val start = System.currentTimeMillis()
             try {
-                //已经存到数据库中的书籍
-                val existingUris = getBookUrisUseCase().toSet()
                 val step1 = System.currentTimeMillis()
                 Logger.d("HomeViewModel::observeBooks::step1=${step1 - start}")
 
@@ -343,26 +345,9 @@ class HomeViewModel
                 //从文件列表中的文件去重复
                 val uniqueFiles = documentFiles.distinctBy { it.uri.toString() } //去重复
 
-                //不在数据库中，但是在用户的搜索目录中的文件，就是用户新增加的文件
-                val newBooks = uniqueFiles.filter { documentFile ->
-                    val bookUriString = documentFile.uri.toString()
-                        !existingUris.contains(bookUriString)            //不在数据库中
-                }
-
-                //当前目录中的文件对应的uri
-                val currentUris = uniqueFiles.map { it.uri.toString() }.toSet()
-
-                //将资产目录中的2个预置书籍放入到存储目录中
-                val assetBookUris = listOf("alice_in_wonderlands.epub").map {
-                    Uri.fromFile(copyAssetToInternalStorage(it)).toString()
-                }
-
-//                Logger.d("HomeViewModel::observeBooks::assetBookUris=${assetBookUris},existingUris=${existingUris}")
-                //在数据库中， 但是不在用户的扫描目录中的uri，则是用户已经删除掉了的书籍
-                val totalUris = hashSetOf<String>()
-                totalUris.addAll(currentUris)
-                totalUris.addAll(assetBookUris)
-                val deletedUris = existingUris.filter { it !in totalUris }
+                // Imported rows point at durable private files, so source URIs are not database keys.
+                // The SHA-256 catalog performs the authoritative duplicate check.
+                val newBooks = uniqueFiles
                 Logger.d("HomeViewModel::observeBooks::newBooks.size=${newBooks.size}")
                 if (newBooks.isNotEmpty()) {        //有新增加的，则将新增加的加入到数据库中
                     _isAddingBooks.value = true
@@ -387,8 +372,9 @@ class HomeViewModel
                                     message = stringResource(R.string.adding_books_num, totalProcessed, newBooks.size),
                                     unlimited = true
                                 )
-                                // Check if book already exists before adding
-                                addNewBook(documentFile)
+                                importBook(documentFile.uri)
+                            } catch (cancellation: CancellationException) {
+                                throw cancellation
                             } catch (e: Exception) {
                                 Logger.e("HomeViewModel::Error adding book: ${documentFile.name}, ${e.message}")
                             }
@@ -401,29 +387,10 @@ class HomeViewModel
                     _isAddingBooks.value = false
                 }
 
-                // Handle deleted books in batches
-                Logger.d("HomeViewModel::observeBooks::deletedUris.size=${deletedUris.size}")
-                if (deletedUris.isNotEmpty()) {
-                    showSnackbar(
-                        message = stringResource(R.string.remove_nums_books, deletedUris.size)
-                    )
-                    deletedUris.chunked(10).forEach { batch ->
-                        batch.forEach { bookUri ->
-                            try {
-                                deleteBookByUriUseCase(bookUri)
-                            } catch (e: Exception) {
-                                Logger.e("HomeViewModel::Error deleting book: $bookUri,${e.message}")
-                            }
-                        }
-                        delay(50)
-                    }
-                    showSnackbar(
-                        message = stringResource(R.string.remove_nums_books, deletedUris.size)
-                    )
-                }
-
                 val appPref = _appPreferences.value ?: return@launch
                 loadBooks(appPref)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
             } catch (e: Exception) {
                 _importProgressState.value = ImportProgressState.Error(e.message ?: "Unknown error occurred")
                 Logger.e("HomeViewModel::Error observing books:${e.message}")
@@ -598,29 +565,49 @@ class HomeViewModel
         _selectionMode.value = false
     }
 
-    private suspend fun addNewBook(documentFile: DocumentFile) {
-        withContext(Dispatchers.IO) {
+    fun importBooks(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _isAddingBooks.value = true
+            _importProgressState.value = ImportProgressState.InProgress(0, uris.size)
+            val messages = mutableListOf<String>()
             try {
-                val cachedFile = CachedFileCompat.fromUri(context,
-                    documentFile.uri, CachedFileCompat.build(
-                        name = documentFile.name,
-                        path = documentFile.uri.path,
-                        isDirectory = false
-                    ))
-                val book = fileParser.parse(cachedFile)
-                if (book != null) {
-                    retry {
-                        insertBookUseCase(book)
-                    }
-                } else {
-                    Logger.e("HomeViewModel::Error add book: ${documentFile.name}")
+                uris.forEachIndexed { index, uri ->
+                    val request = importRequestFactory.create(uri)
+                    val result = bookImportService.execute(request)
+                    messages += localizedImportResult(request.displayName, result)
+                    _importProgressState.value = ImportProgressState.InProgress(index + 1, uris.size)
                 }
-            } catch (e: Exception) {
-                Logger.e("HomeViewModel::Error adding book: ${documentFile.name}, ${e.message}")
-                throw e
+                _importProgressState.value = ImportProgressState.Complete
+                showSnackbar(messages.joinToString("\n"), unlimited = messages.size > 1)
+            } finally {
+                _isAddingBooks.value = false
             }
         }
     }
+
+    private suspend fun importBook(uri: Uri): ImportResult {
+        val request = importRequestFactory.create(uri)
+        return bookImportService.execute(request)
+    }
+
+    private fun localizedImportResult(displayName: String, result: ImportResult): String =
+        when (result) {
+            is ImportResult.Imported -> stringResource(
+                R.string.import_result_imported,
+                displayName.substringBeforeLast('.'),
+            )
+            is ImportResult.Duplicate -> stringResource(R.string.import_result_duplicate)
+            is ImportResult.Rejected -> when (result.reason) {
+                ImportRejection.PROTECTED -> stringResource(R.string.import_result_protected)
+                ImportRejection.UNSUPPORTED_FORMAT ->
+                    stringResource(R.string.import_result_unsupported)
+                ImportRejection.UNREADABLE -> stringResource(R.string.import_result_unreadable)
+                ImportRejection.PARSE_FAILED -> stringResource(R.string.import_result_parse_failed)
+                ImportRejection.STORAGE_FAILED ->
+                    stringResource(R.string.import_result_storage_failed)
+            }
+        }
 
     fun updateBook(updatedBook: Book, updatedReadingStatus: Boolean = false) {
         viewModelScope.launch {

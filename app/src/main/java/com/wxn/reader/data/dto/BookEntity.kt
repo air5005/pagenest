@@ -1,14 +1,19 @@
 package com.wxn.reader.data.dto
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "books")
+@Entity(
+    tableName = "books",
+    indices = [Index(value = ["sha256"], unique = true)],
+)
 data class BookEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,           //+
     val uri: String,            //+ filePath
     val fileType: String,
+    val sha256: String? = null,
 
     val title: String,          //+
     val authors: String,        //+    ->author

@@ -206,6 +206,10 @@ dependencies {
     implementation(libs.pdfbox.android)
 
     testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
 }
 
 val verifyPrivateBookStoreNativeValidation by tasks.registering(Exec::class) {

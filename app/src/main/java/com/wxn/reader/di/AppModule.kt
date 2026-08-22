@@ -3,6 +3,20 @@ package com.wxn.reader.di
 import android.app.Application
 import android.content.Context
 import androidx.room.Room
+import com.air5005.pagenest.library.importing.AndroidImportRequestFactory
+import com.air5005.pagenest.library.importing.BookImportCatalog
+import com.air5005.pagenest.library.importing.BookImportCoordinator
+import com.air5005.pagenest.library.importing.BookImportService
+import com.air5005.pagenest.library.importing.BookMetadataParser
+import com.air5005.pagenest.library.importing.BookProtectionInspector
+import com.air5005.pagenest.library.importing.HandyReaderBookMetadataParser
+import com.air5005.pagenest.library.importing.PersistentHashBookImportCoordinator
+import com.air5005.pagenest.library.importing.PrivateBookFileValidator
+import com.air5005.pagenest.library.importing.PrivateBookStore
+import com.air5005.pagenest.library.importing.ProductionBookProtectionProbes
+import com.air5005.pagenest.library.importing.RoomBookImportCatalog
+import com.air5005.pagenest.library.importing.TrustedRootPrivateBookFileValidator
+import com.wxn.bookparser.FileParser
 import com.wxn.bookparser.TextParser
 import com.wxn.bookread.data.source.local.ReadTipPreferencesUtil
 import com.wxn.bookread.data.source.local.ReaderPreferencesUtil
@@ -137,6 +151,7 @@ object AppModule {
     @Provides
     fun provideAppDatabase(@ApplicationContext context: Context): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
+            .addMigrations(AppDatabase.MIGRATION_1_2)
             .build()
     }
 
@@ -145,6 +160,72 @@ object AppModule {
     fun provideBookDao(appDatabase: AppDatabase): BookDao {
         return appDatabase.bookDao()
     }
+
+    @Provides
+    @Singleton
+    fun provideAndroidImportRequestFactory(
+        @ApplicationContext context: Context,
+    ): AndroidImportRequestFactory = AndroidImportRequestFactory(context)
+
+    @Provides
+    @Singleton
+    fun providePrivateBookStore(
+        @ApplicationContext context: Context,
+    ): PrivateBookStore = PrivateBookStore.inAppFiles(context)
+
+    @Provides
+    @Singleton
+    fun provideBookProtectionInspector(): BookProtectionInspector =
+        ProductionBookProtectionProbes.create()
+
+    @Provides
+    @Singleton
+    fun provideBookMetadataParser(
+        @ApplicationContext context: Context,
+        fileParser: FileParser,
+    ): BookMetadataParser = HandyReaderBookMetadataParser(context, fileParser)
+
+    @Provides
+    @Singleton
+    fun provideBookImportCatalog(
+        bookDao: BookDao,
+        bookMapper: BookMapper,
+    ): BookImportCatalog = RoomBookImportCatalog(bookDao, bookMapper)
+
+    @Provides
+    @Singleton
+    fun provideBookImportCoordinator(
+        @ApplicationContext context: Context,
+    ): BookImportCoordinator = PersistentHashBookImportCoordinator(
+        java.io.File(context.filesDir, "book-import-locks"),
+    )
+
+    @Provides
+    @Singleton
+    fun providePrivateBookFileValidator(
+        @ApplicationContext context: Context,
+    ): PrivateBookFileValidator = TrustedRootPrivateBookFileValidator(
+        context.filesDir,
+        "books",
+    )
+
+    @Provides
+    @Singleton
+    fun provideBookImportService(
+        privateBookStore: PrivateBookStore,
+        protectionInspector: BookProtectionInspector,
+        metadataParser: BookMetadataParser,
+        catalog: BookImportCatalog,
+        coordinator: BookImportCoordinator,
+        privateBookFileValidator: PrivateBookFileValidator,
+    ): BookImportService = BookImportService(
+        privateBookStore,
+        protectionInspector,
+        metadataParser,
+        catalog,
+        coordinator,
+        privateBookFileValidator,
+    )
 
 
     @Provides
