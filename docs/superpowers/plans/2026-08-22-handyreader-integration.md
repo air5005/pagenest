@@ -42,8 +42,9 @@ The snapshot introduces the upstream modules `app/`, `base/`, `bookparser/`, `bo
 - `BookProtectionInspector.kt`: format-independent protection verdict interface.
 - `DefaultBookProtectionInspector.kt`: EPUB/PDF/MOBI protection checks.
 - `PrivateBookStore.kt`: atomic copy, SHA-256 naming, duplicate detection, and cleanup.
-- `BookImportService.kt`: validate → inspect → copy → parse → persist orchestration.
-- `HandyReaderImportAdapters.kt`: adapters from the new boundary to `FileParser` and `InsertBookUseCase`.
+- `BookImportService.kt`: validate → copy → coordinate → inspect → parse → persist orchestration.
+- `BookImportCoordinator.kt`: injectable per-SHA critical section; Task 7 supplies the app-private cross-process OS-lock adapter.
+- `HandyReaderImportAdapters.kt`: adapters from the new boundary to `FileParser`, Room, and app-private file locking.
 - `ImportResult.kt`: stable success and rejection results used by UI.
 
 Tests mirror these files under `app/src/test/java/com/air5005/pagenest/library/importing/`. Build/provenance files stay at the root: `LICENSE`, `UPSTREAM.md`, `.gitignore`, `settings.gradle.kts`, `build.gradle.kts`, and `gradle/libs.versions.toml`.
@@ -419,15 +420,17 @@ git commit -m "feat: add atomic private book storage"
 
 **Files:**
 - Create: `app/src/main/java/com/air5005/pagenest/library/importing/ImportResult.kt`
+- Create: `app/src/main/java/com/air5005/pagenest/library/importing/BookImportCoordinator.kt`
 - Create: `app/src/main/java/com/air5005/pagenest/library/importing/BookImportService.kt`
 - Create: `app/src/test/java/com/air5005/pagenest/library/importing/BookImportServiceTest.kt`
 
 **Interfaces:**
-- Consumes: `SupportedBookFormat`, `BookProtectionInspector`, `PrivateBookStore`.
+- Consumes: `SupportedBookFormat`, `BookProtectionInspector`, `PrivateBookStore`, and `BookImportCoordinator`.
 - Produces: `BookImportService.execute(request: ImportRequest): ImportResult`.
 - Produces: `ImportRequest(displayName: String, openInput: () -> InputStream)`.
 - Produces: `BookMetadataParser.parse(file: File, format: SupportedBookFormat): Book?`.
-- Produces: `BookImportCatalog.findBySha256(sha256: String): Long?` and `insert(book: Book, sha256: String): Long`.
+- Produces: `BookImportCatalog.findBySha256(sha256: String): CatalogMatch?` and atomic `insertOrGet(book: Book, sha256: String): CatalogWriteResult`.
+- Produces: `CatalogMatch` and `CatalogWriteResult.Existing` with the canonical app-private file represented by the catalog row, so same-path concurrent imports cannot delete a published file.
 
 - [ ] **Step 1: Define failing orchestration tests**
 
@@ -452,8 +455,8 @@ fun interface BookMetadataParser {
 }
 
 interface BookImportCatalog {
-    suspend fun findBySha256(sha256: String): Long?
-    suspend fun insert(book: Book, sha256: String): Long
+    suspend fun findBySha256(sha256: String): CatalogMatch?
+    suspend fun insertOrGet(book: Book, sha256: String): CatalogWriteResult
 }
 ```
 
@@ -470,11 +473,12 @@ Expected: FAIL because orchestration types do not exist.
 Use this order without side effects before validation:
 
 ```text
-normalize format → open input → private atomic copy → protection inspection
-→ lookup SHA-256 → metadata parse → catalog insert → Imported(bookId)
+normalize format → open input → private atomic copy → acquire SHA lock
+→ revalidate private file → protection inspection → lookup SHA-256
+→ metadata parse → atomic catalog insert-or-get → Imported/Duplicate(bookId)
 ```
 
-If protection or parsing fails, remove only a newly created private copy. Never delete a pre-existing duplicate. Convert expected failures to `ImportResult`; let coroutine cancellation propagate.
+Keep protection, lookup, parsing, atomic catalog publication, and their cleanup inside the SHA critical section. If protection or parsing fails, remove only a newly created private copy. Never delete a pre-existing duplicate. When a catalog match points to the same normalized/canonical private path, preserve the shared file; when it points elsewhere, delete only this import's redundant new copy. Convert expected failures to `ImportResult`; let coroutine cancellation propagate.
 
 - [ ] **Step 4: Run GREEN and commit**
 
@@ -489,17 +493,22 @@ git commit -m "feat: orchestrate safe local book imports"
 **Files:**
 - Create: `app/src/main/java/com/air5005/pagenest/library/importing/HandyReaderImportAdapters.kt`
 - Create: `app/src/test/java/com/air5005/pagenest/library/importing/HandyReaderImportAdaptersTest.kt`
+- Modify: `app/src/main/java/com/wxn/reader/data/dto/BookEntity.kt`
+- Modify: `app/src/main/java/com/wxn/reader/data/source/local/AppDatabase.kt`
+- Modify: `app/src/main/java/com/wxn/reader/data/source/local/dao/BookDao.kt`
 - Modify: `app/src/main/java/com/wxn/reader/di/AppModule.kt`
 - Modify: `app/src/main/java/com/wxn/reader/presentation/home/HomeViewModel.kt`
 - Modify: `app/src/main/res/values/strings.xml`
 
 **Interfaces:**
-- Consumes: existing `FileParser`, `InsertBookUseCase`, `GetBookUrisUseCase`, and the Task 6 service.
+- Consumes: existing `FileParser`, Room `BookDao`/`AppDatabase`, `GetBookUrisUseCase`, and the Task 6 service.
 - Produces: `HomeViewModel.importBooks(uris: List<Uri>)` and localized import results.
+- Produces: a `BookImportCoordinator` combining an in-process mutex with an app-private per-SHA OS file lock.
+- Produces: a Room SHA-256 unique constraint plus transactional lookup/insert returning the generated row ID and canonical private file URI.
 
 - [ ] **Step 1: Write failing adapter tests**
 
-Verify the metadata adapter passes a `CachedFile` backed by the private file to `FileParser`, overwrites `Book.filePath` with `Uri.fromFile(privateFile).toString()`, and the catalog adapter returns the ID produced by `InsertBookUseCase`.
+Verify the metadata adapter passes a `CachedFile` backed by the private file to `FileParser` and overwrites `Book.filePath` with the private file URI. Verify the Room catalog adapter implements `findBySha256` and `insertOrGet` transactionally, returns the database-generated row ID plus the catalog row's canonical private file, and resolves SHA conflicts as `Existing`. Verify the production coordinator serializes the same SHA across service instances/processes with an app-private OS lock and propagates cancellation.
 
 - [ ] **Step 2: Run RED**
 
@@ -509,7 +518,7 @@ Verify the metadata adapter passes a `CachedFile` backed by the private file to 
 
 - [ ] **Step 3: Implement adapters and Hilt providers**
 
-Keep Android `ContentResolver` access in an `ImportRequest` adapter and keep the core service testable with `InputStream`. Provide the private root as `File(context.filesDir, "books")`. Do not request broad storage permissions.
+Keep Android `ContentResolver` access in an `ImportRequest` adapter and keep the core service testable with `InputStream`. Provide the private root as `File(context.filesDir, "books")` and lock files under a separate app-private directory. Add a unique indexed SHA-256 column to the Room schema and a migration; perform conflict lookup/insert in a transaction and use the actual generated primary key, never an inserted-count surrogate. Convert every catalog URI to a normalized/canonical app-private `File` before returning it. Do not request broad storage permissions.
 
 - [ ] **Step 4: Replace direct scan insertion with the service**
 

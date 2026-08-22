@@ -1,6 +1,7 @@
 package com.air5005.pagenest.library.importing
 
 import java.io.File
+import java.util.concurrent.CancellationException
 
 class DefaultBookProtectionInspector(
     private val mobiEncrypted: (File) -> Boolean,
@@ -19,6 +20,8 @@ class DefaultBookProtectionInspector(
         }
 
         if (protected) ProtectionVerdict.PROTECTED else ProtectionVerdict.CLEAR
+    } catch (cancellation: CancellationException) {
+        throw cancellation
     } catch (_: Exception) {
         ProtectionVerdict.UNREADABLE
     } catch (_: LinkageError) {

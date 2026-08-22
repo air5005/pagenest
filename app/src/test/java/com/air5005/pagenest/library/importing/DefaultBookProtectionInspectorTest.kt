@@ -1,7 +1,10 @@
 package com.air5005.pagenest.library.importing
 
 import java.io.File
+import java.util.concurrent.CancellationException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DefaultBookProtectionInspectorTest {
@@ -91,5 +94,21 @@ class DefaultBookProtectionInspectorTest {
             ProtectionVerdict.UNREADABLE,
             inspector.inspect(File("a.azw3"), SupportedBookFormat.AZW3),
         )
+    }
+
+    @Test
+    fun cancellationFromAProductionProtectionProbePropagates() {
+        val cancellation = CancellationException("cancel protection inspection")
+        val inspector = DefaultBookProtectionInspector(
+            mobiEncrypted = { throw cancellation },
+            pdfEncrypted = { false },
+            epubProtected = { false },
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            inspector.inspect(File("a.mobi"), SupportedBookFormat.MOBI)
+        }
+
+        assertTrue(thrown === cancellation)
     }
 }
