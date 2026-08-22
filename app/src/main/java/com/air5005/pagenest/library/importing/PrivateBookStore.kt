@@ -5,8 +5,10 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.nio.channels.FileChannel
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -15,6 +17,11 @@ data class StoredBook(
     val sha256: String,
     val wasExisting: Boolean,
 )
+
+class PublishedBookCleanupException(
+    val storedBook: StoredBook,
+    cause: Throwable,
+) : IOException("Book was published, but temporary cleanup was not durably synchronized", cause)
 
 class PrivateBookStore internal constructor(
     private val root: File,
@@ -29,7 +36,7 @@ class PrivateBookStore internal constructor(
         ensureRootDirectory()
 
         val part = fileOperations.createPart(root)
-        try {
+        val storedBook = try {
             val digest = MessageDigest.getInstance("SHA-256")
             fileOperations.openPart(part).use { output ->
                 val buffer = ByteArray(COPY_BUFFER_SIZE)
@@ -52,10 +59,27 @@ class PrivateBookStore internal constructor(
             } catch (_: FileAlreadyExistsException) {
                 true
             }
-            return StoredBook(finalFile, sha256, wasExisting)
-        } finally {
-            Files.deleteIfExists(part.toPath())
+            StoredBook(finalFile, sha256, wasExisting)
+        } catch (failure: Throwable) {
+            try {
+                Files.deleteIfExists(part.toPath())
+            } catch (cleanupFailure: Throwable) {
+                failure.addSuppressed(cleanupFailure)
+            }
+            throw failure
         }
+
+        if (!storedBook.wasExisting) {
+            fileOperations.syncDirectory(root)
+        }
+
+        try {
+            Files.delete(part.toPath())
+            fileOperations.syncDirectory(root)
+        } catch (cleanupFailure: Throwable) {
+            throw PublishedBookCleanupException(storedBook, cleanupFailure)
+        }
+        return storedBook
     }
 
     private fun ensureRootDirectory() {
@@ -81,6 +105,8 @@ internal interface PrivateBookStoreFileOperations {
     fun openPart(file: File): DurableBookOutput
 
     fun publishAtomically(source: File, target: File)
+
+    fun syncDirectory(directory: File)
 }
 
 internal interface DurableBookOutput : Closeable {
@@ -104,6 +130,15 @@ internal object SystemPrivateBookStoreFileOperations : PrivateBookStoreFileOpera
     override fun publishAtomically(source: File, target: File) {
         Files.createLink(target.toPath(), source.toPath())
     }
+
+    override fun syncDirectory(directory: File) {
+        if (File.separatorChar == WINDOWS_SEPARATOR) return
+        FileChannel.open(directory.toPath(), StandardOpenOption.READ).use { channel ->
+            channel.force(true)
+        }
+    }
+
+    private const val WINDOWS_SEPARATOR = '\\'
 }
 
 private class FileDurableBookOutput(file: File) : DurableBookOutput {

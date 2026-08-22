@@ -138,7 +138,7 @@ class PrivateBookStoreTest {
     }
 
     @Test
-    fun flushesAndSyncsPartBeforeAtomicPublication() {
+    fun syncsFileAndDirectoryEntriesInDurableOrder() {
         val root = temporaryFolder.newFolder("books")
         val events = mutableListOf<String>()
         val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
@@ -151,7 +151,7 @@ class PrivateBookStoreTest {
                     }
 
                     override fun sync() {
-                        events += "sync"
+                        events += "fileSync"
                         delegate.sync()
                     }
 
@@ -163,14 +163,78 @@ class PrivateBookStoreTest {
             }
 
             override fun publishAtomically(source: File, target: File) {
-                events += "publish"
                 SystemPrivateBookStoreFileOperations.publishAtomically(source, target)
+                events += "publish"
+            }
+
+            override fun syncDirectory(directory: File) {
+                val files = directory.listFiles()!!
+                events += "directorySync(parts=${files.count { it.name.endsWith(".part") }}," +
+                    "finals=${files.count { !it.name.endsWith(".part") }})"
             }
         }
 
         PrivateBookStore(root, operations).store("hello".byteInputStream(), "book.epub")
 
-        assertEquals(listOf("flush", "sync", "close", "publish"), events)
+        assertEquals(
+            listOf(
+                "flush",
+                "fileSync",
+                "close",
+                "publish",
+                "directorySync(parts=1,finals=1)",
+                "directorySync(parts=0,finals=1)",
+            ),
+            events,
+        )
+    }
+
+    @Test
+    fun publicationDirectorySyncFailureKeepsFinalAndRecoverablePart() {
+        val root = temporaryFolder.newFolder("books")
+        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun syncDirectory(directory: File) {
+                throw IOException("publication directory sync failed")
+            }
+        }
+
+        val failure = assertThrows(IOException::class.java) {
+            PrivateBookStore(root, operations).store("hello".byteInputStream(), "book.epub")
+        }
+
+        assertEquals(IOException::class.java, failure.javaClass)
+        assertEquals("publication directory sync failed", failure.message)
+        val files = root.listFiles()!!
+        assertEquals(2, files.size)
+        assertEquals(1, files.count { it.name.endsWith(".part") })
+        assertEquals(1, files.count { it.name.endsWith(".epub") })
+        files.forEach { file -> assertArrayEquals("hello".toByteArray(), file.readBytes()) }
+    }
+
+    @Test
+    fun cleanupDirectorySyncFailureReportsAlreadyPublishedBook() {
+        val root = temporaryFolder.newFolder("books")
+        var directorySyncs = 0
+        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun syncDirectory(directory: File) {
+                directorySyncs += 1
+                if (directorySyncs == 2) throw IOException("cleanup directory sync failed")
+            }
+        }
+
+        val failure = assertThrows(PublishedBookCleanupException::class.java) {
+            PrivateBookStore(root, operations).store("hello".byteInputStream(), "book.epub")
+        }
+
+        assertEquals("cleanup directory sync failed", failure.cause?.message)
+        assertFalse(failure.storedBook.wasExisting)
+        assertEquals(
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824.epub",
+            failure.storedBook.file.name,
+        )
+        assertArrayEquals("hello".toByteArray(), failure.storedBook.file.readBytes())
+        assertEquals(1, root.listFiles()!!.size)
+        assertTrue(root.listFiles()!!.none { it.name.endsWith(".part") })
     }
 
     @Test
