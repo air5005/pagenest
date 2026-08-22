@@ -2,12 +2,14 @@ package com.air5005.pagenest.library.importing
 
 import java.io.Closeable
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.nio.channels.FileChannel
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.util.UUID
@@ -57,24 +59,21 @@ class PrivateBookStore internal constructor(
                 fileOperations.publishAtomically(part, finalFile)
                 false
             } catch (_: FileAlreadyExistsException) {
+                validateExistingBook(finalFile, sha256)
                 true
             }
             StoredBook(finalFile, sha256, wasExisting)
         } catch (failure: Throwable) {
-            try {
-                Files.deleteIfExists(part.toPath())
-            } catch (cleanupFailure: Throwable) {
-                failure.addSuppressed(cleanupFailure)
-            }
+            cleanupUnpublishedPart(part, failure)
             throw failure
         }
 
-        if (!storedBook.wasExisting) {
-            fileOperations.syncDirectory(root)
-        }
+        fileOperations.syncDirectory(root)
 
         try {
-            Files.delete(part.toPath())
+            if (!fileOperations.deletePart(part)) {
+                throw IOException("Temporary book part disappeared before cleanup")
+            }
             fileOperations.syncDirectory(root)
         } catch (cleanupFailure: Throwable) {
             throw PublishedBookCleanupException(storedBook, cleanupFailure)
@@ -83,8 +82,64 @@ class PrivateBookStore internal constructor(
     }
 
     private fun ensureRootDirectory() {
-        if (!root.isDirectory && !root.mkdirs() && !root.isDirectory) {
-            throw IOException("Could not create private book directory: $root")
+        val directory = root.absoluteFile
+        if (!createDirectoryTreeDurably(directory)) {
+            val parent = directory.parentFile
+                ?: throw IOException("Private book directory must have a parent: $directory")
+            fileOperations.syncDirectory(parent)
+        }
+    }
+
+    private fun createDirectoryTreeDurably(directory: File): Boolean {
+        val path = directory.toPath()
+        if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) return false
+        if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw IOException("Private book path is not a directory: $directory")
+        }
+
+        val parent = directory.parentFile
+            ?: throw IOException("Private book directory must have a parent: $directory")
+        if (!Files.isDirectory(parent.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+            createDirectoryTreeDurably(parent)
+        }
+
+        Files.createDirectory(path)
+        try {
+            fileOperations.syncDirectory(parent)
+        } catch (failure: Throwable) {
+            try {
+                if (Files.deleteIfExists(path)) fileOperations.syncDirectory(parent)
+            } catch (rollbackFailure: Throwable) {
+                failure.addSuppressed(rollbackFailure)
+            }
+            throw failure
+        }
+        return true
+    }
+
+    private fun validateExistingBook(file: File, expectedSha256: String) {
+        if (!Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+            throw IOException("Existing book target is not a regular file")
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buffer = ByteArray(COPY_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        if (digest.digest().toHexString() != expectedSha256) {
+            throw IOException("Existing book does not match its SHA-256 file name")
+        }
+    }
+
+    private fun cleanupUnpublishedPart(part: File, failure: Throwable) {
+        try {
+            if (fileOperations.deletePart(part)) fileOperations.syncDirectory(root)
+        } catch (cleanupFailure: Throwable) {
+            failure.addSuppressed(cleanupFailure)
         }
     }
 
@@ -107,6 +162,8 @@ internal interface PrivateBookStoreFileOperations {
     fun publishAtomically(source: File, target: File)
 
     fun syncDirectory(directory: File)
+
+    fun deletePart(file: File): Boolean
 }
 
 internal interface DurableBookOutput : Closeable {
@@ -137,6 +194,8 @@ internal object SystemPrivateBookStoreFileOperations : PrivateBookStoreFileOpera
             channel.force(true)
         }
     }
+
+    override fun deletePart(file: File): Boolean = Files.deleteIfExists(file.toPath())
 
     private const val WINDOWS_SEPARATOR = '\\'
 }
