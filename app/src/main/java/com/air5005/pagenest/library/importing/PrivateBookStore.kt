@@ -33,6 +33,9 @@ class PublishedBookCleanupException(
     cause: Throwable,
 ) : IOException("Book was published, but temporary cleanup was not durably synchronized", cause)
 
+private class PublishedEntryCleanupException(cause: Throwable) :
+    IOException("Book entry was published, but publication cleanup failed", cause)
+
 class PrivateBookStore private constructor(
     private val rootLocation: PrivateBookStoreRootLocation,
     private val fileOperations: PrivateBookStoreFileOperations,
@@ -118,6 +121,11 @@ class PrivateBookStore private constructor(
             val wasExisting = try {
                 rootHandle.publishAtomically(part, finalFile)
                 false
+            } catch (failure: PublishedEntryCleanupException) {
+                throw PublishedBookCleanupException(
+                    StoredBook(finalFile, sha256, wasExisting = false),
+                    failure,
+                )
             } catch (_: FileAlreadyExistsException) {
                 validateExistingBook(finalFile, sha256, copiedSize, rootHandle)
                 true
@@ -128,7 +136,9 @@ class PrivateBookStore private constructor(
             throw failure
         }
 
-        rootHandle.syncDirectory()
+        if (storedBook.wasExisting || !rootHandle.winnerPublicationIsDurablySynced()) {
+            rootHandle.syncDirectory()
+        }
 
         try {
             if (!rootHandle.cleanupPartDurably(part)) {
@@ -162,27 +172,14 @@ class PrivateBookStore private constructor(
             createDirectoryTreeDurably(parent)
         }
 
-        var createdByThisStore = false
         try {
             fileOperations.createDirectory(directory)
-            createdByThisStore = true
         } catch (failure: FileAlreadyExistsException) {
             if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
                 throw IOException("Private book path is not a directory: $directory", failure)
             }
         }
-        try {
-            fileOperations.syncDirectory(parent)
-        } catch (failure: Throwable) {
-            if (createdByThisStore) {
-                try {
-                    if (Files.deleteIfExists(path)) fileOperations.syncDirectory(parent)
-                } catch (rollbackFailure: Throwable) {
-                    failure.addSuppressed(rollbackFailure)
-                }
-            }
-            throw failure
-        }
+        fileOperations.syncDirectory(parent)
         return true
     }
 
@@ -299,6 +296,10 @@ internal interface PrivateBookStoreFileOperations {
     fun deletePart(file: File): Boolean
 
     fun readJvmAttributes(file: File): BasicFileAttributes
+
+    fun readJvmUnixState(file: File): JvmUnixFileState?
+
+    fun digestJvmFile(file: File): String
 }
 
 internal interface PrivateBookStoreRootHandle : Closeable {
@@ -317,6 +318,8 @@ internal interface PrivateBookStoreRootHandle : Closeable {
     fun deletePart(file: File): Boolean
 
     fun cleanupPartDurably(file: File): Boolean
+
+    fun winnerPublicationIsDurablySynced(): Boolean = false
 }
 
 internal interface DurableBookOutput : Closeable {
@@ -344,28 +347,43 @@ internal data class ExistingBookFileState(
     val changedSeconds: Long?,
     val changedNanoseconds: Long?,
     val fileKey: Any?,
+    val contentDigest: String?,
 ) {
-    fun matches(attributes: BasicFileAttributes): Boolean {
+    fun matches(
+        attributes: BasicFileAttributes,
+        unixState: JvmUnixFileState?,
+        digest: String,
+    ): Boolean {
         val modified = attributes.lastModifiedTime().toInstant()
         return attributes.isRegularFile &&
             attributes.size() == size &&
             modified.epochSecond == modifiedSeconds &&
             modified.nano.toLong() == modifiedNanoseconds &&
-            fileKey != null && attributes.fileKey() == fileKey
+            fileKey != null && attributes.fileKey() == fileKey &&
+            contentDigest != null && digest == contentDigest &&
+            (device == null || unixState?.device == device) &&
+            (inode == null || unixState?.inode == inode) &&
+            (changedSeconds == null || unixState?.changedSeconds == changedSeconds) &&
+            (changedNanoseconds == null || unixState?.changedNanoseconds == changedNanoseconds)
     }
 
     companion object {
-        fun from(attributes: BasicFileAttributes): ExistingBookFileState {
+        fun from(
+            attributes: BasicFileAttributes,
+            unixState: JvmUnixFileState,
+            contentDigest: String,
+        ): ExistingBookFileState {
             val modified = attributes.lastModifiedTime().toInstant()
             return ExistingBookFileState(
-                device = null,
-                inode = null,
+                device = unixState.device,
+                inode = unixState.inode,
                 size = attributes.size(),
                 modifiedSeconds = modified.epochSecond,
                 modifiedNanoseconds = modified.nano.toLong(),
-                changedSeconds = null,
-                changedNanoseconds = null,
+                changedSeconds = unixState.changedSeconds,
+                changedNanoseconds = unixState.changedNanoseconds,
                 fileKey = attributes.fileKey(),
+                contentDigest = contentDigest,
             )
         }
 
@@ -379,6 +397,7 @@ internal data class ExistingBookFileState(
                 changedSeconds = stat.st_ctim.tv_sec,
                 changedNanoseconds = stat.st_ctim.tv_nsec,
                 fileKey = null,
+                contentDigest = null,
             )
     }
 }
@@ -447,6 +466,12 @@ internal object SystemPrivateBookStoreFileOperations : PrivateBookStoreFileOpera
     override fun readJvmAttributes(file: File): BasicFileAttributes =
         SystemJvmExistingBookFileOperations.readAttributes(file.toPath())
 
+    override fun readJvmUnixState(file: File): JvmUnixFileState? =
+        SystemJvmExistingBookFileOperations.readUnixState(file.toPath())
+
+    override fun digestJvmFile(file: File): String =
+        SystemJvmExistingBookFileOperations.digestPath(file.toPath())
+
     internal fun isAndroidRuntime(): Boolean =
         System.getProperty("java.vm.name") == "Dalvik" ||
             System.getProperty("java.runtime.name") == "Android Runtime"
@@ -478,7 +503,10 @@ private class JvmPrivateBookStoreRootHandle private constructor(
     override fun verifyExistingBook(file: File, state: ExistingBookFileState) {
         verifyIdentity()
         val attributes = operations.readJvmAttributes(file)
-        if (!state.matches(attributes)) {
+        val unixState = operations.readJvmUnixState(file)
+            ?: throw IOException("Filesystem does not expose Unix file state")
+        val digest = operations.digestJvmFile(file)
+        if (!state.matches(attributes, unixState, digest)) {
             throw IOException("Existing book target changed during validation")
         }
         verifyIdentity()
@@ -534,28 +562,26 @@ internal interface JvmExistingBookFileOperations {
     fun openChannel(path: java.nio.file.Path): FileChannel
 
     fun openVerificationChannel(path: java.nio.file.Path): FileChannel
+
+    fun readUnixState(path: java.nio.file.Path): JvmUnixFileState?
+
+    fun digestPath(path: java.nio.file.Path): String
 }
+
+internal data class JvmUnixFileState(
+    val device: Long,
+    val inode: Long,
+    val changedSeconds: Long,
+    val changedNanoseconds: Long,
+)
 
 internal object SystemJvmExistingBookFileOperations : JvmExistingBookFileOperations {
     override fun readAttributes(path: java.nio.file.Path): BasicFileAttributes {
-        val attributes = Files.readAttributes(
+        return Files.readAttributes(
             path,
             BasicFileAttributes::class.java,
             LinkOption.NOFOLLOW_LINKS,
         )
-        if (attributes.fileKey() != null) return attributes
-        val created = attributes.creationTime().toInstant()
-        val contentDigest = if (attributes.isRegularFile) digestPath(path) else null
-        val strongIdentity = ContentBoundJvmFileIdentity(
-            attributes.isDirectory,
-            created.epochSecond,
-            created.nano,
-            if (attributes.isDirectory) 0L else attributes.size(),
-            contentDigest,
-        )
-        return object : BasicFileAttributes by attributes {
-            override fun fileKey(): Any = strongIdentity
-        }
     }
 
     override fun openChannel(path: java.nio.file.Path): FileChannel =
@@ -564,7 +590,27 @@ internal object SystemJvmExistingBookFileOperations : JvmExistingBookFileOperati
     override fun openVerificationChannel(path: java.nio.file.Path): FileChannel =
         FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)
 
-    private fun digestPath(path: java.nio.file.Path): String =
+    override fun readUnixState(path: java.nio.file.Path): JvmUnixFileState? {
+        val values = try {
+            Files.readAttributes(
+                path,
+                "unix:dev,ino,ctime",
+                LinkOption.NOFOLLOW_LINKS,
+            )
+        } catch (_: UnsupportedOperationException) {
+            return null
+        }
+        val changed = (values["ctime"] as? java.nio.file.attribute.FileTime)?.toInstant()
+            ?: return null
+        return JvmUnixFileState(
+            device = (values["dev"] as? Number)?.toLong() ?: return null,
+            inode = (values["ino"] as? Number)?.toLong() ?: return null,
+            changedSeconds = changed.epochSecond,
+            changedNanoseconds = changed.nano.toLong(),
+        )
+    }
+
+    override fun digestPath(path: java.nio.file.Path): String =
         openVerificationChannel(path).use { channel ->
             val digest = MessageDigest.getInstance("SHA-256")
             val buffer = ByteBuffer.allocate(8 * 1024)
@@ -578,20 +624,14 @@ internal object SystemJvmExistingBookFileOperations : JvmExistingBookFileOperati
         }
 }
 
-private data class ContentBoundJvmFileIdentity(
-    val directory: Boolean,
-    val createdSeconds: Long,
-    val createdNanoseconds: Int,
-    val size: Long,
-    val contentDigest: String?,
-)
-
 internal class JvmExistingBookInput private constructor(
     private val channel: FileChannel,
     private val path: java.nio.file.Path,
     private val identity: JvmFileIdentity,
     private val initialLastModifiedSeconds: Long,
     private val initialLastModifiedNanoseconds: Int,
+    private val initialUnixState: JvmUnixFileState,
+    private val initialDigest: String,
     private val fileOperations: JvmExistingBookFileOperations,
 ) : ExistingBookInput {
     private val input = Channels.newInputStream(channel)
@@ -603,17 +643,24 @@ internal class JvmExistingBookInput private constructor(
 
     override fun verifiedStateAfterHash(): ExistingBookFileState {
         val current = fileOperations.readAttributes(path)
+        val currentUnix = fileOperations.readUnixState(path)
+            ?: throw IOException("Filesystem does not expose Unix file state")
         val currentModified = current.lastModifiedTime().toInstant()
+        val openedDigest = digest(channel)
+        val pathDigest = fileOperations.digestPath(path)
         if (channel.size() != size ||
             !current.isRegularFile ||
             current.size() != size ||
             currentModified.epochSecond != initialLastModifiedSeconds ||
             currentModified.nano != initialLastModifiedNanoseconds ||
-            !identity.matches(current)
+            !identity.matches(current) ||
+            currentUnix != initialUnixState ||
+            openedDigest != initialDigest ||
+            pathDigest != initialDigest
         ) {
             throw IOException("Existing book target changed during validation")
         }
-        return ExistingBookFileState.from(current)
+        return ExistingBookFileState.from(current, currentUnix, pathDigest)
     }
 
     override fun close() {
@@ -630,6 +677,9 @@ internal class JvmExistingBookInput private constructor(
             if (!beforeOpen.isRegularFile) {
                 throw IOException("Existing book target is not a regular file")
             }
+            val identity = JvmFileIdentity.from(beforeOpen)
+            val beforeUnix = fileOperations.readUnixState(path)
+                ?: throw IOException("Filesystem does not expose Unix file state")
             val channel = try {
                 fileOperations.openChannel(path)
             } catch (failure: Throwable) {
@@ -640,24 +690,30 @@ internal class JvmExistingBookInput private constructor(
             }
             try {
                 val attributes = fileOperations.readAttributes(path)
+                val afterOpenUnix = fileOperations.readUnixState(path)
+                    ?: throw IOException("Filesystem does not expose Unix file state")
                 if (!attributes.isRegularFile) {
                     throw IOException("Existing book target is not a regular file")
                 }
-                val identity = JvmFileIdentity.from(beforeOpen)
                 if (!identity.matches(attributes) ||
                     beforeOpen.size() != channel.size() ||
                     attributes.size() != channel.size() ||
-                    beforeOpen.lastModifiedTime() != attributes.lastModifiedTime()
+                    beforeOpen.lastModifiedTime() != attributes.lastModifiedTime() ||
+                    beforeUnix != afterOpenUnix
                 ) {
                     throw IOException("Existing book target changed while it was opened")
                 }
                 val openedDigest = digest(channel)
-                val pathDigest = fileOperations.openVerificationChannel(path).use(::digest)
+                val pathDigest = fileOperations.digestPath(path)
                 val afterDigest = fileOperations.readAttributes(path)
+                val afterDigestUnix = fileOperations.readUnixState(path)
+                    ?: throw IOException("Filesystem does not expose Unix file state")
                 if (!identity.matches(afterDigest) ||
                     !afterDigest.isRegularFile ||
                     afterDigest.size() != channel.size() ||
-                    openedDigest != pathDigest
+                    afterDigest.lastModifiedTime() != beforeOpen.lastModifiedTime() ||
+                    openedDigest != pathDigest ||
+                    afterDigestUnix != beforeUnix
                 ) {
                     throw IOException("Existing book channel does not match its directory entry")
                 }
@@ -669,6 +725,8 @@ internal class JvmExistingBookInput private constructor(
                     identity,
                     modified.epochSecond,
                     modified.nano,
+                    afterDigestUnix,
+                    openedDigest,
                     fileOperations,
                 )
             } catch (failure: Throwable) {
@@ -716,13 +774,32 @@ private data class JvmFileIdentity(
     }
 }
 
+internal fun cleanupFailedOwnedPart(
+    primary: Throwable,
+    unlinkAndSync: () -> Unit,
+    close: () -> Unit,
+) {
+    try {
+        unlinkAndSync()
+    } catch (cleanupFailure: Throwable) {
+        primary.addSuppressed(cleanupFailure)
+    }
+    try {
+        close()
+    } catch (closeFailure: Throwable) {
+        primary.addSuppressed(closeFailure)
+    }
+}
+
 private class AndroidPrivateBookStoreRootHandle private constructor(
     private val root: File,
     private val parentDescriptor: Int,
     private val rootName: String,
     private val rootDescriptor: Int,
+    private val publishLockDescriptor: Int,
 ) : PrivateBookStoreRootHandle {
     private val ownedParts = mutableMapOf<String, ParcelFileDescriptor>()
+    private val publishedParts = mutableSetOf<String>()
 
     override fun createPart(): File {
         verifyRoot()
@@ -737,17 +814,32 @@ private class AndroidPrivateBookStoreRootHandle private constructor(
                         verifyRoot()
                     } catch (failure: Throwable) {
                         ownedParts.remove(name)
-                        try {
-                            parcel.close()
-                        } catch (closeFailure: Throwable) {
-                            failure.addSuppressed(closeFailure)
-                        }
-                        val unlinkResult = AndroidPrivateBookStoreNative.unlink(rootDescriptor, name)
-                        if (unlinkResult < 0) {
-                            failure.addSuppressed(
-                                nativeIOException("delete failed temporary book setup", -unlinkResult),
-                            )
-                        }
+                        cleanupFailedOwnedPart(
+                            failure,
+                            unlinkAndSync = {
+                                val unlinkResult =
+                                    AndroidPrivateBookStoreNative.unlink(rootDescriptor, name)
+                                if (unlinkResult < 0) {
+                                    throw nativeIOException(
+                                        "delete failed temporary book setup",
+                                        -unlinkResult,
+                                    )
+                                }
+                                if (unlinkResult != 1) {
+                                    throw IOException(
+                                        "Owned temporary book disappeared during setup cleanup",
+                                    )
+                                }
+                                val syncErrno = AndroidPrivateBookStoreNative.sync(rootDescriptor)
+                                if (syncErrno != 0) {
+                                    throw nativeIOException(
+                                        "sync private book directory after setup cleanup",
+                                        syncErrno,
+                                    )
+                                }
+                            },
+                            close = parcel::close,
+                        )
                         throw failure
                     }
                     return File(root, name)
@@ -771,15 +863,42 @@ private class AndroidPrivateBookStoreRootHandle private constructor(
         val sourceName = entryName(source)
         val sourceDescriptor = ownedParts[sourceName]
             ?: throw IOException("Temporary book is not owned by this root handle")
-        val errno = AndroidPrivateBookStoreNative.linkOpenedFile(
-            sourceDescriptor.fd,
+        val nativeResult = AndroidPrivateBookStoreNative.publishNoReplace(
             rootDescriptor,
+            publishLockDescriptor,
+            sourceDescriptor.fd,
+            sourceName,
             entryName(target),
         )
-        if (errno == OsConstants.EEXIST) throw FileAlreadyExistsException(target.absolutePath)
-        if (errno != 0) throw nativeIOException("publish book without replacement", errno)
-        verifyRoot()
+        val operationErrno = (nativeResult and PUBLISH_ERRNO_MASK).toInt()
+        val published = nativeResult and PUBLISH_RESULT_PUBLISHED != 0L
+        val unlockErrno = (nativeResult ushr 32).toInt()
+        if (published) publishedParts += sourceName
+        if (operationErrno == OsConstants.EEXIST && unlockErrno == 0) {
+            throw FileAlreadyExistsException(target.absolutePath)
+        }
+        var failure: IOException? = if (operationErrno != 0) {
+            nativeIOException("publish book without replacement", operationErrno)
+        } else {
+            null
+        }
+        if (unlockErrno != 0) {
+            val unlockFailure = nativeIOException("release private book publication lock", unlockErrno)
+            if (failure == null) failure = unlockFailure else failure.addSuppressed(unlockFailure)
+        }
+        if (failure != null) {
+            if (published) throw PublishedEntryCleanupException(failure)
+            throw failure
+        }
+        if (!published) throw IOException("Native publication returned no outcome")
+        try {
+            verifyRoot()
+        } catch (verificationFailure: Throwable) {
+            throw PublishedEntryCleanupException(verificationFailure)
+        }
     }
+
+    override fun winnerPublicationIsDurablySynced(): Boolean = true
 
     override fun openExistingBook(file: File): ExistingBookInput {
         verifyRoot()
@@ -839,6 +958,10 @@ private class AndroidPrivateBookStoreRootHandle private constructor(
     override fun cleanupPartDurably(file: File): Boolean {
         val name = entryName(file)
         val descriptor = ownedParts.remove(name)
+        if (publishedParts.remove(name)) {
+            descriptor?.close()
+            return true
+        }
         var failure: Throwable? = null
         var result = 0
         try {
@@ -873,6 +996,11 @@ private class AndroidPrivateBookStoreRootHandle private constructor(
             }
         }
         ownedParts.clear()
+        val lockErrno = AndroidPrivateBookStoreNative.closeDescriptor(publishLockDescriptor)
+        if (lockErrno != 0) {
+            val closeFailure = nativeIOException("close private book publication lock", lockErrno)
+            if (failure == null) failure = closeFailure else failure!!.addSuppressed(closeFailure)
+        }
         val errno = AndroidPrivateBookStoreNative.closeDescriptor(rootDescriptor)
         if (errno != 0) {
             val closeFailure = nativeIOException("close private book directory", errno)
@@ -929,6 +1057,12 @@ private class AndroidPrivateBookStoreRootHandle private constructor(
                     "open private book directory relative to trusted parent",
                     -rootDescriptor,
                 )
+                val syncErrno = AndroidPrivateBookStoreNative.sync(parentDescriptor)
+                if (syncErrno != 0) {
+                    failure.addSuppressed(
+                        nativeIOException("sync trusted parent after root setup failure", syncErrno),
+                    )
+                }
                 val closeErrno = AndroidPrivateBookStoreNative.closeDescriptor(parentDescriptor)
                 if (closeErrno != 0) {
                     failure.addSuppressed(
@@ -937,31 +1071,81 @@ private class AndroidPrivateBookStoreRootHandle private constructor(
                 }
                 throw failure
             }
+            try {
+                val rootVerification = AndroidPrivateBookStoreNative.verifyRoot(
+                    parentDescriptor,
+                    rootDescriptor,
+                    rootName,
+                )
+                if (rootVerification < 0) {
+                    throw nativeIOException("verify private book directory setup", -rootVerification)
+                }
+                if (rootVerification == 0) {
+                    throw IOException("Private book root changed during setup")
+                }
+                val parentSyncErrno = AndroidPrivateBookStoreNative.sync(parentDescriptor)
+                if (parentSyncErrno != 0) {
+                    throw nativeIOException("sync trusted parent directory", parentSyncErrno)
+                }
+            } catch (failure: Throwable) {
+                closeSetupDescriptors(failure, rootDescriptor, parentDescriptor)
+                throw failure
+            }
+            val publishLockDescriptor = AndroidPrivateBookStoreNative.openPublishLock(rootDescriptor)
+            if (publishLockDescriptor < 0) {
+                val failure = nativeIOException(
+                    "open private book publication lock without following links",
+                    -publishLockDescriptor,
+                )
+                closeSetupDescriptors(failure, rootDescriptor, parentDescriptor)
+                throw failure
+            }
             val handle = AndroidPrivateBookStoreRootHandle(
                 File(trustedParent, rootName).absoluteFile,
                 parentDescriptor,
                 rootName,
                 rootDescriptor,
+                publishLockDescriptor,
             )
             try {
+                val lockVerification = AndroidPrivateBookStoreNative.verifyPublishLock(
+                    rootDescriptor,
+                    publishLockDescriptor,
+                )
+                if (lockVerification < 0) {
+                    throw nativeIOException("verify private book publication lock", -lockVerification)
+                }
+                if (lockVerification == 0) {
+                    throw IOException("Private book publication lock changed during setup")
+                }
+                val syncErrno = AndroidPrivateBookStoreNative.sync(rootDescriptor)
+                if (syncErrno != 0) {
+                    throw nativeIOException("sync private book publication lock", syncErrno)
+                }
                 handle.verifyRoot()
                 return handle
             } catch (failure: Throwable) {
-                val rootCloseErrno = AndroidPrivateBookStoreNative.closeDescriptor(rootDescriptor)
-                if (rootCloseErrno != 0) {
-                    failure.addSuppressed(
-                        nativeIOException("close failed private book directory setup", rootCloseErrno),
-                    )
-                }
-                val parentCloseErrno = AndroidPrivateBookStoreNative.closeDescriptor(parentDescriptor)
-                if (parentCloseErrno != 0) {
-                    failure.addSuppressed(
-                        nativeIOException("close failed trusted parent setup", parentCloseErrno),
-                    )
-                }
+                closeSetupDescriptors(
+                    failure,
+                    publishLockDescriptor,
+                    rootDescriptor,
+                    parentDescriptor,
+                )
                 throw failure
             }
         }
+
+        private fun closeSetupDescriptors(failure: Throwable, vararg descriptors: Int) {
+            descriptors.forEach { descriptor ->
+                val errno = AndroidPrivateBookStoreNative.closeDescriptor(descriptor)
+                if (errno != 0) {
+                    failure.addSuppressed(nativeIOException("close failed storage setup", errno))
+                }
+            }
+        }
+
+        private const val PUBLISH_RESULT_PUBLISHED = 1L shl 31
+        private const val PUBLISH_ERRNO_MASK = PUBLISH_RESULT_PUBLISHED - 1
     }
 }
 
@@ -1070,15 +1254,21 @@ private object AndroidPrivateBookStoreNative {
 
     external fun openOrCreateRoot(parentDescriptor: Int, rootName: String): Int
 
+    external fun openPublishLock(rootDescriptor: Int): Int
+
+    external fun verifyPublishLock(rootDescriptor: Int, lockDescriptor: Int): Int
+
     external fun openPart(rootDescriptor: Int, name: String): Int
 
     external fun openExisting(rootDescriptor: Int, name: String): Int
 
-    external fun linkOpenedFile(
-        partDescriptor: Int,
+    external fun publishNoReplace(
         rootDescriptor: Int,
+        lockDescriptor: Int,
+        partDescriptor: Int,
+        partName: String,
         targetName: String,
-    ): Int
+    ): Long
 
     external fun unlink(rootDescriptor: Int, name: String): Int
 

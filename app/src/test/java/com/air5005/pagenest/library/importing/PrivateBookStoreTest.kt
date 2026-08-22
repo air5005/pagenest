@@ -23,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -34,6 +35,12 @@ internal object StrongTestPrivateBookStoreFileOperations :
 
     override fun readJvmAttributes(file: File): BasicFileAttributes =
         StrongTestJvmExistingBookFileOperations.readAttributes(file.toPath())
+
+    override fun readJvmUnixState(file: File): JvmUnixFileState =
+        StrongTestJvmExistingBookFileOperations.readUnixState(file.toPath())
+
+    override fun digestJvmFile(file: File): String =
+        StrongTestJvmExistingBookFileOperations.digestPath(file.toPath())
 }
 
 internal object StrongTestJvmExistingBookFileOperations : JvmExistingBookFileOperations {
@@ -45,7 +52,7 @@ internal object StrongTestJvmExistingBookFileOperations : JvmExistingBookFileOpe
             delegate.isDirectory,
             created.epochSecond,
             created.nano,
-            delegate.size(),
+            if (delegate.isDirectory) 0L else delegate.size(),
             digest,
         )
         return object : BasicFileAttributes by delegate {
@@ -58,6 +65,20 @@ internal object StrongTestJvmExistingBookFileOperations : JvmExistingBookFileOpe
 
     override fun openVerificationChannel(path: Path): FileChannel =
         SystemJvmExistingBookFileOperations.openVerificationChannel(path)
+
+    override fun readUnixState(path: Path): JvmUnixFileState {
+        val attributes = readAttributes(path)
+        val created = attributes.creationTime().toInstant()
+        val identity = attributes.fileKey().hashCode().toLong()
+        return JvmUnixFileState(
+            device = 0,
+            inode = identity,
+            changedSeconds = created.epochSecond,
+            changedNanoseconds = created.nano.toLong(),
+        )
+    }
+
+    override fun digestPath(path: Path): String = digest(path)
 
     private fun digest(path: Path): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -88,6 +109,31 @@ private data class StrongTestFileIdentity(
 class PrivateBookStoreTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun postCreateVerificationCleanupUnlinksAndSyncsBeforeCloseWithoutLosingErrors() {
+        val primary = IOException("post-create verification failed")
+        val events = mutableListOf<String>()
+
+        cleanupFailedOwnedPart(
+            primary,
+            unlinkAndSync = {
+                events += "unlink"
+                events += "sync"
+                throw IOException("sync failed")
+            },
+            close = {
+                events += "close"
+                throw IOException("close failed")
+            },
+        )
+
+        assertEquals(listOf("unlink", "sync", "close"), events)
+        assertEquals(
+            listOf("sync failed", "close failed"),
+            primary.suppressed.map { it.message },
+        )
+    }
 
     @Test
     fun legacyAbsoluteRootConstructorFailsClosedOnAndroidRuntime() {
@@ -142,7 +188,7 @@ class PrivateBookStoreTest {
     @Test
     fun duplicateContentUsesOnePrivateCopy() {
         val root = temporaryFolder.newFolder("books")
-        val store = PrivateBookStore(root)
+        val store = PrivateBookStore(root, StrongTestPrivateBookStoreFileOperations)
 
         val first = store.store("hello".byteInputStream(), "one.EPUB")
         val second = store.store("hello".byteInputStream(), "two.epub")
@@ -163,7 +209,7 @@ class PrivateBookStoreTest {
     @Test
     fun rejectsNamesWithoutASupportedBookExtension() {
         val root = temporaryFolder.newFolder("books")
-        val store = PrivateBookStore(root)
+        val store = PrivateBookStore(root, StrongTestPrivateBookStoreFileOperations)
 
         assertThrows(IllegalArgumentException::class.java) {
             store.store("hello".byteInputStream(), "archive.zip")
@@ -178,7 +224,7 @@ class PrivateBookStoreTest {
         var partParent: File? = null
         var finalParent: File? = null
         val syncedDirectories = mutableListOf<File>()
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun publishAtomically(source: File, target: File) {
                 partParent = source.parentFile
                 finalParent = target.parentFile
@@ -208,11 +254,11 @@ class PrivateBookStoreTest {
     }
 
     @Test
-    fun parentSyncFailureRollsBackNewPrivateRootBeforeCopying() {
+    fun parentSyncFailureKeepsNewPrivateRoot() {
         val parent = temporaryFolder.newFolder("private")
         val root = File(parent, "books")
         var parentSyncs = 0
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun syncDirectory(directory: File) {
                 if (directory.canonicalFile == parent.canonicalFile && parentSyncs++ == 0) {
                     throw IOException("parent sync failed")
@@ -225,8 +271,8 @@ class PrivateBookStoreTest {
         }
 
         assertEquals("parent sync failed", failure.message)
-        assertFalse(root.exists())
-        assertTrue(parent.listFiles()!!.isEmpty())
+        assertTrue(root.isDirectory)
+        assertTrue(root.listFiles()!!.isEmpty())
     }
 
     @Test
@@ -234,7 +280,7 @@ class PrivateBookStoreTest {
         val parent = temporaryFolder.newFolder("private")
         val root = File(parent, "books")
         val symlinkTarget = temporaryFolder.newFolder("attacker-controlled")
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun createDirectory(directory: File) {
                 if (directory.absoluteFile == root.absoluteFile) {
                     Files.createSymbolicLink(directory.toPath(), symlinkTarget.toPath())
@@ -257,7 +303,7 @@ class PrivateBookStoreTest {
     fun rootSwapAfterRevalidationDoesNotWriteThroughSymlink() {
         val root = temporaryFolder.newFolder("books")
         val symlinkTarget = temporaryFolder.newFolder("post-revalidation-attacker")
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun openRoot(
                 rootDirectory: File,
                 operations: PrivateBookStoreFileOperations,
@@ -288,7 +334,7 @@ class PrivateBookStoreTest {
     fun readFailureRemovesPartAndDoesNotPublishFinalFile() {
         val root = temporaryFolder.newFolder("books")
         var cleanupDirectorySyncs = 0
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun syncDirectory(directory: File) {
                 if (directory.canonicalFile == root.canonicalFile) cleanupDirectorySyncs += 1
             }
@@ -319,7 +365,7 @@ class PrivateBookStoreTest {
     fun writeFailureRemovesPartAndDoesNotPublishFinalFile() {
         val root = temporaryFolder.newFolder("books")
         var cleanupDirectorySyncs = 0
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun openPart(file: File): DurableBookOutput {
                 val delegate = SystemPrivateBookStoreFileOperations.openPart(file)
                 return object : DurableBookOutput by delegate {
@@ -347,7 +393,7 @@ class PrivateBookStoreTest {
     fun publicationFailureRemovesPartAndDoesNotPublishFinalFile() {
         val root = temporaryFolder.newFolder("books")
         var cleanupDirectorySyncs = 0
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun publishAtomically(source: File, target: File) {
                 throw IOException("publication failed")
             }
@@ -369,7 +415,7 @@ class PrivateBookStoreTest {
     fun syncsFileAndDirectoryEntriesInDurableOrder() {
         val root = temporaryFolder.newFolder("books")
         val events = mutableListOf<String>()
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun openPart(file: File): DurableBookOutput {
                 val delegate = SystemPrivateBookStoreFileOperations.openPart(file)
                 return object : DurableBookOutput by delegate {
@@ -425,7 +471,7 @@ class PrivateBookStoreTest {
     @Test
     fun publicationDirectorySyncFailureKeepsFinalAndRecoverablePart() {
         val root = temporaryFolder.newFolder("books")
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun syncDirectory(directory: File) {
                 if (directory.canonicalFile == root.canonicalFile) {
                     throw IOException("publication directory sync failed")
@@ -450,7 +496,7 @@ class PrivateBookStoreTest {
     fun cleanupDirectorySyncFailureReportsAlreadyPublishedBook() {
         val root = temporaryFolder.newFolder("books")
         var directorySyncs = 0
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun syncDirectory(directory: File) {
                 if (directory.canonicalFile == root.canonicalFile) {
                     directorySyncs += 1
@@ -477,7 +523,7 @@ class PrivateBookStoreTest {
     @Test
     fun rootHandleCloseFailureReportsAlreadyPublishedBook() {
         val root = temporaryFolder.newFolder("root-close-books")
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun openRoot(
                 rootDirectory: File,
                 operations: PrivateBookStoreFileOperations,
@@ -515,7 +561,7 @@ class PrivateBookStoreTest {
             root,
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824.epub",
         ).apply { writeText("hello") }
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun syncDirectory(directory: File) {
                 if (directory.canonicalFile == root.canonicalFile) {
                     throw IOException("loser directory sync failed")
@@ -538,7 +584,7 @@ class PrivateBookStoreTest {
     @Test
     fun prepublicationCleanupSyncFailureIsSuppressedOnOriginalFailure() {
         val root = temporaryFolder.newFolder("books")
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun publishAtomically(source: File, target: File) {
                 throw IOException("publication failed")
             }
@@ -562,7 +608,7 @@ class PrivateBookStoreTest {
     @Test
     fun prepublicationCleanupUnlinkFailureIsSuppressedAndKeepsPart() {
         val root = temporaryFolder.newFolder("books")
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun publishAtomically(source: File, target: File) {
                 throw IOException("publication failed")
             }
@@ -588,7 +634,7 @@ class PrivateBookStoreTest {
         val pinnedRoot = File(temporaryFolder.root, "cleanup-swap-pinned")
         val attacker = temporaryFolder.newFolder("cleanup-swap-attacker")
         var ownedCleanupCalled = false
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun openRoot(
                 rootDirectory: File,
                 operations: PrivateBookStoreFileOperations,
@@ -662,7 +708,7 @@ class PrivateBookStoreTest {
     @Test
     fun mismatchedHashNamedFileIsRejectedAndNeverOverwritten() {
         val root = temporaryFolder.newFolder("books")
-        val store = PrivateBookStore(root)
+        val store = PrivateBookStore(root, StrongTestPrivateBookStoreFileOperations)
         val first = store.store("hello".byteInputStream(), "book.epub")
         first.file.writeText("keep existing")
 
@@ -684,7 +730,10 @@ class PrivateBookStoreTest {
         ).apply { mkdir() }
 
         val failure = assertThrows(IOException::class.java) {
-            PrivateBookStore(root).store("hello".byteInputStream(), "book.epub")
+            PrivateBookStore(root, StrongTestPrivateBookStoreFileOperations).store(
+                "hello".byteInputStream(),
+                "book.epub",
+            )
         }
 
         assertEquals("Existing book target is not a regular file", failure.message)
@@ -705,7 +754,10 @@ class PrivateBookStoreTest {
         Files.createSymbolicLink(finalPath, matchingTarget.toPath())
 
         assertThrows(IOException::class.java) {
-            PrivateBookStore(root).store("hello".byteInputStream(), "book.epub")
+            PrivateBookStore(root, StrongTestPrivateBookStoreFileOperations).store(
+                "hello".byteInputStream(),
+                "book.epub",
+            )
         }
 
         assertTrue(Files.isSymbolicLink(finalPath))
@@ -744,9 +796,9 @@ class PrivateBookStoreTest {
             .start()
         try {
             awaitCondition("adversarial process to await the swap trigger") { ready.isFile }
-            val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
                 override fun openExistingBook(file: File): ExistingBookInput {
-                    val opened = SystemPrivateBookStoreFileOperations.openExistingBook(file)
+                    val opened = StrongTestPrivateBookStoreFileOperations.openExistingBook(file)
                     check(trigger.createNewFile())
                     awaitCondition("adversarial process to replace final with a symlink") {
                         result.isFile
@@ -782,9 +834,9 @@ class PrivateBookStoreTest {
         val finalFile = File(root, "$PROCESS_CONTENT_SHA256.pdf").apply {
             writeText(PROCESS_CONTENT)
         }
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun openExistingBook(file: File): ExistingBookInput {
-                val delegate = SystemPrivateBookStoreFileOperations.openExistingBook(file)
+                val delegate = StrongTestPrivateBookStoreFileOperations.openExistingBook(file)
                 return object : ExistingBookInput by delegate {
                     override fun verifiedStateAfterHash(): ExistingBookFileState {
                         FileOutputStream(finalFile, true).use { it.write('!'.code) }
@@ -811,7 +863,7 @@ class PrivateBookStoreTest {
         val finalFile = File(root, "$PROCESS_CONTENT_SHA256.pdf").apply {
             writeText(PROCESS_CONTENT)
         }
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun openRoot(
                 rootDirectory: File,
                 operations: PrivateBookStoreFileOperations,
@@ -850,7 +902,7 @@ class PrivateBookStoreTest {
     fun jvmAdapterRejectsRegularFileSwapInsideOpenIdentityWindow() {
         val root = temporaryFolder.newFolder("jvm-open-window")
         val finalFile = File(root, "final.pdf").apply { writeText("original") }
-        val operations = object : JvmExistingBookFileOperations by SystemJvmExistingBookFileOperations {
+        val operations = object : JvmExistingBookFileOperations by StrongTestJvmExistingBookFileOperations {
             override fun openChannel(path: Path): FileChannel {
                 val opened = SystemJvmExistingBookFileOperations.openChannel(path)
                 Files.delete(path)
@@ -875,7 +927,7 @@ class PrivateBookStoreTest {
         val attacker = File(root, "attacker.pdf").apply { writeText("attacker") }
         val originalModified = Files.getLastModifiedTime(finalFile.toPath())
         Files.setLastModifiedTime(attacker.toPath(), originalModified)
-        val operations = object : JvmExistingBookFileOperations by SystemJvmExistingBookFileOperations {
+        val operations = object : JvmExistingBookFileOperations by StrongTestJvmExistingBookFileOperations {
             override fun openChannel(path: Path): FileChannel {
                 Files.move(path, heldOriginal.toPath())
                 Files.move(attacker.toPath(), path)
@@ -898,7 +950,7 @@ class PrivateBookStoreTest {
     fun jvmAdapterFailsClosedWhenFileKeyIsUnavailable() {
         val root = temporaryFolder.newFolder("jvm-null-file-key")
         val finalFile = File(root, "final.pdf").apply { writeText("original") }
-        val operations = object : JvmExistingBookFileOperations by SystemJvmExistingBookFileOperations {
+        val operations = object : JvmExistingBookFileOperations by StrongTestJvmExistingBookFileOperations {
             override fun readAttributes(path: Path): BasicFileAttributes {
                 val delegate = SystemJvmExistingBookFileOperations.readAttributes(path)
                 return object : BasicFileAttributes by delegate {
@@ -913,12 +965,28 @@ class PrivateBookStoreTest {
     }
 
     @Test
+    fun productionJvmAdapterFailsClosedWhenProviderFileKeyIsUnavailable() {
+        val root = temporaryFolder.newFolder("jvm-production-null-file-key")
+        val finalFile = File(root, "final.pdf").apply { writeText("original") }
+        val rawAttributes = Files.readAttributes(
+            finalFile.toPath(),
+            BasicFileAttributes::class.java,
+            LinkOption.NOFOLLOW_LINKS,
+        )
+        assumeTrue("This regression requires a null-key provider", rawAttributes.fileKey() == null)
+
+        assertThrows(IOException::class.java) {
+            JvmExistingBookInput.open(finalFile, SystemJvmExistingBookFileOperations).close()
+        }
+    }
+
+    @Test
     fun jvmAdapterRejectsSameInodeRewriteWithForgedTimestamp() {
         val root = temporaryFolder.newFolder("jvm-forged-rewrite")
         val finalFile = File(root, "$PROCESS_CONTENT_SHA256.pdf").apply {
             writeText(PROCESS_CONTENT)
         }
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun openRoot(
                 rootDirectory: File,
                 operations: PrivateBookStoreFileOperations,
@@ -962,7 +1030,7 @@ class PrivateBookStoreTest {
                 executor.submit(Callable {
                     ready.countDown()
                     assertTrue(start.await(10, TimeUnit.SECONDS))
-                    PrivateBookStore(root).store(
+                    PrivateBookStore(root, StrongTestPrivateBookStoreFileOperations).store(
                         ByteArrayInputStream(content),
                         "book-$index.pdf",
                     )
@@ -1085,7 +1153,7 @@ class PrivateBookStoreTest {
     ) {
         val root = temporaryFolder.newFolder("books-$phase")
         var cleanupDirectorySyncs = 0
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun openPart(file: File): DurableBookOutput =
                 wrap(SystemPrivateBookStoreFileOperations.openPart(file))
 
@@ -1185,7 +1253,7 @@ internal object PrivateBookStoreProcessWorker {
         val resultFile = File(arguments[3])
         val waitAtPublication = arguments[4].toBoolean()
         val waitAtDirectoryCreate = arguments[5].toBoolean()
-        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
             override fun createDirectory(directory: File) {
                 if (waitAtDirectoryCreate && directory.absoluteFile == root.parentFile!!.absoluteFile) {
                     check(ready.createNewFile())

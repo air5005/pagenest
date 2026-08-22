@@ -207,3 +207,42 @@ dependencies {
 
     testImplementation(libs.junit)
 }
+
+val verifyPrivateBookStoreNativeValidation by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Compiles and executes private-store native validator and publication tests."
+    val outputDirectory = layout.buildDirectory.dir("native-validation")
+    inputs.files(
+        "src/test/cpp/private_book_store_validation_test.c",
+        "src/main/cpp/private_book_store_validation.c",
+        "src/main/cpp/private_book_store_validation.h",
+        "src/test/cpp/private_book_store_publish_test.c",
+        "src/main/cpp/private_book_store_publish.c",
+        "src/main/cpp/private_book_store_publish.h",
+    )
+    outputs.dir(outputDirectory)
+    doFirst {
+        val output = outputDirectory.get().asFile.absolutePath
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+            commandLine(
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", file("src/test/cpp/run_private_book_store_validation.ps1").absolutePath,
+                "-ProjectDirectory", projectDir.absolutePath,
+                "-OutputDirectory", output,
+            )
+        } else {
+            commandLine(
+                "sh",
+                file("src/test/cpp/run_private_book_store_validation.sh").absolutePath,
+                projectDir.absolutePath,
+                output,
+            )
+        }
+    }
+}
+
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+    dependsOn(verifyPrivateBookStoreNativeValidation)
+}
