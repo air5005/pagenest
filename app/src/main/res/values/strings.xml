@@ -279,11 +279,11 @@
     <string name="page_trans_anim_cover_vertical">Cover in vertical</string>
     <string name="dialog_content_to_out_href">Are you sure you want to jump to external link (%1$s)?</string>
     <string name="auto_open_last_read_file">Automatically open last read file</string>
-    <string name="import_result_imported">已导入《%1$s》</string>
-    <string name="import_result_duplicate">书籍已在书架中</string>
-    <string name="import_result_protected">不支持受 DRM 保护的书籍</string>
-    <string name="import_result_unsupported">暂不支持此文件格式</string>
-    <string name="import_result_unreadable">无法读取所选文件</string>
-    <string name="import_result_parse_failed">无法解析这本书</string>
-    <string name="import_result_storage_failed">存储空间不足或复制失败</string>
+    <string name="import_result_imported" translatable="false">已导入《%1$s》</string>
+    <string name="import_result_duplicate" translatable="false">书籍已在书架中</string>
+    <string name="import_result_protected" translatable="false">不支持受 DRM 保护的书籍</string>
+    <string name="import_result_unsupported" translatable="false">暂不支持此文件格式</string>
+    <string name="import_result_unreadable" translatable="false">无法读取所选文件</string>
+    <string name="import_result_parse_failed" translatable="false">无法解析这本书</string>
+    <string name="import_result_storage_failed" translatable="false">存储空间不足或复制失败</string>
 </resources>
