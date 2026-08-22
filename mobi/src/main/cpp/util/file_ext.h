@@ -36,15 +36,6 @@ public:
     static int writeDataToFile(const std::string &filepath, unsigned char* data, size_t data_size);
 
     /***
-     * 根据书名，图片类型后缀，得到给定目录下的封面图片路径
-     * @param book_title
-     * @param file_ext   取值：jpg gif png bmp
-     * @param output_path [out] 输出路径
-     * @return 1 成功， 0 失败，创建目录失败
-     */
-    static std::string get_cover_path(std::string &book_title, std::string &file_ext);
-
-    /***
      * 检查文件路径是否存在，以及文件是否有内容， 有则返回1， 无则返回0
      * @param path  文件完整路径
      * @return

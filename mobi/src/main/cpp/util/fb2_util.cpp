@@ -30,37 +30,6 @@ int loadMetaInfo(tinyxml2::XMLDocument &doc, MetaInfo &meta_info){
         auto eleLang = eleTitleInfo->FirstChildElement("lang");
         meta_info.language = xml_ext::getEleText(eleLang);
 
-        auto eleCoverPage = eleTitleInfo->FirstChildElement("coverpage");
-        if (eleCoverPage != nullptr) {
-            std::string imgSrc = xml_ext::get_img_src(eleCoverPage->FirstChildElement("image"));
-            if (imgSrc.length() > 1 && string_ext::startWith(imgSrc, "#")) {
-                std::string ref = imgSrc.substr(1);
-                auto eleBinary = xml_ext::getChildByNameAndAttr(root, "binary", "id", ref);
-                if (eleBinary != nullptr) {
-                    std::string mimetype = xml_ext::getEleAttr(eleBinary, "content-type");
-                    std::string ext = file_ext::get_media_type_ext(mimetype);
-                    if (ext.empty()) {
-                        ext = "png";
-                    }
-                    std::string cover_name = meta_info.title + "_" + meta_info.author;
-                    std::string output_cover_path = file_ext::get_cover_path(cover_name, ext);
-                    LOGD("%s:cover_path = %s", __func__, output_cover_path.c_str());
-                    if (file_ext::checkPath(output_cover_path) != 1) {
-                        std::string base64Data = xml_ext::getEleText(eleBinary);
-                        string_ext::trim(base64Data);
-                        if (base64Data.length() > 1) {
-                            std::istringstream isstream(base64Data);
-
-                            std::ofstream imgFileStream(output_cover_path, std::ios::binary);
-                            base64::decoder b64decoder;
-                            b64decoder.decode(isstream, imgFileStream);
-                            meta_info.coverPath = output_cover_path;
-                        }
-                    }
-                }
-            }
-        }
-
         auto eleAuthor = eleTitleInfo->FirstChildElement("author");
         if (eleAuthor != nullptr) {
             std::string text = xml_ext::getEleText(eleAuthor);

@@ -4,6 +4,7 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.encryption.AccessPermission
 import com.tom_roush.pdfbox.pdmodel.encryption.StandardProtectionPolicy
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.nio.charset.StandardCharsets
@@ -101,11 +102,9 @@ class ProductionBookProtectionProbesTest {
 
     @Test
     fun epubProbeAllowsOnlyIdpfAndAdobeFontObfuscation() {
-        val epub = epubWith(
-            "META-INF/encryption.xml" to encryptionXml(
-                "http://www.idpf.org/2008/embedding",
-                "http://ns.adobe.com/pdf/enc#RC",
-            ),
+        val epub = epubWithFontObfuscation(
+            "http://www.idpf.org/2008/embedding" to "OEBPS/fonts/idpf.otf",
+            "http://ns.adobe.com/pdf/enc#RC" to "OEBPS/fonts/adobe.woff",
         )
 
         assertFalse(ProductionBookProtectionProbes.epubProtected(epub))
@@ -201,6 +200,89 @@ class ProductionBookProtectionProbesTest {
         }
     }
 
+    @Test
+    fun epubProbeRejectsMissingOrWrongNamespaceCipherData() {
+        val missingCipherData = epubWith(
+            "META-INF/encryption.xml" to encryptionXml(
+                "http://www.idpf.org/2008/embedding",
+                includeCipherData = false,
+            ),
+        )
+        val wrongNamespaceCipherData = epubWith(
+            "META-INF/encryption.xml" to encryptionXml(
+                "http://www.idpf.org/2008/embedding",
+                cipherNamespace = "urn:attacker:xmlenc",
+            ),
+        )
+
+        assertThrows(IOException::class.java) {
+            ProductionBookProtectionProbes.epubProtected(missingCipherData)
+        }
+        assertThrows(IOException::class.java) {
+            ProductionBookProtectionProbes.epubProtected(wrongNamespaceCipherData)
+        }
+    }
+
+    @Test
+    fun epubProbeProtectsAnObfuscatedNonFontTarget() {
+        val epub = epubWithPublication(
+            encryptionXml("http://www.idpf.org/2008/embedding", target = "OEBPS/text.xhtml"),
+            manifestItems = listOf("text.xhtml" to "application/xhtml+xml"),
+            publicationEntries = listOf("OEBPS/text.xhtml" to "<html/>"),
+        )
+
+        assertTrue(ProductionBookProtectionProbes.epubProtected(epub))
+    }
+
+    @Test
+    fun epubProbeProtectsANonCoreLegacyFontMediaType() {
+        val epub = epubWithPublication(
+            encryptionXml("http://www.idpf.org/2008/embedding"),
+            manifestItems = listOf("fonts/font.otf" to "application/vnd.ms-opentype"),
+            publicationEntries = listOf("OEBPS/fonts/font.otf" to "font"),
+        )
+
+        assertTrue(ProductionBookProtectionProbes.epubProtected(epub))
+    }
+
+    @Test
+    fun epubProbeProtectsAnAbsentObfuscationTarget() {
+        val epub = epubWithPublication(
+            encryptionXml("http://www.idpf.org/2008/embedding", target = "OEBPS/fonts/missing.otf"),
+            manifestItems = listOf("fonts/missing.otf" to "font/otf"),
+            publicationEntries = emptyList(),
+        )
+
+        assertTrue(ProductionBookProtectionProbes.epubProtected(epub))
+    }
+
+    @Test
+    fun epubProbeProtectsEncryptedKeyMetadata() {
+        val encryptedKeyXml = encryptionXml("http://www.idpf.org/2008/embedding").replace(
+            "</enc:EncryptedData>",
+            "<enc:KeyInfo><enc:EncryptedKey/></enc:KeyInfo></enc:EncryptedData>",
+        )
+        val epub = epubWithPublication(
+            encryptedKeyXml,
+            manifestItems = listOf("fonts/font.otf" to "font/otf"),
+            publicationEntries = listOf("OEBPS/fonts/font.otf" to "font"),
+        )
+
+        assertTrue(ProductionBookProtectionProbes.epubProtected(epub))
+    }
+
+    @Test
+    fun securityMetadataBoundedStreamCountsActualDecompressedBytes() {
+        val input = SecurityMetadataBoundedInputStream(
+            ByteArrayInputStream(ByteArray(65_537)),
+            maxBytes = 65_536,
+        )
+
+        assertThrows(IOException::class.java) {
+            input.readBytes()
+        }
+    }
+
     private fun epubWith(vararg entries: Pair<String, String>): File {
         val file = temporaryFolder.newFile("book-${entries.size}-${System.nanoTime()}.epub")
         ZipOutputStream(file.outputStream()).use { zip ->
@@ -213,19 +295,81 @@ class ProductionBookProtectionProbesTest {
         return file
     }
 
-    private fun encryptionXml(vararg algorithms: String): String = buildString {
+    private fun encryptionXml(
+        vararg algorithms: String,
+        target: String = "OEBPS/fonts/font.otf",
+        includeCipherData: Boolean = true,
+        cipherNamespace: String = "http://www.w3.org/2001/04/xmlenc#",
+    ): String = encryptionXmlEntries(
+        *algorithms.map { it to target }.toTypedArray(),
+        includeCipherData = includeCipherData,
+        cipherNamespace = cipherNamespace,
+    )
+
+    private fun encryptionXmlEntries(
+        vararg entries: Pair<String, String>,
+        includeCipherData: Boolean = true,
+        cipherNamespace: String = "http://www.w3.org/2001/04/xmlenc#",
+    ): String = buildString {
         append("""<?xml version="1.0" encoding="UTF-8"?>""")
         append(
             """<ocf:encryption xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container" """ +
                 """xmlns:enc="http://www.w3.org/2001/04/xmlenc#">""",
         )
-        algorithms.forEach { algorithm ->
+        entries.forEach { (algorithm, target) ->
             append("<enc:EncryptedData>")
             append("""<enc:EncryptionMethod Algorithm="$algorithm"/>""")
-            append("""<enc:CipherData><enc:CipherReference URI="content.xhtml"/></enc:CipherData>""")
+            if (includeCipherData) {
+                append(
+                    """<cipher:CipherData xmlns:cipher="$cipherNamespace">""" +
+                        """<cipher:CipherReference URI="$target"/>""" +
+                        "</cipher:CipherData>",
+                )
+            }
             append("</enc:EncryptedData>")
         }
         append("</ocf:encryption>")
+    }
+
+    private fun epubWithFontObfuscation(vararg targets: Pair<String, String>): File {
+        val mediaTypes = mapOf("otf" to "font/otf", "woff" to "font/woff")
+        return epubWithPublication(
+            encryptionXmlEntries(*targets),
+            manifestItems = targets.map { (_, path) ->
+                path.removePrefix("OEBPS/") to mediaTypes.getValue(path.substringAfterLast('.'))
+            },
+            publicationEntries = targets.map { (_, path) -> path to "font" },
+        )
+    }
+
+    private fun epubWithPublication(
+        encryption: String,
+        manifestItems: List<Pair<String, String>>,
+        publicationEntries: List<Pair<String, String>>,
+    ): File {
+        val container = """
+            <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+                <rootfiles>
+                    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+                </rootfiles>
+            </container>
+        """.trimIndent()
+        val manifest = manifestItems.mapIndexed { index, (href, mediaType) ->
+            """<item id="item$index" href="$href" media-type="$mediaType"/>"""
+        }.joinToString("")
+        val packageDocument = """
+            <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                <metadata/>
+                <manifest>$manifest</manifest>
+                <spine/>
+            </package>
+        """.trimIndent()
+        return epubWith(
+            "META-INF/encryption.xml" to encryption,
+            "META-INF/container.xml" to container,
+            "OEBPS/content.opf" to packageDocument,
+            *publicationEntries.toTypedArray(),
+        )
     }
 
     private fun epubWithDuplicateEntry(name: String, contents: String): File {

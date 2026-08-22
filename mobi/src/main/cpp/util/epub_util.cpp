@@ -369,43 +369,6 @@ int epub_util::load_epub(std::string fullpath,  //文件路径
     book_date = xml_ext::getText(opfMetadataEle->FirstChildElement("dc:date"));
     book_isbn = xml_ext::getText(
             xml_ext::getChildByNameAndAttr(opfMetadataEle, "dc:identifier", "opf:scheme", "ISBN"));
-//    <meta content="cover-image" name="cover"/>
-    std::string cover_id = xml_ext::getEleAttr(xml_ext::getChildByNameAndAttr(opfMetadataEle, "meta", "name", "cover"), "content");
-    if (!cover_id.empty()) {
-        LOGD("%s: cover_id is %s", __func__, cover_id.c_str());
-        auto manifestEle = opfRoot->FirstChildElement("manifest");
-        auto coverItemEle = xml_ext::getChildByNameAndAttr(manifestEle, "item", "id", cover_id);
-        if (coverItemEle != nullptr) {
-            std::string cover_href = xml_ext::getEleAttr(coverItemEle, "href");
-            std::string cover_type = xml_ext::getEleAttr(coverItemEle, "media-type");
-            std::string ext = file_ext::get_media_type_ext(cover_type);
-
-
-            if (!cover_href.empty() && !ext.empty()) {
-                std::string output_cover_path = file_ext::get_cover_path(book_title, ext);
-                if (!output_cover_path.empty()) {
-                    LOGD("%s: output cover path [%s]", __func__, output_cover_path.c_str());
-
-                    auto it = std::find_if(zipfiles.begin(), zipfiles.end(), [=](std::string &item){
-                        return item.find(cover_href) != std::string::npos;
-                    });
-                    if (it != zipfiles.end()) {
-                        cover_href = (*it);
-                    }
-                    LOGD("%s: cover zip href [%s]", __func__, cover_href.c_str());
-
-                    if (1 == zip_ext::write_zip_item_to_file(uf, cover_href, output_cover_path)) {
-                        book_coverPath = output_cover_path;
-                    } else {
-                        LOGE("%s dump cover to local path failed", __func__);
-                    }
-                } else {
-                    LOGE("%s: get cover path failed", __func__);
-                }
-            }
-        }
-    }
-
     unzClose(uf);
 
     LOGI("%s:invoke done", __func__);

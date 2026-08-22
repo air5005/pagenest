@@ -24,6 +24,5 @@ MOBI_RET mobi_load_pdbheader(MOBIData *m, FILE *file);
 MOBI_RET mobi_load_reclist(MOBIData *m, FILE *file);
 MOBI_RET mobi_load_rec(MOBIData *m, FILE *file);
 MOBI_RET mobi_load_recdata(MOBIPdbRecord *rec, FILE *file);
-MOBI_RET mobi_parse_record0(MOBIData *m, const size_t seqnumber);
 
 #endif

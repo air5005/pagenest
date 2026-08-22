@@ -70,16 +70,6 @@ int file_ext::writeDataToFile(const std::string &filepath, unsigned char *data, 
     return 1;
 }
 
-std::string
-file_ext::get_cover_path(std::string &book_title, std::string &file_ext) {
-    std::string file_name = book_title + "_cover." + file_ext;
-    std::string parent_path = app_ext::appFileDir + "/" + "covers";
-    if (!dir_exists(parent_path.c_str()) && make_directory(parent_path.c_str()) != SUCCESS) {
-        return "";
-    }
-    return parent_path + "/" + file_name;
-}
-
 std::string file_ext::get_media_type_ext(std::string &media_type) {
     std::string ext;
     if (media_type == "image/jpeg" || media_type == "image/jpg") {

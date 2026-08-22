@@ -26,6 +26,8 @@ set(mobi_SOURCES
         parse_rawml.c
         parse_rawml.h
         protection.c
+        protection_core.c
+        protection_core.h
         read.c
         read.h
         structure.c
