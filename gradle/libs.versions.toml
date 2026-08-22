@@ -2,7 +2,6 @@
 aboutlibrariesCore = "11.2.3"
 commonmark = "0.24.0"
 coreSplashscreen = "1.0.1"
-firebaseBom = "33.16.0"
 jsoup = "1.21.1"
 kotlinxSerializationCore = "1.8.1"
 kotlinxSerializationJson = "1.8.0"
@@ -30,13 +29,11 @@ navigationCompose = "2.8.7"
 documentfile = "1.0.1"
 pagingCompose = "3.3.6"
 palette = "0.0.4"
-reviewKtxVersion = "2.0.2"
 roomCompiler = "2.6.1"
 roomRuntimeVersion = "2.6.1"
 appcompat = "1.7.0"
 runtimeLivedata = "1.7.8"
 paletteKtx = "1.0.0"
-googleGmsGoogleServices = "4.4.2"
 storage = "2.1.0"
 timber = "5.0.1"
 material = "1.12.0"
@@ -54,9 +51,6 @@ androidx-media3-exoplayer-dash = { module = "androidx.media3:media3-exoplayer-da
 androidx-media3-session = { module = "androidx.media3:media3-session", version.ref = "media3Exoplayer" }
 androidx-media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3Exoplayer" }
 commonmark = { module = "org.commonmark:commonmark", version.ref = "commonmark" }
-firebase-analytics = { module = "com.google.firebase:firebase-analytics" }
-firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
-firebase-crashlytics-ndk = { module = "com.google.firebase:firebase-crashlytics-ndk" }
 hilt-android-compiler = { module = "com.google.dagger:hilt-android-compiler", version.ref = "hiltAndroid" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "kotlinxSerializationCore" }
@@ -64,7 +58,6 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktorClientOkhttp" }
 multiplatform-markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "multiplatformMarkdownRenderer" }
 pdfbox-android = { module = "com.tom-roush:pdfbox-android", version.ref = "pdfboxAndroid" }
-play-review-ktx = { module = "com.google.android.play:review-ktx", version.ref = "reviewKtxVersion" }
 storage = { module = "com.anggrayudi:storage", version.ref = "storage" }
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 
@@ -105,6 +98,5 @@ toaster = { module = "com.github.getActivity:Toaster", version.ref = "toaster" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-google-gms-google-services = { id = "com.google.gms.google-services", version.ref = "googleGmsGoogleServices" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 

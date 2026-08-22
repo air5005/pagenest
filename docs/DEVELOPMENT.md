@@ -9,11 +9,13 @@
 | 组件 | 版本 | 安装位置 |
 | --- | --- | --- |
 | Android Studio | 2026.1.3.7（Quail 3） | `C:\Program Files\Android\Android Studio` |
-| Android Studio 内置 JDK | OpenJDK 25.0.2 | `C:\Program Files\Android\Android Studio\jbr` |
+| JDK | Microsoft OpenJDK 17.0.20.1 | `C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot` |
 | Android SDK Command-line Tools | latest（15859902） | `%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest` |
 | Android SDK Platform | Android 36 | `%LOCALAPPDATA%\Android\Sdk\platforms\android-36` |
 | Android SDK Build Tools | 36.0.0 | `%LOCALAPPDATA%\Android\Sdk\build-tools\36.0.0` |
 | Android SDK Platform Tools / ADB | 37.0.1 | `%LOCALAPPDATA%\Android\Sdk\platform-tools` |
+| Android NDK | 29.0.13599879 | `%LOCALAPPDATA%\Android\Sdk\ndk\29.0.13599879` |
+| CMake | 3.22.1 | `%LOCALAPPDATA%\Android\Sdk\cmake\3.22.1` |
 | Git | 已安装 | 由系统 Git 提供 |
 
 项目使用 Gradle Wrapper 固定 Gradle 版本，因此不需要安装全局 Gradle。应用工程建立后，应使用仓库中的 `gradlew.bat` 执行构建和测试。
@@ -70,7 +72,17 @@ winget list --id Google.AndroidStudio --exact
 Test-Path 'C:\Program Files\Android\Android Studio\bin\studio64.exe'
 ```
 
-Android Studio 自带 JetBrains Runtime/JDK。除非项目构建版本明确要求其他 JDK，否则不要再单独安装 Java。
+本项目固定的 Gradle 8.11.1 需使用 JDK 17。Android Studio 2026.1.3.7 自带的 JBR 25.0.2 无法解析当前 Kotlin DSL 构建脚本，因此命令行构建请将 `JAVA_HOME` 指向上表中的 Microsoft OpenJDK 17。
+
+安装项目 JDK：
+
+```powershell
+winget install --id Microsoft.OpenJDK.17 --exact `
+  --silent `
+  --accept-package-agreements `
+  --accept-source-agreements `
+  --disable-interactivity
+```
 
 ### 3.2 安装 Android SDK
 
@@ -96,7 +108,7 @@ Android Studio 自带 JetBrains Runtime/JDK。除非项目构建版本明确要�
 然后安装 SDK 组件：
 
 ```powershell
-$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
 $sdkRoot = "$env:LOCALAPPDATA\Android\Sdk"
 $sdkManager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
 
@@ -104,7 +116,9 @@ $sdkManager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
 & $sdkManager --sdk_root=$sdkRoot `
   'platform-tools' `
   'platforms;android-36' `
-  'build-tools;36.0.0'
+  'build-tools;36.0.0' `
+  'ndk;29.0.13599879' `
+  'cmake;3.22.1'
 ```
 
 `sdkmanager` 在当前工具包中会提示逐步迁移到 Android CLI；本项目仍保留上述兼容命令，同时优先通过 Android Studio SDK Manager 管理组件。
@@ -116,18 +130,31 @@ $sdkManager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
 ```text
 ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk
 ANDROID_SDK_ROOT=%LOCALAPPDATA%\Android\Sdk
-JAVA_HOME=C:\Program Files\Android\Android Studio\jbr
+JAVA_HOME=C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot
 ```
 
 将下列目录加入当前用户的 `Path`：
 
 ```text
-C:\Program Files\Android\Android Studio\jbr\bin
+C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot\bin
 %LOCALAPPDATA%\Android\Sdk\platform-tools
 %LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest\bin
 ```
 
 修改后应重新打开 PowerShell、终端和 Android Studio，使新环境变量生效。
+
+### 3.4 可选 Release 签名
+
+Debug 构建始终使用 Android 默认调试密钥，不需要私有配置。需要生成已签名的 Release 包时，在仓库根目录创建已被 `.gitignore` 排除的 `key.properties`：
+
+```properties
+storeFile=C:\\path\\to\\release.keystore
+storePassword=replace-with-local-secret
+keyAlias=release
+keyPassword=replace-with-local-secret
+```
+
+没有该文件时仍可配置和构建 Debug 变体；Release 签名配置只在文件存在时加载。
 
 ## 4. 安装验证
 
@@ -143,6 +170,8 @@ sdkmanager --list_installed
 
 ```text
 build-tools;36.0.0
+cmake;3.22.1
+ndk;29.0.13599879
 platform-tools
 platforms;android-36
 ```
@@ -212,7 +241,5 @@ Android 11 及以上设备可以使用无线调试：
 ## 8. 暂不需要的软件
 
 - 全局 Gradle：使用项目的 Gradle Wrapper。
-- 独立 JDK：使用 Android Studio 内置 JDK。
-- NDK/CMake：当前应用不包含 C/C++ 代码。
 - 数据库服务器或后端服务：首版是完整离线阅读器。
 - Docker：首版开发不需要。

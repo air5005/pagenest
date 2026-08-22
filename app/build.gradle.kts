@@ -1,7 +1,6 @@
 import org.gradle.kotlin.dsl.implementation
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.io.FileInputStream
 import java.util.Properties
 
 plugins {
@@ -13,17 +12,18 @@ plugins {
     id("kotlin-parcelize")
 
     id("com.mikepenz.aboutlibraries.plugin")
-    alias(libs.plugins.google.gms.google.services)
     id("kotlinx-serialization")
-    // Add the Crashlytics Gradle plugin
-    id("com.google.firebase.crashlytics")
 
     id("androidx.room")
 }
 
-val apikeyPropertiesFile = rootProject.file("key.properties")
-val apikeyProperties = Properties().apply {
-    load(FileInputStream(apikeyPropertiesFile))
+val releaseSigningFile = rootProject.file("key.properties")
+val releaseSigningProperties = if (releaseSigningFile.isFile) {
+    Properties().apply {
+        releaseSigningFile.inputStream().use { load(it) }
+    }
+} else {
+    null
 }
 
 room {
@@ -35,9 +35,9 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.wxn.reader"
-        minSdk = 24
-        targetSdk = 35
+        applicationId = "com.air5005.pagenest"
+        minSdk = 29
+        targetSdk = 36
         versionCode = 5
         versionName = "1.4.250823"
         multiDexEnabled = true
@@ -53,8 +53,22 @@ android {
         }
     }
 
+    signingConfigs {
+        releaseSigningProperties?.let { properties ->
+            create("release") {
+                storeFile = properties.getProperty("storeFile")?.let(rootProject::file)
+                storePassword = properties.getProperty("storePassword")
+                keyAlias = properties.getProperty("keyAlias")
+                keyPassword = properties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseSigningProperties != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             buildConfigField("String", "RELEASE_DATE", "\"${SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(Date())}\"")
 
             isMinifyEnabled = true
@@ -150,11 +164,6 @@ dependencies {
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.media3.session)
 
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.analytics)
-    implementation(libs.firebase.crashlytics.ndk)
-
-
     coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation("io.coil-kt.coil3:coil-compose:3.2.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.2.0")
@@ -174,9 +183,6 @@ dependencies {
     implementation(libs.colorpicker.compose)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.multiplatform.markdown.renderer.m3)
-
-    // for in app reviews  应用内点赞
-    implementation(libs.play.review.ktx)
 
     //这个库用于在 Android 应用中自动收集和展示项目的依赖信息，
     // 包括依赖项的名称、版本、许可证等信息。它提供了易于集成的 UI 组件，使得开发者可以轻松地在应用中展示这些信息 。

@@ -45,7 +45,7 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
-    ndkVersion = "29.0.13599879 rc2"
+    ndkVersion = "29.0.13599879"
 
     packagingOptions {
         jniLibs {

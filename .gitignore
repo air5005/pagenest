@@ -1,1 +1,12 @@
 .worktrees/
+.gradle/
+.idea/
+**/build/
+local.properties
+key.properties
+*.jks
+*.keystore
+google-services.json
+captures/
+.externalNativeBuild/
+.cxx/

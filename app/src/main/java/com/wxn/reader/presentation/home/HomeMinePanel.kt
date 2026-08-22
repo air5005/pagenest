@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -34,7 +33,6 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.QueryStats
-import androidx.compose.material.icons.outlined.StarRate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
@@ -65,16 +63,12 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.google.android.play.core.review.ReviewException
-import com.google.android.play.core.review.ReviewManagerFactory
-import com.google.android.play.core.review.model.ReviewErrorCode
 import com.mikepenz.markdown.m3.Markdown
 import com.wxn.reader.R
 import com.wxn.reader.data.model.AppTheme
 import com.wxn.reader.navigation.LocalNavController
 import com.wxn.reader.navigation.Screens
 import com.wxn.reader.presentation.settings.SetListItem
-import com.wxn.base.util.Logger
 import com.wxn.reader.util.customMarkdownTypography
 import com.wxn.reader.util.getAppVersion
 import java.io.IOException
@@ -86,7 +80,6 @@ fun HomeMinePanel(innerPadding: PaddingValues, viewModel: HomeViewModel) {
     val navController = LocalNavController.current
 
     val context = LocalContext.current
-    val reviewManager = remember { ReviewManagerFactory.create(context) }
     val isDarkTheme = when (appPreferences?.appTheme) {
         AppTheme.SYSTEM -> isSystemInDarkTheme()
         AppTheme.LIGHT -> false
@@ -268,32 +261,6 @@ fun HomeMinePanel(innerPadding: PaddingValues, viewModel: HomeViewModel) {
                     )
                 }
 
-                item {
-                    SetListItem(isDarkTheme,  stringResource(R.string.rate_the_app), Icons.Outlined.StarRate,) {
-                        val request = reviewManager.requestReviewFlow()
-                        request.addOnCompleteListener { task ->
-                            if (task.isSuccessful) {
-                                // We got the ReviewInfo object
-                                val reviewInfo = task.result
-                                val flow = reviewManager.launchReviewFlow(
-                                    context as ComponentActivity,
-                                    reviewInfo
-                                )
-                                flow.addOnCompleteListener { _ ->
-                                    Logger.d("Review:Review flow completed")
-                                    // The flow has finished. The API does not indicate whether the user
-                                    // reviewed or not, or even whether the review dialog was shown. Thus, no
-                                    // matter the result, we continue our app flow.
-                                }
-                            } else {
-                                // There was some problem, log or handle the error code.
-                                @ReviewErrorCode val reviewErrorCode =
-                                    (task.exception as ReviewException).errorCode
-                                Logger.e("Review:Error code: $reviewErrorCode")
-                            }
-                        }
-                    }
-                }
             }
         }
 
