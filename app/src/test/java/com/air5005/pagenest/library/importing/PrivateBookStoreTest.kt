@@ -2,10 +2,13 @@ package com.air5005.pagenest.library.importing
 
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.channels.FileChannel
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -133,6 +136,37 @@ class PrivateBookStoreTest {
         }
 
         assertEquals("Private book path is not a directory: ${root.absoluteFile}", failure.message)
+        assertTrue(Files.isSymbolicLink(root.toPath()))
+        assertTrue(symlinkTarget.listFiles()!!.isEmpty())
+    }
+
+    @Test
+    fun rootSwapAfterRevalidationDoesNotWriteThroughSymlink() {
+        val root = temporaryFolder.newFolder("books")
+        val symlinkTarget = temporaryFolder.newFolder("post-revalidation-attacker")
+        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun openRoot(
+                rootDirectory: File,
+                operations: PrivateBookStoreFileOperations,
+            ): PrivateBookStoreRootHandle {
+                val delegate = SystemPrivateBookStoreFileOperations.openRoot(
+                    rootDirectory,
+                    operations,
+                )
+                return object : PrivateBookStoreRootHandle by delegate {
+                    override fun createPart(): File {
+                        Files.delete(rootDirectory.toPath())
+                        Files.createSymbolicLink(rootDirectory.toPath(), symlinkTarget.toPath())
+                        return delegate.createPart()
+                    }
+                }
+            }
+        }
+
+        assertThrows(IOException::class.java) {
+            PrivateBookStore(root, operations).store("hello".byteInputStream(), "book.epub")
+        }
+
         assertTrue(Files.isSymbolicLink(root.toPath()))
         assertTrue(symlinkTarget.listFiles()!!.isEmpty())
     }
@@ -552,6 +586,55 @@ class PrivateBookStoreTest {
             trigger.createNewFile()
             if (attacker.isAlive) attacker.destroyForcibly()
         }
+    }
+
+    @Test
+    fun sameInodeMutationAfterHashEofIsRejected() {
+        val root = temporaryFolder.newFolder("same-inode-books")
+        val finalFile = File(root, "$PROCESS_CONTENT_SHA256.pdf").apply {
+            writeText(PROCESS_CONTENT)
+        }
+        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun openExistingBook(file: File): ExistingBookInput {
+                val delegate = SystemPrivateBookStoreFileOperations.openExistingBook(file)
+                return object : ExistingBookInput by delegate {
+                    override fun verifyPathStillMatches() {
+                        FileOutputStream(finalFile, true).use { it.write('!'.code) }
+                        delegate.verifyPathStillMatches()
+                    }
+                }
+            }
+        }
+
+        assertThrows(IOException::class.java) {
+            PrivateBookStore(root, operations).store(
+                PROCESS_CONTENT.byteInputStream(),
+                "book.pdf",
+            )
+        }
+
+        assertEquals("$PROCESS_CONTENT!", finalFile.readText())
+        assertTrue(root.listFiles()!!.none { it.name.endsWith(".part") })
+    }
+
+    @Test
+    fun jvmAdapterRejectsRegularFileSwapInsideOpenIdentityWindow() {
+        val root = temporaryFolder.newFolder("jvm-open-window")
+        val finalFile = File(root, "final.pdf").apply { writeText("original") }
+        val operations = object : JvmExistingBookFileOperations by SystemJvmExistingBookFileOperations {
+            override fun openChannel(path: Path): FileChannel {
+                val opened = SystemJvmExistingBookFileOperations.openChannel(path)
+                Files.delete(path)
+                path.toFile().writeText("attacker")
+                return opened
+            }
+        }
+
+        assertThrows(IOException::class.java) {
+            JvmExistingBookInput.open(finalFile, operations).close()
+        }
+
+        assertEquals("attacker", finalFile.readText())
     }
 
     @Test
