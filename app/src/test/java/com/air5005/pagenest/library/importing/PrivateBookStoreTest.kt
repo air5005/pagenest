@@ -4,6 +4,8 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.Files
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -109,6 +111,30 @@ class PrivateBookStoreTest {
         assertEquals("parent sync failed", failure.message)
         assertFalse(root.exists())
         assertTrue(parent.listFiles()!!.isEmpty())
+    }
+
+    @Test
+    fun competingSymlinkAtMissingRootIsRejectedWithoutFollowingIt() {
+        val parent = temporaryFolder.newFolder("private")
+        val root = File(parent, "books")
+        val symlinkTarget = temporaryFolder.newFolder("attacker-controlled")
+        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun createDirectory(directory: File) {
+                if (directory.absoluteFile == root.absoluteFile) {
+                    Files.createSymbolicLink(directory.toPath(), symlinkTarget.toPath())
+                    throw FileAlreadyExistsException(directory.path)
+                }
+                SystemPrivateBookStoreFileOperations.createDirectory(directory)
+            }
+        }
+
+        val failure = assertThrows(IOException::class.java) {
+            PrivateBookStore(root, operations).store("hello".byteInputStream(), "book.epub")
+        }
+
+        assertEquals("Private book path is not a directory: ${root.absoluteFile}", failure.message)
+        assertTrue(Files.isSymbolicLink(root.toPath()))
+        assertTrue(symlinkTarget.listFiles()!!.isEmpty())
     }
 
     @Test
@@ -445,6 +471,90 @@ class PrivateBookStoreTest {
     }
 
     @Test
+    fun hashNamedSymlinkToMatchingBytesIsRejectedAsAnExistingBook() {
+        val root = temporaryFolder.newFolder("books")
+        val matchingTarget = File(temporaryFolder.root, "matching-target").apply {
+            writeText("hello")
+        }
+        val finalPath = File(
+            root,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824.epub",
+        ).toPath()
+        Files.createSymbolicLink(finalPath, matchingTarget.toPath())
+
+        assertThrows(IOException::class.java) {
+            PrivateBookStore(root).store("hello".byteInputStream(), "book.epub")
+        }
+
+        assertTrue(Files.isSymbolicLink(finalPath))
+        assertEquals("hello", matchingTarget.readText())
+        assertTrue(root.listFiles()!!.none { it.name.endsWith(".part") })
+    }
+
+    @Test
+    fun adversarialProcessSwapToMatchingSymlinkIsRejectedByTheSafeOpen() {
+        val root = temporaryFolder.newFolder("books")
+        val finalFile = File(root, "$PROCESS_CONTENT_SHA256.pdf").apply {
+            writeText(PROCESS_CONTENT)
+        }
+        val matchingTarget = File(temporaryFolder.root, "matching-process-target").apply {
+            writeText(PROCESS_CONTENT)
+        }
+        val coordination = temporaryFolder.newFolder("symlink-swap-coordination")
+        val ready = File(coordination, "ready")
+        val trigger = File(coordination, "trigger")
+        val result = File(coordination, "result")
+        val log = File(coordination, "attacker.log")
+        val java = File(System.getProperty("java.home"), "bin/java")
+        val attacker = ProcessBuilder(
+            java.absolutePath,
+            "-cp",
+            workerClasspath(),
+            PrivateBookStoreSymlinkSwapWorker::class.java.name,
+            finalFile.absolutePath,
+            matchingTarget.absolutePath,
+            ready.absolutePath,
+            trigger.absolutePath,
+            result.absolutePath,
+        )
+            .redirectErrorStream(true)
+            .redirectOutput(log)
+            .start()
+        try {
+            awaitCondition("adversarial process to await the swap trigger") { ready.isFile }
+            val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+                override fun openExistingBook(file: File): ExistingBookInput {
+                    val opened = SystemPrivateBookStoreFileOperations.openExistingBook(file)
+                    check(trigger.createNewFile())
+                    awaitCondition("adversarial process to replace final with a symlink") {
+                        result.isFile
+                    }
+                    check(result.readText() == "SWAPPED") {
+                        "attacker failed: ${result.readText()}; output=${log.readText()}"
+                    }
+                    return opened
+                }
+            }
+
+            assertThrows(IOException::class.java) {
+                PrivateBookStore(root, operations).store(
+                    PROCESS_CONTENT.byteInputStream(),
+                    "book.pdf",
+                )
+            }
+
+            assertTrue(attacker.waitFor(30, TimeUnit.SECONDS))
+            assertEquals("attacker output=${log.readText()}", 0, attacker.exitValue())
+            assertTrue(Files.isSymbolicLink(finalFile.toPath()))
+            assertEquals(PROCESS_CONTENT, matchingTarget.readText())
+            assertTrue(root.listFiles()!!.none { it.name.endsWith(".part") })
+        } finally {
+            trigger.createNewFile()
+            if (attacker.isAlive) attacker.destroyForcibly()
+        }
+    }
+
+    @Test
     fun concurrentIdenticalContentPublishesExactlyOneCompleteFile() {
         val root = temporaryFolder.newFolder("books")
         val content = ByteArray(256 * 1024) { (it % 251).toByte() }
@@ -490,6 +600,51 @@ class PrivateBookStoreTest {
         val workers = listOf(first, second)
         try {
             awaitCondition("both workers reached publication") {
+                File(coordination, "first.ready").isFile &&
+                    File(coordination, "second.ready").isFile
+            }
+            assertTrue(start.createNewFile())
+
+            val outcomes = workers.map(::awaitWorker).sorted()
+
+            assertEquals(listOf("EXISTING", "NEW"), outcomes)
+            val files = root.listFiles()!!
+            assertEquals(1, files.size)
+            assertEquals("$PROCESS_CONTENT_SHA256.pdf", files.single().name)
+            assertArrayEquals(PROCESS_CONTENT.toByteArray(), files.single().readBytes())
+            assertTrue(files.none { it.name.endsWith(".part") })
+        } finally {
+            start.createNewFile()
+            workers.forEach { worker ->
+                if (worker.process.isAlive) worker.process.destroyForcibly()
+            }
+        }
+    }
+
+    @Test
+    fun separateProcessesCreateMissingRootAndPublishExactlyOnce() {
+        val root = File(temporaryFolder.root, "missing/books")
+        val coordination = temporaryFolder.newFolder("missing-root-coordination")
+        val start = File(coordination, "start")
+        val first = launchWorker(
+            root,
+            coordination,
+            "first",
+            start,
+            waitAtPublication = false,
+            waitAtDirectoryCreate = true,
+        )
+        val second = launchWorker(
+            root,
+            coordination,
+            "second",
+            start,
+            waitAtPublication = false,
+            waitAtDirectoryCreate = true,
+        )
+        val workers = listOf(first, second)
+        try {
+            awaitCondition("both workers are ready to create the missing root") {
                 File(coordination, "first.ready").isFile &&
                     File(coordination, "second.ready").isFile
             }
@@ -559,6 +714,7 @@ class PrivateBookStoreTest {
         id: String,
         start: File,
         waitAtPublication: Boolean,
+        waitAtDirectoryCreate: Boolean = false,
     ): WorkerProcess {
         val result = File(coordination, "$id.result")
         val log = File(coordination, "$id.log")
@@ -573,6 +729,7 @@ class PrivateBookStoreTest {
             start.absolutePath,
             result.absolutePath,
             waitAtPublication.toString(),
+            waitAtDirectoryCreate.toString(),
         )
             .redirectErrorStream(true)
             .redirectOutput(log)
@@ -632,7 +789,16 @@ internal object PrivateBookStoreProcessWorker {
         val start = File(arguments[2])
         val resultFile = File(arguments[3])
         val waitAtPublication = arguments[4].toBoolean()
+        val waitAtDirectoryCreate = arguments[5].toBoolean()
         val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun createDirectory(directory: File) {
+                if (waitAtDirectoryCreate && directory.absoluteFile == root.parentFile!!.absoluteFile) {
+                    check(ready.createNewFile())
+                    awaitStart(start)
+                }
+                SystemPrivateBookStoreFileOperations.createDirectory(directory)
+            }
+
             override fun publishAtomically(source: File, target: File) {
                 if (waitAtPublication) {
                     check(ready.createNewFile())
@@ -649,6 +815,7 @@ internal object PrivateBookStoreProcessWorker {
             )
             resultFile.writeText(if (stored.wasExisting) "EXISTING" else "NEW")
         } catch (failure: Throwable) {
+            failure.printStackTrace()
             resultFile.writeText("ERROR:${failure::class.java.name}:${failure.message}")
         }
     }
@@ -657,6 +824,35 @@ internal object PrivateBookStoreProcessWorker {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
         while (!start.isFile) {
             check(System.nanoTime() < deadline) { "Timed out waiting for publication start" }
+            Thread.sleep(10)
+        }
+    }
+}
+
+internal object PrivateBookStoreSymlinkSwapWorker {
+    @JvmStatic
+    fun main(arguments: Array<String>) {
+        val finalFile = File(arguments[0])
+        val matchingTarget = File(arguments[1])
+        val ready = File(arguments[2])
+        val trigger = File(arguments[3])
+        val result = File(arguments[4])
+        try {
+            check(ready.createNewFile())
+            awaitTrigger(trigger)
+            Files.delete(finalFile.toPath())
+            Files.createSymbolicLink(finalFile.toPath(), matchingTarget.toPath())
+            result.writeText("SWAPPED")
+        } catch (failure: Throwable) {
+            failure.printStackTrace()
+            result.writeText("ERROR:${failure::class.java.name}:${failure.message}")
+        }
+    }
+
+    private fun awaitTrigger(trigger: File) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (!trigger.isFile) {
+            check(System.nanoTime() < deadline) { "Timed out waiting for swap trigger" }
             Thread.sleep(10)
         }
     }
