@@ -330,7 +330,6 @@
 -keepclassmembers class * extends com.google.android.gms.internal.measurement.zzkf {
   <fields>;
 }
--dontwarn com.google.firebase.platforminfo.KotlinDetector
 #-dontwarn com.google.auto.value.AutoValue
 #-dontwarn com.google.auto.value.AutoValue$Builder
 -dontwarn com.facebook.ads.internal.**
@@ -464,11 +463,6 @@
 -keepclassmembers,allowobfuscation class * extends androidx.lifecycle.AndroidViewModel {
     <init>(android.app.Application);
 }
-#-dontwarn com.google.firebase.components.Component$Instantiation
-#-dontwarn com.google.firebase.components.Component$ComponentType
-
--keep class * implements com.google.firebase.components.ComponentRegistrar
--keep,allowshrinking interface com.google.firebase.components.ComponentRegistrar
 -keep class * implements androidx.versionedparcelable.VersionedParcelable
 -keep public class android.support.**Parcelizer { *; }
 -keep public class androidx.**Parcelizer { *; }
@@ -867,10 +861,6 @@ kotlin.coroutines.Continuation suspend*(...);
 -keep public class android.support.**Parcelizer { *; }
 -keep public class androidx.**Parcelizer { *; }
 -keep public class androidx.versionedparcelable.ParcelImpl
--dontwarn com.google.firebase.components.Component$Instantiation
--dontwarn com.google.firebase.components.Component$ComponentType
--keep class * implements com.google.firebase.components.ComponentRegistrar
--keep,allowshrinking interface com.google.firebase.components.ComponentRegistrar
 -dontwarn com.google.auto.value.AutoValue
 -dontwarn com.google.auto.value.AutoValue$Builder
 -keep,allowobfuscation @interface androidx.annotation.Keep

@@ -28,7 +28,6 @@ import androidx.compose.ui.unit.dp
 //    val purchaseHelper: PurchaseHelper = PurchaseHelperController.current
 //    val navController: NavHostController = LocalNavController.current
 //    val context = LocalContext.current
-//    val reviewManager = remember { ReviewManagerFactory.create(context) }
 //
 ////    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 //    val scope = rememberCoroutineScope()
@@ -127,34 +126,6 @@ import androidx.compose.ui.unit.dp
 //                item {
 //                    SetListItem(isDarkTheme,  stringResource(R.string.about),Icons.Outlined.Info,) {
 //                        navController.navigate(Screens.AboutAppScreen.route + "/${isDarkTheme}")
-//                    }
-//                }
-//
-//
-//                item {
-//                    SetListItem(isDarkTheme,  stringResource(R.string.rate_the_app), Icons.Outlined.StarRate,) {
-//                        val request = reviewManager.requestReviewFlow()
-//                                request.addOnCompleteListener { task ->
-//                                    if (task.isSuccessful) {
-//                                        // We got the ReviewInfo object
-//                                        val reviewInfo = task.result
-//                                        val flow = reviewManager.launchReviewFlow(
-//                                            context as ComponentActivity,
-//                                            reviewInfo
-//                                        )
-//                                        flow.addOnCompleteListener { _ ->
-//                                            Logger.d("Review:Review flow completed")
-//                                            // The flow has finished. The API does not indicate whether the user
-//                                            // reviewed or not, or even whether the review dialog was shown. Thus, no
-//                                            // matter the result, we continue our app flow.
-//                                        }
-//                                    } else {
-//                                        // There was some problem, log or handle the error code.
-//                                        @ReviewErrorCode val reviewErrorCode =
-//                                            (task.exception as ReviewException).errorCode
-//                                        Logger.e("Review:Error code: $reviewErrorCode")
-//                                    }
-//                                }
 //                    }
 //                }
 //
