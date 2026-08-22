@@ -5,6 +5,7 @@
 
 #define PRIVATE_BOOK_STORE_RENAME_NOREPLACE 1U
 #define PRIVATE_BOOK_STORE_EIO 5
+#define PRIVATE_BOOK_STORE_EINTR 4
 #define PRIVATE_BOOK_STORE_ESTALE 116
 
 struct private_book_store_file_state {

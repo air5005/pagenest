@@ -17,7 +17,9 @@ struct private_book_store_publish_result private_book_store_publish_no_replace(
         const struct private_book_store_publish_operations *operations,
         void *context) {
     struct private_book_store_publish_result result = {0, 0, 0};
-    result.operation_errno = operations->lock(context);
+    do {
+        result.operation_errno = operations->lock(context);
+    } while (result.operation_errno == PRIVATE_BOOK_STORE_EINTR);
     if (result.operation_errno != 0) return result;
 
     struct private_book_store_file_state descriptor_state;

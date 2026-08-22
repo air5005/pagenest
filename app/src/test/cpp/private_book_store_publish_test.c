@@ -10,13 +10,32 @@ struct fake_publish_context {
     struct private_book_store_file_state final_entry;
     int rename_errno;
     int unlock_errno;
+    int interrupted_lock_count;
+    int lock_errno;
+    int flock_errno;
+    int lock_count;
     unsigned int rename_flags;
     int sync_count;
 };
 
-static int fake_lock(void *context) {
-    (void) context;
+static int fake_blocking_flock(void *context) {
+    struct fake_publish_context *fake = context;
+    fake->lock_count++;
+    if (fake->interrupted_lock_count > 0) {
+        fake->interrupted_lock_count--;
+        fake->flock_errno = PRIVATE_BOOK_STORE_EINTR;
+        return -1;
+    }
+    if (fake->lock_errno != 0) {
+        fake->flock_errno = fake->lock_errno;
+        return -1;
+    }
     return 0;
+}
+
+static int fake_lock(void *context) {
+    struct fake_publish_context *fake = context;
+    return fake_blocking_flock(fake) == 0 ? 0 : fake->flock_errno;
 }
 
 static int copy_state(
@@ -125,5 +144,20 @@ int private_book_store_publish_self_test(void) {
     result = private_book_store_publish_no_replace(&OPERATIONS, &unlock_failure);
     if (result.operation_errno != 0 ||
             result.unlock_errno != PRIVATE_BOOK_STORE_EIO || !result.published) return 28;
+
+    struct fake_publish_context interrupted_lock = winner;
+    interrupted_lock.interrupted_lock_count = 2;
+    interrupted_lock.lock_count = 0;
+    interrupted_lock.sync_count = 0;
+    result = private_book_store_publish_no_replace(&OPERATIONS, &interrupted_lock);
+    if (result.operation_errno != 0 || result.unlock_errno != 0 || !result.published ||
+            interrupted_lock.lock_count != 3 || interrupted_lock.sync_count != 1) return 29;
+
+    struct fake_publish_context failed_lock = winner;
+    failed_lock.lock_errno = PRIVATE_BOOK_STORE_EIO;
+    failed_lock.lock_count = 0;
+    result = private_book_store_publish_no_replace(&OPERATIONS, &failed_lock);
+    if (result.operation_errno != PRIVATE_BOOK_STORE_EIO || result.unlock_errno != 0 ||
+            result.published || failed_lock.lock_count != 1) return 30;
     return 0;
 }
