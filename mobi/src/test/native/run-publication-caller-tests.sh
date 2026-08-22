@@ -8,6 +8,8 @@ cxx="${CXX:-c++}"
 libmobi="$repo_root/mobi/src/main/cpp/libmobi/src"
 util="$repo_root/mobi/src/main/cpp/util"
 unzip="$repo_root/mobi/src/main/cpp/unzip101e"
+tidy="$repo_root/mobi/src/main/cpp/tidy-html5"
+host_stubs="$repo_root/mobi/src/test/native/host_stubs"
 
 mkdir -p "$output_directory"
 cd "$output_directory"
@@ -17,8 +19,12 @@ common_flags=(
     -ffunction-sections
     -fdata-sections
     -I "$libmobi"
+    -I "$host_stubs"
     -I "$util"
     -I "$unzip"
+    -I "$repo_root/mobi/src/main/cpp/utfcpp/source"
+    -I "$tidy/include"
+    -I "$tidy/src"
 )
 
 "$cc" \
@@ -55,11 +61,36 @@ common_flags=(
     "$unzip/unzip.c" \
     "$unzip/zip.c"
 
+"$cc" \
+    -std=c11 \
+    -w \
+    -DSUPPORT_LOCALIZATIONS=1 \
+    -DSUPPORT_CONSOLE_APP=1 \
+    "${common_flags[@]}" \
+    ${CFLAGS:-} \
+    -c \
+    "$tidy"/src/*.c
+
+"$cxx" \
+    -std=c++17 \
+    -w \
+    -DEPUB_LOAD_TESTING \
+    "${common_flags[@]}" \
+    ${CXXFLAGS:-${CFLAGS:-}} \
+    -c \
+    "$util/tidyh5_ext.cpp" \
+    "$util/zip_ext.cpp" \
+    "$util/xml_ext.cpp" \
+    "$util/epub_util.cpp"
+
 "$cxx" \
     -std=c++17 \
     -Wall \
     -Wextra \
     -Werror \
+    -Wno-missing-field-initializers \
+    -Wno-reorder \
+    -DEPUB_LOAD_TESTING \
     "${common_flags[@]}" \
     ${CXXFLAGS:-${CFLAGS:-}} \
     -c \
@@ -75,6 +106,11 @@ common_flags=(
     -lz \
     -o publication_caller_integration_test
 
-./publication_caller_integration_test \
-    "${libmobi%/src}/tests/samples/sample-multimedia.mobi"
-echo "5 production EPUB, 3 production MOBI, and 1 production RAII fixture passed"
+diagnostics="$output_directory/publication-caller-diagnostics.log"
+if ! ./publication_caller_integration_test \
+        "${libmobi%/src}/tests/samples/sample-multimedia.mobi" \
+        2>"$diagnostics"; then
+    cat "$diagnostics" >&2
+    exit 1
+fi
+echo "5 actual load_epub, 3 production MOBI, and 1 actual load_epub RAII fixture passed"

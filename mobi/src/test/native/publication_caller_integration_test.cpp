@@ -1,8 +1,7 @@
-#include "bounded_zip_reader.h"
-#include "epub_cover_selection.h"
+#include "epub_load_test_seam.h"
+#include "epub_util.h"
 #include "mobi_cover_selection.h"
 #include "publication_cover.h"
-#include "zip_archive_runner.h"
 
 #include <dirent.h>
 #include <ftw.h>
@@ -21,6 +20,9 @@ extern "C" {
 #include "zip.h"
 }
 
+std::string app_ext::appFileDir;
+std::string app_ext::appCacheDir;
+
 namespace {
 
 constexpr unsigned char kDecodedPng[] = {
@@ -37,12 +39,19 @@ constexpr unsigned char kDecodedPng[] = {
 
 constexpr char kContainerXml[] =
         "<?xml version=\"1.0\"?>"
-        "<container><rootfiles><rootfile full-path=\"OPS/package.opf\"/>"
+        "<container version=\"1.0\" "
+        "xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">"
+        "<rootfiles><rootfile full-path=\"OPS/package.opf\" "
+        "media-type=\"application/oebps-package+xml\"/>"
         "</rootfiles></container>";
 
 std::string opf_xml(const char *media_type) {
     return std::string("<?xml version=\"1.0\"?>") +
-            "<package><metadata><dc:title>../../../untrusted-title</dc:title>"
+            "<package version=\"3.0\" unique-identifier=\"book-id\" "
+            "xmlns=\"http://www.idpf.org/2007/opf\" "
+            "xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
+            "<metadata><dc:identifier id=\"book-id\">fixture</dc:identifier>"
+            "<dc:title>../../../untrusted-title</dc:title>"
             "<meta name=\"cover\" content=\"cover-id\"/></metadata><manifest>"
             "<item id=\"chapter\" href=\"text/chapter.xhtml\" "
             "media-type=\"application/xhtml+xml\"/>"
@@ -240,23 +249,67 @@ bool make_directory(const char *root, const char *name, char *output, size_t cap
     return snprintf(output, capacity, "%s/%s", root, name) > 0 && mkdir(output, 0700) == 0;
 }
 
-bool extract_epub(const char *path, const char *files, char *output, size_t capacity) {
-    unzFile archive = unzOpen(path);
-    if (archive == nullptr) {
-        return false;
+int load_epub(
+        const char *path,
+        const char *files,
+        char *output,
+        size_t capacity,
+        std::string *loaded_title = nullptr) {
+    app_ext::appFileDir = files;
+    std::string cover;
+    std::string title;
+    std::string author;
+    std::string contributor;
+    std::string subject;
+    std::string publisher;
+    std::string date;
+    std::string description;
+    std::string review;
+    std::string imprint;
+    std::string copyright;
+    std::string isbn;
+    std::string asin;
+    std::string language;
+    std::string identifier;
+    bool encrypted = false;
+    int result = epub_util::load_epub(
+            path,
+            cover,
+            title,
+            author,
+            contributor,
+            subject,
+            publisher,
+            date,
+            description,
+            review,
+            imprint,
+            copyright,
+            isbn,
+            asin,
+            language,
+            identifier,
+            encrypted);
+    if (capacity > 0) {
+        snprintf(output, capacity, "%s", cover.c_str());
     }
-    int result = epub_cover_extract_from_archive(archive, files, output, capacity);
-    return unzClose(archive) == UNZ_OK && result == 1;
+    if (loaded_title != nullptr) {
+        *loaded_title = title;
+    }
+    return result;
 }
 
 bool legal_epub_uses_container_manifest_and_decodes(const char *root) {
     char epub[512];
     char files[512];
     char output[1024] = {0};
+    std::string loaded_title;
     snprintf(epub, sizeof(epub), "%s/legal.epub", root);
     return make_directory(root, "epub-files", files, sizeof(files)) &&
             write_epub(epub, kDecodedPng, sizeof(kDecodedPng), 0, "image/png") &&
-            extract_epub(epub, files, output, sizeof(output)) &&
+            load_epub(epub, files, output, sizeof(output), &loaded_title) == 1 &&
+            output[0] != '\0' &&
+            loaded_title == "../../../untrusted-title" &&
             strstr(output, "untrusted-title") == nullptr &&
             decode_png_independently(output);
 }
@@ -280,7 +333,7 @@ bool invalid_epub_leaves_no_cover(
         return false;
     }
     snprintf(covers, sizeof(covers), "%s/covers", files);
-    return !extract_epub(epub, files, output, sizeof(output)) && output[0] == '\0' &&
+    return load_epub(epub, files, output, sizeof(output)) == 1 && output[0] == '\0' &&
             count_entries(covers) == 0;
 }
 
@@ -392,17 +445,9 @@ bool malformed_production_archive_path_closes_once(const char *root) {
         return false;
     }
     tracked_closes = 0;
-    int result = with_zip_archive(
-            epub,
-            tracked_open,
-            tracked_close,
-            [&](void *opened) {
-                return epub_cover_extract_from_archive(
-                        opened,
-                        files,
-                        output,
-                        sizeof(output));
-            });
+    epub_load_set_archive_functions_for_testing(tracked_open, tracked_close);
+    int result = load_epub(epub, files, output, sizeof(output));
+    epub_load_reset_archive_functions_for_testing();
     return result == 0 && output[0] == '\0' && tracked_closes == 1;
 }
 

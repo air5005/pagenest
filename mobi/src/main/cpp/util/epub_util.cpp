@@ -4,8 +4,37 @@
 
 #include "epub_util.h"
 #include "epub_cover_selection.h"
+#include "epub_load_test_seam.h"
 #include "zip_archive_runner.h"
 #include <algorithm>
+
+namespace {
+
+#ifdef EPUB_LOAD_TESTING
+zip_archive_open_function epub_load_open_archive = unzOpen;
+zip_archive_owner::close_function epub_load_close_archive = unzClose;
+#else
+constexpr zip_archive_open_function epub_load_open_archive = unzOpen;
+constexpr zip_archive_owner::close_function epub_load_close_archive = unzClose;
+#endif
+
+}  // namespace
+
+#ifdef EPUB_LOAD_TESTING
+
+void epub_load_set_archive_functions_for_testing(
+        epub_load_open_function open_archive,
+        epub_load_close_function close_archive) {
+    epub_load_open_archive = open_archive == nullptr ? unzOpen : open_archive;
+    epub_load_close_archive = close_archive == nullptr ? unzClose : close_archive;
+}
+
+void epub_load_reset_archive_functions_for_testing() {
+    epub_load_open_archive = unzOpen;
+    epub_load_close_archive = unzClose;
+}
+
+#endif
 
 const std::string epub_zfile_container = "META-INF/container.xml";
 const std::string epub_zfile_mimetype = "mimetype";
@@ -281,8 +310,8 @@ int epub_util::load_epub(std::string fullpath,  //文件路径
 
     return with_zip_archive(
             fullpath.c_str(),
-            unzOpen,
-            unzClose,
+            epub_load_open_archive,
+            epub_load_close_archive,
             [&](void *opened_archive) -> int {
     unzFile uf = opened_archive;
 

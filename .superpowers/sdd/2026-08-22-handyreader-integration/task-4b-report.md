@@ -196,3 +196,78 @@ NEW_SELECTOR_BOUNDARY_HITS=0
 ```
 
 `NEW_SELECTOR_BOUNDARY_HITS=0` confirms the new selector/runner files contain no RawML, decrypt, encrypt, title, or author boundary crossing. The protection probe and DRM graph remain unchanged.
+
+## Fix round 2: actual `epub_util::load_epub` coverage
+
+Review correctly identified that fix round 1's EPUB archive fixtures called `epub_cover_extract_from_archive` directly. Production `epub_util::load_epub` instead performed its own container and OPF reads, libtidy normalization, tinyxml parsing, and then handed the normalized package to `epub_cover_extract_from_package`. The malformed close fixture likewise called the generic runner rather than `load_epub` itself.
+
+### Qualified RED
+
+All five EPUB cases and the malformed-close fixture were first changed to call `epub_util::load_epub`, with a narrow archive-I/O observation seam referenced by the test. Before that production seam existed, the real WSL GCC build failed:
+
+```text
+fatal error: epub_load_test_seam.h: No such file or directory
+RED_EXIT=1
+```
+
+### Actual load path GREEN
+
+- The host runner now compiles the actual `epub_util.cpp`, `zip_ext.cpp`, `tidyh5_ext.cpp`, `xml_ext.cpp`, all libtidy production C sources, tinyxml2, minizip, the bounded reader, selectors, and real safe filesystem writer. Minimal host-only Android/JNI declaration stubs let those unchanged Android-oriented headers compile; they provide no filesystem, ZIP, tidy, parser, or cover behavior.
+- Legal, oversized high-compression, CRC-corrupt, declared-size partial/short, and MIME-mismatch EPUBs all call the static production `epub_util::load_epub` API. Each therefore executes actual `unzOpen`, container and OPF reads, real libtidy normalization, tinyxml parsing, and the production `epub_cover_extract_from_package` handoff.
+- The fixtures now contain standards-shaped container, OPF, Dublin Core, and media-type namespace/attributes. The legal fixture asserts the title recovered by the actual OPF metadata parser, while its output still passes the independent PNG chunk/CRC/zlib decoder.
+- Invalid cover cases are valid publications: `load_epub` succeeds at publication metadata loading but returns no cover path and leaves no residual file.
+
+### Actual load close hook GREEN
+
+- `EPUB_LOAD_TESTING` enables only a narrow opener/closer substitution in `epub_util.cpp`. Production Android builds use compile-time-constant `unzOpen` and `unzClose` pointers; the setter and mutable hook pointers do not exist in Android objects or exports.
+- The malformed real EPUB now calls `epub_util::load_epub` itself. Its test closer increments the observable count and delegates to actual `unzClose`; the early failure returns zero, clears the output path, and closes exactly once.
+
+### Load-path mutation RED
+
+Three restored mutations demonstrate that the fixtures are connected to the exact reviewed boundaries:
+
+```text
+SELECTOR_MUTATION_EXIT=1
+BOUND_BYPASS_MUTATION_EXIT=1
+CLOSE_MUTATION_EXIT=1
+```
+
+- Disabling `load_epub`'s package-selector handoff kills the legal decoded-cover fixture.
+- Replacing the selector handoff with unbounded `zip_ext::read_zip_file` plus the raw safe writer kills both the oversized and MIME-mismatch fixtures.
+- Removing `zip_archive_owner` from the runner used by actual `load_epub` kills the malformed close-exactly-once fixture.
+
+### Fix-round final verification
+
+Fresh host verification after restoring every mutation:
+
+```text
+5 actual load_epub, 3 production MOBI, and 1 actual load_epub RAII fixture passed
+5 bounded ZIP, 4 real EPUB cover, and 4 real filesystem/MOBI cover fixtures passed
+9 native protection fixtures passed
+9 native safe-cover fixtures passed
+1 native ZIP archive owner fixture passed
+```
+
+Fresh clean Android/JVM build:
+
+```text
+BUILD SUCCESSFUL in 1m 9s
+205 actionable tasks: 59 executed, 146 up-to-date
+JUNIT_SUITES=3 TESTS=32 FAILURES=0 ERRORS=0 SKIPPED=0
+```
+
+Post-build graph, symbol, and boundary audit:
+
+```text
+NINJA_FILES=2 FORBIDDEN_ACTIVE_RULES=0
+arm64-v8a USE_ENCRYPTION:BOOL=OFF
+armeabi-v7a USE_ENCRYPTION:BOOL=OFF
+arm64-v8a APP_JNI_PROBE=1 COVER_OR_SEAM_EXPORTS=0
+armeabi-v7a APP_JNI_PROBE=1 COVER_OR_SEAM_EXPORTS=0
+arm64-v8a LIBMOBI_INSPECT=1 IS_ENCRYPTED=1 DRM_OPERATIONAL=0
+armeabi-v7a LIBMOBI_INSPECT=1 IS_ENCRYPTED=1 DRM_OPERATIONAL=0
+PROTECTION_SOURCE_DIFF_LINES=0
+NEW_SEAM_BOUNDARY_HITS=0
+```
+
+The four pre-existing disabled `mobi_drm_*` stub exports remain present and non-operational. No protection-probe source, DRM source graph, MOBI selector, writer policy, or decoded-image validation changed in this round.
