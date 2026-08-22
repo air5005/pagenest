@@ -4,8 +4,10 @@ import com.wxn.base.bean.Book
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
-import java.nio.file.Files
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 class BookImportService(
     private val privateBookStore: PrivateBookStore,
@@ -14,23 +16,27 @@ class BookImportService(
     private val catalog: BookImportCatalog,
     private val coordinator: BookImportCoordinator,
     private val privateBookFileValidator: PrivateBookFileValidator,
-    private val deletePrivateFile: (File) -> Boolean = {
-        Files.deleteIfExists(it.toPath())
-    },
+    private val cancellationCleanupTimeoutMillis: Long = 5_000L,
 ) {
+    init {
+        require(cancellationCleanupTimeoutMillis > 0L) {
+            "cancellationCleanupTimeoutMillis must be positive"
+        }
+    }
+
     suspend fun execute(request: ImportRequest): ImportResult {
         val format = SupportedBookFormat.fromFileName(request.displayName)
             ?: return rejected(ImportRejection.UNSUPPORTED_FORMAT)
         val input = try {
             request.openInput()
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Exception) {
+        } catch (failure: Throwable) {
             failure.promotedCancellation()?.let { throw it }
-            return rejected(ImportRejection.UNREADABLE)
-        } catch (failure: LinkageError) {
-            failure.promotedCancellation()?.let { throw it }
-            return rejected(ImportRejection.UNREADABLE)
+            when (failure) {
+                is Exception,
+                is LinkageError,
+                -> return rejected(ImportRejection.UNREADABLE)
+                else -> throw failure
+            }
         }
 
         val publishedImport = store(input, request.displayName)
@@ -236,29 +242,27 @@ class BookImportService(
         bookId: Long,
         catalogFile: File,
     ): ImportResult {
-        if (storedBook.wasExisting) return ImportResult.Duplicate(bookId)
-        return when (matchPrivateFiles(storedBook.file, catalogFile)) {
-            PrivateBookFileMatch.INVALID -> rejected(ImportRejection.STORAGE_FAILED)
-            PrivateBookFileMatch.SAME -> ImportResult.Duplicate(bookId)
-            PrivateBookFileMatch.DIFFERENT -> if (deleteStoredFile(storedBook.file)) {
-                ImportResult.Duplicate(bookId)
-            } else {
-                rejected(ImportRejection.STORAGE_FAILED)
-            }
+        return when (resolveDuplicate(storedBook, catalogFile)) {
+            DuplicateResolution.SAME,
+            DuplicateResolution.DIFFERENT,
+            -> ImportResult.Duplicate(bookId)
+            DuplicateResolution.INVALID,
+            DuplicateResolution.CLEANUP_FAILED,
+            -> rejected(ImportRejection.STORAGE_FAILED)
         }
     }
 
-    private fun matchPrivateFiles(
-        storedFile: File,
+    private fun resolveDuplicate(
+        storedBook: StoredBook,
         catalogFile: File,
-    ): PrivateBookFileMatch = try {
-        privateBookFileValidator.match(storedFile, catalogFile)
+    ): DuplicateResolution = try {
+        privateBookFileValidator.resolveDuplicate(storedBook, catalogFile)
     } catch (failure: Throwable) {
         failure.promotedCancellation()?.let { throw it }
         when (failure) {
             is Exception,
             is LinkageError,
-            -> PrivateBookFileMatch.INVALID
+            -> DuplicateResolution.INVALID
             else -> throw failure
         }
     }
@@ -267,8 +271,7 @@ class BookImportService(
         storedBook: StoredBook,
         reason: ImportRejection,
     ): ImportResult.Rejected {
-        if (storedBook.wasExisting) return rejected(reason)
-        return if (deleteStoredFile(storedBook.file)) {
+        return if (deleteNewCopy(storedBook)) {
             rejected(reason)
         } else {
             rejected(ImportRejection.STORAGE_FAILED)
@@ -301,8 +304,8 @@ class BookImportService(
         throw failure
     }
 
-    private fun deleteStoredFile(file: File): Boolean = try {
-        deletePrivateFile(file)
+    private fun deleteNewCopy(storedBook: StoredBook): Boolean = try {
+        privateBookFileValidator.deleteNewCopy(storedBook)
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (failure: Exception) {
@@ -318,7 +321,15 @@ class BookImportService(
         cancellation: CancellationException,
         catalogStateUnknown: Boolean = false,
     ): Nothing {
-        val cleanupFailure = cleanupNewCopyInsideLock(storedBook, catalogStateUnknown)
+        val cleanupFailure = try {
+            withContext(NonCancellable) {
+                withTimeout(cancellationCleanupTimeoutMillis) {
+                    cleanupNewCopyInsideLock(storedBook, catalogStateUnknown)
+                }
+            }
+        } catch (failure: Throwable) {
+            failure
+        }
         if (cleanupFailure != null && cleanupFailure !== cancellation) {
             cancellation.addSuppressed(cleanupFailure)
         }
@@ -329,7 +340,6 @@ class BookImportService(
         storedBook: StoredBook,
         catalogStateUnknown: Boolean,
     ): Throwable? {
-        if (storedBook.wasExisting) return null
         if (catalogStateUnknown) {
             val existingMatch = try {
                 catalog.findBySha256(storedBook.sha256)
@@ -337,20 +347,23 @@ class BookImportService(
                 return failure
             }
             if (existingMatch != null) {
-                return when (matchPrivateFiles(storedBook.file, existingMatch.privateFile)) {
-                    PrivateBookFileMatch.SAME -> null
-                    PrivateBookFileMatch.DIFFERENT -> deleteFailure(storedBook.file)
-                    PrivateBookFileMatch.INVALID ->
+                return when (resolveDuplicate(storedBook, existingMatch.privateFile)) {
+                    DuplicateResolution.SAME,
+                    DuplicateResolution.DIFFERENT,
+                    -> null
+                    DuplicateResolution.INVALID ->
                         IOException("Unable to validate the catalog's private book file")
+                    DuplicateResolution.CLEANUP_FAILED ->
+                        IOException("Unable to clean up the redundant private book file")
                 }
             }
         }
-        return deleteFailure(storedBook.file)
+        return deleteFailure(storedBook)
     }
 
-    private fun deleteFailure(file: File): Throwable? = try {
-        if (deletePrivateFile(file)) null
-        else IOException("Private book cleanup did not delete $file")
+    private fun deleteFailure(storedBook: StoredBook): Throwable? = try {
+        if (privateBookFileValidator.deleteNewCopy(storedBook)) null
+        else IOException("Private book cleanup did not delete ${storedBook.file}")
     } catch (failure: Throwable) {
         failure
     }

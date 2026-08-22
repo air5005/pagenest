@@ -430,7 +430,7 @@ git commit -m "feat: add atomic private book storage"
 - Produces: `ImportRequest(displayName: String, openInput: () -> InputStream)`.
 - Produces: `BookMetadataParser.parse(file: File, format: SupportedBookFormat): Book?`.
 - Produces: `BookImportCatalog.findBySha256(sha256: String): CatalogMatch?` and atomic `insertOrGet(book: Book, sha256: String): CatalogWriteResult`.
-- Produces: `CatalogMatch` and `CatalogWriteResult.Existing` with the canonical app-private file represented by the catalog row, so same-path concurrent imports cannot delete a published file.
+- Produces: `CatalogMatch` and `CatalogWriteResult.Existing` with the catalog row's private-file candidate; `PrivateBookFileValidator` alone validates its live trusted-root identity.
 
 - [ ] **Step 1: Define failing orchestration tests**
 
@@ -478,7 +478,9 @@ normalize format → open input → private atomic copy → acquire SHA lock
 → metadata parse → atomic catalog insert-or-get → Imported/Duplicate(bookId)
 ```
 
-Keep source close, protection, lookup, parsing, atomic catalog publication, and every post-publication cleanup inside the SHA critical section. If lock acquisition fails, close the source but retain the published orphan. Remove only a newly created private copy after proving there is no same-file catalog winner; never delete a pre-existing duplicate. Resolve catalog files only through `PrivateBookFileValidator`: `SAME` preserves the shared file, `DIFFERENT` deletes only this import's redundant new copy, and `INVALID` (missing, outside the trusted root, symlink, or non-regular) fails closed without deletion. Convert expected failures to `ImportResult`; discover and propagate cancellation through cause/suppressed graphs.
+Keep source close, protection, lookup, parsing, atomic catalog publication, and every post-publication cleanup inside the SHA critical section. If lock acquisition fails, close the source but retain the published orphan. On cancellation, perform exactly one catalog re-query and one validator-owned cleanup decision in `NonCancellable`, suppress cleanup failure, then rethrow the original cancellation. Never delete a pre-existing duplicate.
+
+`PrivateBookFileValidator.resolveDuplicate(storedBook, catalogFile)` owns comparison plus redundant-new-copy removal as one boundary: `SAME` and a successfully handled `DIFFERENT` return `Duplicate`, while `INVALID`/`CLEANUP_FAILED` return `STORAGE_FAILED`. Even `wasExisting == true` duplicates must be validated; a valid `DIFFERENT` is preserved without deletion. `deleteNewCopy(storedBook)` owns all other cleanup and is a no-op for pre-existing files. The service must not call path-based deletion. Missing, outside-root, symlink, and non-regular candidates fail closed. After Task 5 publication reveals the SHA, every cooperating PageNest private-book mutation uses that SHA coordinator. Task 5 does not claim protection against arbitrary malicious code sharing the app UID, but the descriptor-relative boundary covers all cooperating app lifecycle paths. Convert expected failures to `ImportResult`; discover and propagate cancellation through cause/suppressed graphs.
 
 - [ ] **Step 4: Run GREEN and commit**
 
@@ -495,6 +497,8 @@ git commit -m "feat: orchestrate safe local book imports"
 - Create: `app/src/test/java/com/air5005/pagenest/library/importing/HandyReaderImportAdaptersTest.kt`
 - Create: `app/src/test/java/com/air5005/pagenest/library/importing/BookImportCoordinatorProcessTest.kt`
 - Create: `app/src/androidTest/java/com/wxn/reader/data/source/local/AppDatabaseMigrationTest.kt`
+- Modify: `app/build.gradle.kts`
+- Modify: `gradle/libs.versions.toml`
 - Modify: `app/src/main/java/com/wxn/reader/data/dto/BookEntity.kt`
 - Modify: `app/src/main/java/com/wxn/reader/data/source/local/AppDatabase.kt`
 - Modify: `app/src/main/java/com/wxn/reader/data/source/local/dao/BookDao.kt`
@@ -512,14 +516,15 @@ git commit -m "feat: orchestrate safe local book imports"
 
 - [ ] **Step 1: Write failing adapter tests**
 
-Verify the metadata adapter passes a `CachedFile` backed by the private file to `FileParser` and overwrites `Book.filePath` with the private file URI. Verify Room migration 1→2 preserves legacy rows with `sha256 = NULL`, permits multiple NULL values, enforces uniqueness for non-null hashes, and that INSERT-IGNORE/query returns `Inserted`/`Existing` with the real generated ID without `REPLACE`. Exercise transaction commit-then-cancel/throw boundaries so no visible row can cause service cleanup of its live file. Verify `PrivateBookFileValidator` rejects missing, outside-root, symlink, and non-regular candidates using a trusted root descriptor, `NOFOLLOW` opens, and live regular-file identity comparison.
+Verify the metadata adapter passes a `CachedFile` backed by the private file to `FileParser` and overwrites `Book.filePath` with the private file URI. Verify Room migration 1→2 preserves legacy rows with `sha256 = NULL`, permits multiple NULL values, enforces uniqueness for non-null hashes, and that INSERT-IGNORE/query returns `Inserted`/`Existing` with the real generated ID without `REPLACE`. Exercise transaction commit-then-cancel/throw boundaries so no visible row can cause service cleanup of its live file. Verify `PrivateBookFileValidator` rejects missing, outside-root, symlink, and non-regular candidates and atomically resolves duplicate cleanup using Task 5's trusted-root descriptor with `NOFOLLOW`/`fstatat`/`unlinkat`/parent `fsync`. Include a mutation seam that swaps a path between comparison and deletion and prove no outside target is removed.
 
 Verify the production coordinator with a real child process: acquire the process-wide singleton mutex, then a persistent per-SHA lock file that is never unlinked; make acquisition cancellable; hold both locks across the suspending block; release/close in `NonCancellable`; and suppress unlock/close failures so they cannot replace a committed result or primary block failure. Cover child-process exclusion, acquisition cancellation/failure, and unlock/channel-close failures.
 
 - [ ] **Step 2: Run RED**
 
 ```powershell
-.\gradlew.bat :app:testDebugUnitTest --tests '*HandyReaderImportAdaptersTest'
+.\gradlew.bat :app:testDebugUnitTest --tests '*HandyReaderImportAdaptersTest' --tests '*BookImportCoordinatorProcessTest'
+.\gradlew.bat :app:assembleDebugAndroidTest
 ```
 
 - [ ] **Step 3: Implement adapters and Hilt providers**
@@ -527,6 +532,8 @@ Verify the production coordinator with a real child process: acquire the process
 Keep Android `ContentResolver` access in an `ImportRequest` adapter and keep the core service testable with `InputStream`. Provide the private root as `File(context.filesDir, "books")` and persistent lock files under a separate app-private directory. Implement the validator with a pinned trusted-root directory descriptor and no-follow relative opens; do not use canonical-path comparison as a security check.
 
 Add nullable `sha256` to `BookEntity` so legacy rows migrate as NULL (SQLite unique indexes allow multiple NULLs), set `AppDatabase` to version 2, define `MIGRATION_1_2`, install it through `.addMigrations`, and export schema `2.json`. Add the non-null SHA unique index. Implement DAO INSERT IGNORE plus a query in one transaction, never the existing `REPLACE` path, and return the actual generated primary key. Ensure the adapter cannot surface cancellation/another throwable after a committed transaction in a way that makes the service delete the committed row's file. Do not request broad storage permissions.
+
+Add `androidx.room:room-testing:2.6.1`, AndroidX test core `1.6.1`, JUnit extension `1.2.1`, and Espresso `3.6.1` aliases to `gradle/libs.versions.toml`; wire their `androidTestImplementation` dependencies in `app/build.gradle.kts`. The production validator must reuse Task 5's trusted-root native/descriptor primitives; it must not reintroduce Java path comparison followed by Java path deletion.
 
 - [ ] **Step 4: Replace direct scan insertion with the service**
 
@@ -545,14 +552,17 @@ STORAGE_FAILED → 存储空间不足或复制失败
 - [ ] **Step 5: Run tests and build**
 
 ```powershell
-.\gradlew.bat :app:testDebugUnitTest --tests '*HandyReaderImportAdaptersTest' --tests '*BookImportServiceTest'
-.\gradlew.bat :app:assembleDebug
+.\gradlew.bat :app:testDebugUnitTest --tests '*HandyReaderImportAdaptersTest' --tests '*BookImportCoordinatorProcessTest' --tests '*BookImportServiceTest'
+.\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest
+.\gradlew.bat :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.wxn.reader.data.source.local.AppDatabaseMigrationTest
 ```
+
+`connectedDebugAndroidTest` is a release gate, not an optional success claim. If Task 7 has no connected device, record it explicitly as `NOT RUN (no connected device)` and do not report the migration test as passing. Task 10 must execute and record this exact gate on its target device before integration; a reliably configured host Room migration test may satisfy the gate only if it opens the exported v1 schema and validates the real v2 migration/DAO transaction rather than a fake database.
 
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add app/src/main/java/com/air5005/pagenest/library/importing app/src/main/java/com/wxn/reader/data/dto/BookEntity.kt app/src/main/java/com/wxn/reader/data/source/local/AppDatabase.kt app/src/main/java/com/wxn/reader/data/source/local/dao/BookDao.kt app/src/main/java/com/wxn/reader/di/AppModule.kt app/src/main/java/com/wxn/reader/presentation/home/HomeViewModel.kt app/src/main/res/values/strings.xml app/src/test app/src/androidTest app/schemas
+git add app/build.gradle.kts gradle/libs.versions.toml app/src/main/java/com/air5005/pagenest/library/importing app/src/main/java/com/wxn/reader/data/dto/BookEntity.kt app/src/main/java/com/wxn/reader/data/source/local/AppDatabase.kt app/src/main/java/com/wxn/reader/data/source/local/dao/BookDao.kt app/src/main/java/com/wxn/reader/di/AppModule.kt app/src/main/java/com/wxn/reader/presentation/home/HomeViewModel.kt app/src/main/res/values/strings.xml app/src/test app/src/androidTest app/schemas
 git commit -m "feat: connect private imports to the bookshelf"
 ```
 

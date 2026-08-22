@@ -15,6 +15,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -199,6 +205,51 @@ class BookImportServiceTest {
         assertFalse(parsed)
         assertEquals(1, catalog.findCalls)
         assertEquals(0, catalog.insertCalls)
+    }
+
+    @Test
+    fun fatalInputOpenFailureIsRethrownWithoutCreatingPrivateStorage() {
+        val root = File(temporaryFolder.root, "fatal-open-books")
+        val fatal = AssertionError("fatal source provider failure")
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> error("inspector must not run") },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(),
+        )
+
+        val thrown = assertThrows(AssertionError::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("book.epub") { throw fatal })
+            }
+        }
+
+        assertTrue(thrown === fatal)
+        assertFalse(root.exists())
+    }
+
+    @Test
+    fun cancellationNestedUnderFatalInputOpenFailureIsPromoted() {
+        val root = File(temporaryFolder.root, "nested-cancel-fatal-open-books")
+        val fatal = AssertionError("fatal source provider failure")
+        val cancellation = CancellationException("cancel nested under source provider failure")
+        fatal.addSuppressed(cancellation)
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> error("inspector must not run") },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(),
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("book.pdf") { throw fatal })
+            }
+        }
+
+        assertTrue(thrown === cancellation)
+        assertTrue(thrown.suppressed.contains(fatal))
+        assertFalse(root.exists())
     }
 
     @Test
@@ -497,6 +548,141 @@ class BookImportServiceTest {
     }
 
     @Test
+    fun cancelledJobStillRequeriesCatalogAndDeletesPrecommitOrphanInsideHashLock() {
+        val root = File(temporaryFolder.root, "cancelled-job-precommit-books")
+        val coordinator = InProcessBookImportCoordinator()
+        val catalog = EnsureActivePrecommitCatalog()
+        val cancellation = CancellationException("cancel before catalog commit")
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ ->
+                currentCoroutineContext()[Job]!!.cancel(cancellation)
+                currentCoroutineContext().ensureActive()
+                error("cancelled parser must not return")
+            },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+
+        assertThrows(CancellationException::class.java) {
+            runBlocking(Job()) {
+                service.execute(ImportRequest("book.epub") { "book".byteInputStream() })
+            }
+        }
+
+        assertTrue("Non-cancellable cleanup must complete the DAO re-query", catalog.cleanupLookupCompleted)
+        assertPrivateRootEmpty(root)
+
+        val retry = runBlocking {
+            service(
+                root = root,
+                inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+                parser = BookMetadataParser { _, _ -> book("content://retry/source") },
+                catalog = ThreadSafeAtomicCatalog(),
+                coordinator = coordinator,
+            ).execute(ImportRequest("retry.epub") { "book".byteInputStream() })
+        }
+        assertEquals(ImportResult.Imported(1L), retry)
+    }
+
+    @Test
+    fun cancelledJobStillObservesCommittedRowAndPreservesItsLivePrivateFile() {
+        val root = File(temporaryFolder.root, "cancelled-job-postcommit-books")
+        val catalog = CommitThenCancelEnsureActiveCatalog()
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> book("content://source/book") },
+            catalog = catalog,
+        )
+
+        assertThrows(CancellationException::class.java) {
+            runBlocking(Job()) {
+                service.execute(ImportRequest("book.pdf") { "book".byteInputStream() })
+            }
+        }
+
+        assertTrue("Non-cancellable cleanup must complete the post-commit DAO re-query", catalog.cleanupLookupCompleted)
+        val catalogFile = File(java.net.URI(catalog.row!!.book.filePath))
+        assertTrue("Committed row must retain a live private file", catalogFile.isFile)
+        assertEquals(listOf(catalogFile), root.listFiles().orEmpty().toList())
+    }
+
+    @Test
+    fun cancelledJobKeepsValidatorCleanupFailureAsSuppressedContext() {
+        val root = File(temporaryFolder.root, "cancelled-job-cleanup-failure-books")
+        val catalog = EnsureActivePrecommitCatalog()
+        val cancellation = CancellationException("cancel before cleanup")
+        val cleanupFailure = IOException("descriptor-relative cleanup failed")
+        val validator = StrictTestPrivateBookFileValidator(root) { throw cleanupFailure }
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ ->
+                currentCoroutineContext()[Job]!!.cancel(cancellation)
+                currentCoroutineContext().ensureActive()
+                error("cancelled parser must not return")
+            },
+            catalog = catalog,
+            privateBookFileValidator = validator,
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            runBlocking(Job()) {
+                service.execute(ImportRequest("book.mobi") { "book".byteInputStream() })
+            }
+        }
+
+        assertTrue(thrown.suppressed.any { it === cleanupFailure })
+        assertTrue(catalog.cleanupLookupCompleted)
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "mobi" })
+    }
+
+    @Test
+    fun timedOutNonCancellableCleanupRethrowsOriginalCancellationAndReleasesHashLock() {
+        val root = File(temporaryFolder.root, "cancelled-job-timeout-books")
+        val coordinator = InProcessBookImportCoordinator()
+        val catalog = SlowCleanupCatalog()
+        val cancellation = CancellationException("cancel before slow cleanup")
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ ->
+                currentCoroutineContext()[Job]!!.cancel(cancellation)
+                currentCoroutineContext().ensureActive()
+                error("cancelled parser must not return")
+            },
+            catalog = catalog,
+            coordinator = coordinator,
+            cancellationCleanupTimeoutMillis = 100L,
+        )
+
+        val startedAt = System.nanoTime()
+        val thrown = assertThrows(CancellationException::class.java) {
+            runBlocking(Job()) {
+                service.execute(ImportRequest("book.txt") { "book".byteInputStream() })
+            }
+        }
+        val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+
+        assertTrue("Cleanup must be bounded instead of holding the SHA lock", elapsedMillis < 600L)
+        assertTrue(thrown.suppressed.any { it is TimeoutCancellationException })
+        assertFalse(catalog.cleanupLookupCompleted)
+
+        val retry = runBlocking {
+            service(
+                root = root,
+                inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+                parser = BookMetadataParser { _, _ -> book("content://retry/source") },
+                catalog = ThreadSafeAtomicCatalog(),
+                coordinator = coordinator,
+            ).execute(ImportRequest("retry.txt") { "book".byteInputStream() })
+        }
+        assertEquals(ImportResult.Imported(1L), retry)
+    }
+
+    @Test
     fun publishedCleanupExceptionContinuesWithItsStoredBookInsteadOfRecopying() {
         val root = temporaryFolder.newFolder("published-cleanup-books")
         val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
@@ -649,8 +835,7 @@ class BookImportServiceTest {
             metadataParser = BookMetadataParser { _, _ -> error("parser must not run") },
             catalog = RecordingCatalog(),
             coordinator = InProcessBookImportCoordinator(),
-            privateBookFileValidator = StrictTestPrivateBookFileValidator(root),
-            deletePrivateFile = { false },
+            privateBookFileValidator = StrictTestPrivateBookFileValidator(root) { false },
         )
 
         val thrown = assertThrows(CancellationException::class.java) {
@@ -1282,6 +1467,187 @@ class BookImportServiceTest {
     }
 
     @Test
+    fun wasExistingDuplicateWithMissingCatalogFileFailsClosedAndKeepsPrivateFinal() {
+        val root = temporaryFolder.newFolder("existing-missing-catalog-books")
+        val stored = prepopulate(root, "book.epub", "same")
+        val missing = File(root, "missing.epub")
+
+        val result = runSuspend {
+            service(
+                root = root,
+                inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+                parser = BookMetadataParser { _, _ -> error("duplicate must not parse") },
+                catalog = RecordingCatalog(existingMatch = CatalogMatch(201L, missing)),
+            ).execute(ImportRequest("book.epub") { "same".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        assertTrue(stored.file.isFile)
+    }
+
+    @Test
+    fun wasExistingDuplicateWithOutsideCatalogFileFailsClosedAndKeepsPrivateFinal() {
+        val root = temporaryFolder.newFolder("existing-outside-catalog-books")
+        val stored = prepopulate(root, "book.pdf", "same")
+        val outside = temporaryFolder.newFile("existing-outside.pdf")
+
+        val result = runSuspend {
+            service(
+                root = root,
+                inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+                parser = BookMetadataParser { _, _ -> error("duplicate must not parse") },
+                catalog = RecordingCatalog(existingMatch = CatalogMatch(202L, outside)),
+            ).execute(ImportRequest("book.pdf") { "same".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        assertTrue(stored.file.isFile)
+        assertTrue(outside.isFile)
+    }
+
+    @Test
+    fun wasExistingDuplicateWithSymlinkCatalogFileFailsClosedAndKeepsPrivateFinal() {
+        val root = temporaryFolder.newFolder("existing-symlink-catalog-books")
+        val stored = prepopulate(root, "book.mobi", "same")
+        val outside = temporaryFolder.newFile("existing-symlink-target.mobi")
+        val catalogLink = File(root, "catalog-link.mobi")
+        Files.createSymbolicLink(catalogLink.toPath(), outside.toPath())
+
+        val result = runSuspend {
+            service(
+                root = root,
+                inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+                parser = BookMetadataParser { _, _ -> error("duplicate must not parse") },
+                catalog = RecordingCatalog(existingMatch = CatalogMatch(203L, catalogLink)),
+            ).execute(ImportRequest("book.mobi") { "same".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        assertTrue(stored.file.isFile)
+        assertTrue(Files.isSymbolicLink(catalogLink.toPath()))
+        assertTrue(outside.isFile)
+    }
+
+    @Test
+    fun wasExistingDuplicateWithNonRegularCatalogFileFailsClosedAndKeepsPrivateFinal() {
+        val root = temporaryFolder.newFolder("existing-nonregular-catalog-books")
+        val stored = prepopulate(root, "book.txt", "same")
+        val catalogDirectory = File(root, "catalog-directory.txt")
+        assertTrue(catalogDirectory.mkdir())
+
+        val result = runSuspend {
+            service(
+                root = root,
+                inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+                parser = BookMetadataParser { _, _ -> error("duplicate must not parse") },
+                catalog = RecordingCatalog(existingMatch = CatalogMatch(204L, catalogDirectory)),
+            ).execute(ImportRequest("book.txt") { "same".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        assertTrue(stored.file.isFile)
+        assertTrue(catalogDirectory.isDirectory)
+    }
+
+    @Test
+    fun wasExistingDuplicateWithDifferentLiveCatalogFileKeepsBothFiles() {
+        val root = temporaryFolder.newFolder("existing-different-catalog-books")
+        val stored = prepopulate(root, "book.azw3", "same")
+        val catalogFile = File(root, "other.azw3").apply { writeText("catalog") }
+        val validator = StrictTestPrivateBookFileValidator(root)
+
+        val result = runSuspend {
+            service(
+                root = root,
+                inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+                parser = BookMetadataParser { _, _ -> error("duplicate must not parse") },
+                catalog = RecordingCatalog(existingMatch = CatalogMatch(205L, catalogFile)),
+                privateBookFileValidator = validator,
+            ).execute(ImportRequest("book.azw3") { "same".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Duplicate(205L), result)
+        assertEquals(1, validator.resolveDuplicateCalls)
+        assertTrue(stored.file.isFile)
+        assertTrue(catalogFile.isFile)
+    }
+
+    @Test
+    fun validatorOwnsDuplicateDecisionSoPathReplacementCannotTriggerServiceDelete() {
+        val root = temporaryFolder.newFolder("validator-owned-duplicate-decision-books")
+        val outside = temporaryFolder.newFile("outside-replacement.epub")
+        val catalogFile = File(root, "catalog.epub").apply { writeText("catalog") }
+        var replacement: File? = null
+        val validator = object : PrivateBookFileValidator {
+            override fun validate(file: File): Boolean = true
+
+            override fun resolveDuplicate(
+                storedBook: StoredBook,
+                catalogFile: File,
+            ): DuplicateResolution {
+                assertTrue(storedBook.file.delete())
+                Files.createSymbolicLink(storedBook.file.toPath(), outside.toPath())
+                replacement = storedBook.file
+                return DuplicateResolution.INVALID
+            }
+
+            override fun deleteNewCopy(storedBook: StoredBook): Boolean =
+                error("service must not perform a second delete after duplicate resolution")
+        }
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> error("duplicate must not parse") },
+            catalog = RecordingCatalog(existingMatch = CatalogMatch(206L, catalogFile)),
+            privateBookFileValidator = validator,
+        )
+
+        val result = runSuspend {
+            service.execute(ImportRequest("book.epub") { "book".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        assertTrue(outside.isFile)
+        assertTrue(Files.isSymbolicLink(replacement!!.toPath()))
+    }
+
+    @Test
+    fun validatorCancellationDuringDuplicateResolutionPropagatesWithoutDeletingPreexistingFinal() {
+        val root = temporaryFolder.newFolder("validator-duplicate-cancellation-books")
+        val stored = prepopulate(root, "book.pdf", "same")
+        val catalogFile = File(root, "catalog.pdf").apply { writeText("catalog") }
+        val cancellation = CancellationException("cancel duplicate validation")
+        val validator = object : PrivateBookFileValidator {
+            override fun validate(file: File): Boolean = true
+
+            override fun resolveDuplicate(
+                storedBook: StoredBook,
+                catalogFile: File,
+            ): DuplicateResolution = throw cancellation
+
+            override fun deleteNewCopy(storedBook: StoredBook): Boolean =
+                error("preexisting final must never be deleted")
+        }
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> error("duplicate must not parse") },
+            catalog = RecordingCatalog(existingMatch = CatalogMatch(207L, catalogFile)),
+            privateBookFileValidator = validator,
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("book.pdf") { "same".byteInputStream() })
+            }
+        }
+
+        assertTrue(thrown === cancellation)
+        assertTrue(stored.file.isFile)
+        assertTrue(catalogFile.isFile)
+    }
+
+    @Test
     fun sameBytesUnderDifferentExtensionsDeleteOnlyTheRedundantNewCopy() {
         val root = File(temporaryFolder.root, "cross-extension-books")
         val coordinator = InProcessBookImportCoordinator()
@@ -1552,9 +1918,10 @@ class BookImportServiceTest {
         parser: BookMetadataParser,
         catalog: BookImportCatalog,
         coordinator: BookImportCoordinator = InProcessBookImportCoordinator(),
-        privateBookFileValidator: PrivateBookFileValidator =
-            StrictTestPrivateBookFileValidator(root),
         deletePrivateFile: (File) -> Boolean = { Files.deleteIfExists(it.toPath()) },
+        privateBookFileValidator: PrivateBookFileValidator =
+            StrictTestPrivateBookFileValidator(root, deletePrivateFile),
+        cancellationCleanupTimeoutMillis: Long = 5_000L,
     ): BookImportService = BookImportService(
         privateBookStore = PrivateBookStore(root, StrongTestPrivateBookStoreFileOperations),
         protectionInspector = inspector,
@@ -1562,13 +1929,19 @@ class BookImportServiceTest {
         catalog = catalog,
         coordinator = coordinator,
         privateBookFileValidator = privateBookFileValidator,
-        deletePrivateFile = deletePrivateFile,
+        cancellationCleanupTimeoutMillis = cancellationCleanupTimeoutMillis,
     )
 
     private fun assertPrivateRootEmpty(root: File) {
         assertTrue(root.isDirectory)
         assertTrue(root.listFiles().orEmpty().isEmpty())
     }
+
+    private fun prepopulate(root: File, displayName: String, content: String): StoredBook =
+        PrivateBookStore(root, StrongTestPrivateBookStoreFileOperations).store(
+            content.byteInputStream(),
+            displayName,
+        )
 
     private fun book(filePath: String, fileType: String = "epub") = Book(
         title = "Test Book",
@@ -1795,10 +2168,67 @@ class BookImportServiceTest {
         }
     }
 
+    private class EnsureActivePrecommitCatalog : BookImportCatalog {
+        var findCalls = 0
+        var cleanupLookupCompleted = false
+
+        override suspend fun findBySha256(sha256: String): CatalogMatch? {
+            findCalls++
+            currentCoroutineContext().ensureActive()
+            if (findCalls == 2) cleanupLookupCompleted = true
+            return null
+        }
+
+        override suspend fun insertOrGet(book: Book, sha256: String): CatalogWriteResult =
+            error("cancelled parser must stop before insert")
+    }
+
+    private class CommitThenCancelEnsureActiveCatalog : BookImportCatalog {
+        data class Row(val id: Long, val book: Book, val sha256: String)
+
+        var row: Row? = null
+        var findCalls = 0
+        var cleanupLookupCompleted = false
+
+        override suspend fun findBySha256(sha256: String): CatalogMatch? {
+            findCalls++
+            currentCoroutineContext().ensureActive()
+            if (findCalls == 2) cleanupLookupCompleted = true
+            return row?.let { CatalogMatch(it.id, File(java.net.URI(it.book.filePath))) }
+        }
+
+        override suspend fun insertOrGet(book: Book, sha256: String): CatalogWriteResult {
+            row = Row(1L, book, sha256)
+            currentCoroutineContext()[Job]!!.cancel(CancellationException("cancel after commit"))
+            currentCoroutineContext().ensureActive()
+            error("cancelled insert must not return")
+        }
+    }
+
+    private class SlowCleanupCatalog : BookImportCatalog {
+        var findCalls = 0
+        var cleanupLookupCompleted = false
+
+        override suspend fun findBySha256(sha256: String): CatalogMatch? {
+            findCalls++
+            if (findCalls == 2) {
+                delay(750L)
+                cleanupLookupCompleted = true
+            }
+            return null
+        }
+
+        override suspend fun insertOrGet(book: Book, sha256: String): CatalogWriteResult =
+            error("cancelled parser must stop before insert")
+    }
+
     private class StrictTestPrivateBookFileValidator(
         privateRoot: File,
+        private val deletePrivateFile: (File) -> Boolean = { Files.deleteIfExists(it.toPath()) },
     ) : PrivateBookFileValidator {
         private val root = privateRoot.toPath().toAbsolutePath().normalize()
+        var resolveDuplicateCalls = 0
+            private set
 
         override fun validate(file: File): Boolean {
             val path = file.toPath().toAbsolutePath().normalize()
@@ -1807,16 +2237,27 @@ class BookImportServiceTest {
                 !Files.isSymbolicLink(path)
         }
 
-        override fun match(storedFile: File, catalogFile: File): PrivateBookFileMatch {
-            if (!validate(storedFile) || !validate(catalogFile)) {
-                return PrivateBookFileMatch.INVALID
+        override fun resolveDuplicate(
+            storedBook: StoredBook,
+            catalogFile: File,
+        ): DuplicateResolution {
+            resolveDuplicateCalls++
+            if (!validate(storedBook.file) || !validate(catalogFile)) {
+                return DuplicateResolution.INVALID
             }
-            return if (Files.isSameFile(storedFile.toPath(), catalogFile.toPath())) {
-                PrivateBookFileMatch.SAME
+            return if (Files.isSameFile(storedBook.file.toPath(), catalogFile.toPath())) {
+                DuplicateResolution.SAME
+            } else if (storedBook.wasExisting) {
+                DuplicateResolution.DIFFERENT
+            } else if (deleteNewCopy(storedBook)) {
+                DuplicateResolution.DIFFERENT
             } else {
-                PrivateBookFileMatch.DIFFERENT
+                DuplicateResolution.CLEANUP_FAILED
             }
         }
+
+        override fun deleteNewCopy(storedBook: StoredBook): Boolean =
+            storedBook.wasExisting || deletePrivateFile(storedBook.file)
     }
 
     private class RecordingCatalog(

@@ -194,3 +194,59 @@ Targeted Task 6 production/tests are included in the final full run. JUnit XML r
 ```
 
 Result: `BUILD SUCCESSFUL in 3m 44s`; 333 actionable tasks, 42 executed and 291 up-to-date. Five JUnit suites report 121 tests, 0 failures, 0 errors, and 0 skipped. `app-debug.apk` was generated. Lint reports 0 errors and 127 warnings. `git diff --check` reports no whitespace errors (only the repository's CRLF conversion notices).
+
+---
+
+## Fix round 3
+
+### Status
+
+DONE.
+
+- Fix commit: this commit (`fix: bound private import cleanup`)
+- Push: not performed
+
+### Contract and implementation changes
+
+- Cancellation compensation now runs exactly one SHA catalog re-query and one validator-owned cleanup decision inside `withContext(NonCancellable)` with an injectable positive timeout (5 seconds by default). Any timeout or cleanup failure is suppressed on the original `CancellationException`, which is always rethrown. A timeout exits the critical section so the SHA lock cannot remain held by an indefinitely suspended cooperative DAO.
+- Replaced the service-visible match-then-path-delete sequence with `PrivateBookFileValidator.resolveDuplicate(storedBook, catalogFile): DuplicateResolution` and `deleteNewCopy(storedBook)`. The validator owns live identity comparison plus any redundant-new-copy removal in one boundary. `BookImportService` no longer imports `Files`, accepts a delete callback, or performs path-based deletion.
+- Required the Task 7 validator to reuse Task 5's pinned trusted-root directory descriptor and descriptor-relative `NOFOLLOW`/`fstatat`/`unlinkat`/parent-directory `fsync` primitives. This covers all cooperating PageNest post-publication lifecycle mutations after the SHA is known. Per Task 5's ruling, it does not claim protection from arbitrary malicious code already sharing the app UID.
+- Removed the `wasExisting` duplicate short circuit. Every catalog candidate is validated: `SAME` and successfully handled `DIFFERENT` yield `Duplicate`; `INVALID` and `CLEANUP_FAILED` yield `STORAGE_FAILED`. A `wasExisting == true` `DIFFERENT` result preserves both files, and validator cleanup is contractually a no-op for every pre-existing final.
+- Changed source-open handling to catch every `Throwable`, promote cancellation found anywhere in its cause/suppressed graph, map only expected `Exception`/`LinkageError` to `UNREADABLE`, and rethrow other fatal errors.
+- Tightened the coordinator contract so every cooperating post-publication mutation for a known SHA, including validator cleanup, must occur under the same critical section.
+- Completed the Task 7 plan's test/build surface: it now lists and stages `app/build.gradle.kts` and `gradle/libs.versions.toml`, exact Room testing/AndroidX test dependencies, process tests, Android-test compilation, and the migration `connectedDebugAndroidTest` gate. If no device is connected, Task 7 must record `NOT RUN` rather than claim success; Task 10 must execute the gate on its target device before integration unless a real exported-schema host migration test satisfies the same contract.
+
+### RED → GREEN evidence
+
+1. Two real cancelled-`Job` tests with fake DAO `ensureActive()` calls failed first: pre-commit cleanup left an orphan and post-commit cleanup never observed the committed row. The bounded `NonCancellable` compensation made both pass; the pre-commit test then imported the same SHA again through the same coordinator to prove lock release.
+2. The validator-owned API tests first failed at Kotlin compilation because `resolveDuplicate`, `deleteNewCopy`, and `DuplicateResolution` did not exist. After the interface/service refactor, four `wasExisting` invalid-candidate tests, the valid-different preservation test, and the path-replacement mutation seam passed.
+3. Validator cancellation initially replaced the primary cancellation during the compensation re-query. Capturing every compensation throwable and suppressing it on the original cancellation made the focused test pass while preserving both pre-existing files.
+4. Fatal source-open plus nested cancellation was RED because fatal `Error` bypassed the cancellation graph. The unified all-`Throwable` classifier made the nested cancellation test pass; the plain fatal test confirms fatal errors still propagate.
+5. The validator cleanup-suppression test was mutation-checked by temporarily removing `addSuppressed`; it failed at the cleanup-context assertion, then passed after restoring the primary-cancellation suppression path.
+6. The bounded-cleanup test first failed to compile because no timeout contract existed. With a 100 ms test timeout and a 750 ms fake DAO suspension, it now rethrows the original cancellation with `TimeoutCancellationException` suppressed in under the test bound and successfully reacquires the same SHA lock for a retry.
+
+### Coverage added
+
+- Real cancelled Jobs for pre-commit orphan cleanup, commit-then-cancel live-row preservation, validator cleanup failure, and bounded slow-DAO cleanup.
+- Same-coordinator retry after cancellation and timeout, demonstrating no SHA lock leak/deadlock.
+- `wasExisting` duplicates whose catalog candidate is missing, outside the trusted root, a symlink, or non-regular, plus a valid different live file that must not be deleted.
+- A validator-owned path-replacement seam proving the service performs no second delete after resolution, and validator cancellation propagation without pre-existing mutation.
+- Fatal source-open propagation and cancellation nested under a fatal source-open failure.
+
+### Final verification
+
+Targeted Task 6 production/tests:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests '*BookImportServiceTest' --tests '*DefaultBookProtectionInspectorTest'
+```
+
+Result: `BUILD SUCCESSFUL in 49s`; JUnit XML reports 61 service tests plus 8 production-inspector tests, 0 failures, and 0 errors.
+
+Full app regression, Debug APK, and lint:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL in 3m 43s`; 333 actionable tasks, 41 executed and 292 up-to-date. Five JUnit suites report 134 tests, 0 failures, 0 errors, and 0 skipped. `app-debug.apk` was generated. Lint reports 0 errors and 127 warnings.

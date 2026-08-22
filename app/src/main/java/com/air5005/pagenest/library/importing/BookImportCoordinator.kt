@@ -12,6 +12,8 @@ import kotlinx.coroutines.sync.Mutex
  * must never replace a committed [block] result or its primary failure. Acquisition may fail only
  * before [block] starts. The adapter requires real child-process exclusion, acquisition
  * cancellation/failure, and unlock/channel-close failure tests.
+ * Every cooperating PageNest post-publication mutation after the SHA is known, including
+ * validator-owned cleanup, must occur while this same SHA critical section is held.
  */
 interface BookImportCoordinator {
     suspend fun <T> withHashLock(sha256: String, block: suspend () -> T): T
