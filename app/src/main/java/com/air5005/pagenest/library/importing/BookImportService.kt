@@ -5,7 +5,6 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
-import java.nio.file.LinkOption
 import java.util.concurrent.CancellationException
 
 class BookImportService(
@@ -14,6 +13,7 @@ class BookImportService(
     private val metadataParser: BookMetadataParser,
     private val catalog: BookImportCatalog,
     private val coordinator: BookImportCoordinator,
+    private val privateBookFileValidator: PrivateBookFileValidator,
     private val deletePrivateFile: (File) -> Boolean = {
         Files.deleteIfExists(it.toPath())
     },
@@ -25,23 +25,17 @@ class BookImportService(
             request.openInput()
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            failure.promotedCancellation()?.let { throw it }
             return rejected(ImportRejection.UNREADABLE)
-        } catch (_: LinkageError) {
+        } catch (failure: LinkageError) {
+            failure.promotedCancellation()?.let { throw it }
             return rejected(ImportRejection.UNREADABLE)
         }
 
-        val storedBook = store(input, request.displayName)
+        val publishedImport = store(input, request.displayName)
             ?: return rejected(ImportRejection.STORAGE_FAILED)
-        try {
-            input.close()
-        } catch (cancellation: CancellationException) {
-            cleanupForCancellation(storedBook, cancellation)
-        } catch (_: Exception) {
-            return rejectAndCleanup(storedBook, ImportRejection.STORAGE_FAILED)
-        } catch (_: LinkageError) {
-            return rejectAndCleanup(storedBook, ImportRejection.STORAGE_FAILED)
-        }
+        val storedBook = publishedImport.storedBook
 
         var enteredLock = false
         var completedLockedBlock = false
@@ -49,30 +43,76 @@ class BookImportService(
             coordinator.withHashLock(storedBook.sha256) {
                 enteredLock = true
                 val result = try {
-                    executeLocked(storedBook, format)
+                    executeLocked(publishedImport, input, format)
                 } catch (cancellation: CancellationException) {
-                    cleanupForCancellation(storedBook, cancellation)
+                    cleanupForCancellationInsideLock(
+                        storedBook,
+                        cancellation,
+                        catalogStateUnknown = true,
+                    )
                 }
                 completedLockedBlock = true
                 result
             }
-        } catch (cancellation: CancellationException) {
-            if (!enteredLock) cleanupForCancellation(storedBook, cancellation)
-            throw cancellation
-        } catch (failure: Exception) {
+        } catch (failure: Throwable) {
             if (completedLockedBlock) throw failure
-            rejectAndCleanup(storedBook, ImportRejection.STORAGE_FAILED)
-        } catch (failure: LinkageError) {
-            if (completedLockedBlock) throw failure
-            rejectAndCleanup(storedBook, ImportRejection.STORAGE_FAILED)
+            if (!enteredLock) closeAfterFailure(input, failure)
+            failure.promotedCancellation()?.let { throw it }
+            when (failure) {
+                is Exception,
+                is LinkageError,
+                -> rejected(ImportRejection.STORAGE_FAILED)
+                else -> throw failure
+            }
         }
     }
 
     private suspend fun executeLocked(
-        storedBook: StoredBook,
+        publishedImport: PublishedImport,
+        input: InputStream,
         format: SupportedBookFormat,
     ): ImportResult {
-        if (!storedFileIsRegular(storedBook.file)) {
+        val storedBook = publishedImport.storedBook
+        val closeFailure = try {
+            input.close()
+            null
+        } catch (failure: Throwable) {
+            failure
+        }
+        if (closeFailure != null) {
+            val postStoreFailure = publishedImport.postStoreFailure
+            if (postStoreFailure != null &&
+                postStoreFailure !== closeFailure &&
+                closeFailure.suppressed.none { it === postStoreFailure }
+            ) {
+                closeFailure.addSuppressed(postStoreFailure)
+            }
+            val closeCancellation = closeFailure.promotedCancellation()
+            if (closeCancellation != null) {
+                postStoreFailure?.findCancellationInGraph()?.let { publishedCancellation ->
+                    if (publishedCancellation !== closeCancellation &&
+                        closeCancellation.suppressed.none { it === publishedCancellation }
+                    ) {
+                        closeCancellation.addSuppressed(publishedCancellation)
+                    }
+                }
+                throw closeCancellation
+            }
+            return when (closeFailure) {
+                is Exception,
+                is LinkageError,
+                -> rejectAndSafelyCleanupUnknownCatalog(storedBook)
+                else -> rethrowAfterSafeCleanup(storedBook, closeFailure)
+            }
+        }
+
+        val publishedCancellation = publishedImport.postStoreFailure
+            ?.promotedCancellation()
+        if (publishedCancellation != null) {
+            throw publishedCancellation
+        }
+
+        if (!validateStoredFile(storedBook.file)) {
             return rejected(ImportRejection.STORAGE_FAILED)
         }
 
@@ -80,16 +120,30 @@ class BookImportService(
             protectionInspector.inspect(storedBook.file, format)
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (_: Exception) {
-            return rejectAndCleanup(storedBook, ImportRejection.UNREADABLE)
-        } catch (_: LinkageError) {
-            return rejectAndCleanup(storedBook, ImportRejection.UNREADABLE)
+        } catch (failure: Exception) {
+            failure.promotedCancellation()?.let { throw it }
+            return rejectAndSafelyCleanupUnknownCatalog(
+                storedBook,
+                ImportRejection.UNREADABLE,
+            )
+        } catch (failure: LinkageError) {
+            failure.promotedCancellation()?.let { throw it }
+            return rejectAndSafelyCleanupUnknownCatalog(
+                storedBook,
+                ImportRejection.UNREADABLE,
+            )
         }
         when (protectionVerdict) {
             ProtectionVerdict.PROTECTED ->
-                return rejectAndCleanup(storedBook, ImportRejection.PROTECTED)
+                return rejectAndSafelyCleanupUnknownCatalog(
+                    storedBook,
+                    ImportRejection.PROTECTED,
+                )
             ProtectionVerdict.UNREADABLE ->
-                return rejectAndCleanup(storedBook, ImportRejection.UNREADABLE)
+                return rejectAndSafelyCleanupUnknownCatalog(
+                    storedBook,
+                    ImportRejection.UNREADABLE,
+                )
             ProtectionVerdict.CLEAR -> Unit
         }
 
@@ -97,10 +151,12 @@ class BookImportService(
             catalog.findBySha256(storedBook.sha256)
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (_: Exception) {
-            return rejectAndCleanup(storedBook, ImportRejection.STORAGE_FAILED)
-        } catch (_: LinkageError) {
-            return rejectAndCleanup(storedBook, ImportRejection.STORAGE_FAILED)
+        } catch (failure: Exception) {
+            failure.promotedCancellation()?.let { throw it }
+            return rejectAndSafelyCleanupUnknownCatalog(storedBook)
+        } catch (failure: LinkageError) {
+            failure.promotedCancellation()?.let { throw it }
+            return rejectAndSafelyCleanupUnknownCatalog(storedBook)
         }
         if (existingMatch != null) {
             return duplicateAndCleanupNewCopy(
@@ -114,9 +170,11 @@ class BookImportService(
             metadataParser.parse(storedBook.file, format)
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            failure.promotedCancellation()?.let { throw it }
             return rejectAndCleanup(storedBook, ImportRejection.PARSE_FAILED)
-        } catch (_: LinkageError) {
+        } catch (failure: LinkageError) {
+            failure.promotedCancellation()?.let { throw it }
             return rejectAndCleanup(storedBook, ImportRejection.PARSE_FAILED)
         } ?: return rejectAndCleanup(storedBook, ImportRejection.PARSE_FAILED)
         val privateBook = parsedBook.withPrivateFile(storedBook.file)
@@ -125,10 +183,12 @@ class BookImportService(
             catalog.insertOrGet(privateBook, storedBook.sha256)
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (_: Exception) {
-            return rejectAndCleanup(storedBook, ImportRejection.STORAGE_FAILED)
-        } catch (_: LinkageError) {
-            return rejectAndCleanup(storedBook, ImportRejection.STORAGE_FAILED)
+        } catch (failure: Exception) {
+            failure.promotedCancellation()?.let { throw it }
+            return rejectAndSafelyCleanupUnknownCatalog(storedBook)
+        } catch (failure: LinkageError) {
+            failure.promotedCancellation()?.let { throw it }
+            return rejectAndSafelyCleanupUnknownCatalog(storedBook)
         }
         return when (writeResult) {
             is CatalogWriteResult.Inserted -> ImportResult.Imported(writeResult.bookId)
@@ -141,20 +201,16 @@ class BookImportService(
         }
     }
 
-    private fun store(input: InputStream, displayName: String): StoredBook? = try {
-        privateBookStore.store(input, displayName)
+    private fun store(input: InputStream, displayName: String): PublishedImport? = try {
+        PublishedImport(privateBookStore.store(input, displayName))
     } catch (cancellation: CancellationException) {
         closeAfterFailure(input, cancellation)
         throw cancellation
     } catch (published: PublishedBookCleanupException) {
-        val cancellation = published.cause as? CancellationException
-        if (cancellation != null) {
-            val propagatedCancellation = closeForPublishedCancellation(input, cancellation)
-            cleanupForCancellation(published.storedBook, propagatedCancellation)
-        }
-        published.storedBook
+        PublishedImport(published.storedBook, published)
     } catch (failure: Throwable) {
         closeAfterFailure(input, failure)
+        failure.promotedCancellation()?.let { throw it }
         when (failure) {
             is Exception,
             is LinkageError,
@@ -163,14 +219,16 @@ class BookImportService(
         }
     }
 
-    private fun storedFileIsRegular(file: File): Boolean = try {
-        Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (_: Exception) {
-        false
-    } catch (_: LinkageError) {
-        false
+    private fun validateStoredFile(file: File): Boolean = try {
+        privateBookFileValidator.validate(file)
+    } catch (failure: Throwable) {
+        failure.promotedCancellation()?.let { throw it }
+        when (failure) {
+            is Exception,
+            is LinkageError,
+            -> false
+            else -> throw failure
+        }
     }
 
     private fun duplicateAndCleanupNewCopy(
@@ -179,10 +237,10 @@ class BookImportService(
         catalogFile: File,
     ): ImportResult {
         if (storedBook.wasExisting) return ImportResult.Duplicate(bookId)
-        return when (samePrivateFile(storedBook.file, catalogFile)) {
-            null -> rejected(ImportRejection.STORAGE_FAILED)
-            true -> ImportResult.Duplicate(bookId)
-            false -> if (deleteStoredFile(storedBook.file)) {
+        return when (matchPrivateFiles(storedBook.file, catalogFile)) {
+            PrivateBookFileMatch.INVALID -> rejected(ImportRejection.STORAGE_FAILED)
+            PrivateBookFileMatch.SAME -> ImportResult.Duplicate(bookId)
+            PrivateBookFileMatch.DIFFERENT -> if (deleteStoredFile(storedBook.file)) {
                 ImportResult.Duplicate(bookId)
             } else {
                 rejected(ImportRejection.STORAGE_FAILED)
@@ -190,15 +248,19 @@ class BookImportService(
         }
     }
 
-    private fun samePrivateFile(storedFile: File, catalogFile: File): Boolean? = try {
-        storedFile.canonicalFile.toPath().normalize() ==
-            catalogFile.canonicalFile.toPath().normalize()
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (_: Exception) {
-        null
-    } catch (_: LinkageError) {
-        null
+    private fun matchPrivateFiles(
+        storedFile: File,
+        catalogFile: File,
+    ): PrivateBookFileMatch = try {
+        privateBookFileValidator.match(storedFile, catalogFile)
+    } catch (failure: Throwable) {
+        failure.promotedCancellation()?.let { throw it }
+        when (failure) {
+            is Exception,
+            is LinkageError,
+            -> PrivateBookFileMatch.INVALID
+            else -> throw failure
+        }
     }
 
     private fun rejectAndCleanup(
@@ -213,68 +275,117 @@ class BookImportService(
         }
     }
 
+    private suspend fun rejectAndSafelyCleanupUnknownCatalog(
+        storedBook: StoredBook,
+        reason: ImportRejection = ImportRejection.STORAGE_FAILED,
+    ): ImportResult.Rejected {
+        val cleanupFailure = cleanupNewCopyInsideLock(storedBook, catalogStateUnknown = true)
+        cleanupFailure?.promotedCancellation()?.let { throw it }
+        return when (cleanupFailure) {
+            null -> rejected(reason)
+            is Exception,
+            is LinkageError,
+            -> rejected(ImportRejection.STORAGE_FAILED)
+            else -> throw cleanupFailure
+        }
+    }
+
+    private suspend fun rethrowAfterSafeCleanup(
+        storedBook: StoredBook,
+        failure: Throwable,
+    ): Nothing {
+        val cleanupFailure = cleanupNewCopyInsideLock(storedBook, catalogStateUnknown = true)
+        if (cleanupFailure != null && cleanupFailure !== failure) {
+            failure.addSuppressed(cleanupFailure)
+        }
+        throw failure
+    }
+
     private fun deleteStoredFile(file: File): Boolean = try {
         deletePrivateFile(file)
     } catch (cancellation: CancellationException) {
         throw cancellation
-    } catch (_: Exception) {
+    } catch (failure: Exception) {
+        failure.promotedCancellation()?.let { throw it }
         false
-    } catch (_: LinkageError) {
+    } catch (failure: LinkageError) {
+        failure.promotedCancellation()?.let { throw it }
         false
     }
 
-    private fun cleanupForCancellation(
+    private suspend fun cleanupForCancellationInsideLock(
         storedBook: StoredBook,
         cancellation: CancellationException,
+        catalogStateUnknown: Boolean = false,
     ): Nothing {
-        if (!storedBook.wasExisting) {
-            try {
-                if (!deletePrivateFile(storedBook.file)) {
-                    cancellation.addSuppressed(
-                        IOException("Private book cleanup did not delete ${storedBook.file}"),
-                    )
-                }
-            } catch (cleanupCancellation: CancellationException) {
-                if (cleanupCancellation !== cancellation) {
-                    cancellation.addSuppressed(cleanupCancellation)
-                }
-            } catch (cleanupFailure: Throwable) {
-                cancellation.addSuppressed(cleanupFailure)
-            }
+        val cleanupFailure = cleanupNewCopyInsideLock(storedBook, catalogStateUnknown)
+        if (cleanupFailure != null && cleanupFailure !== cancellation) {
+            cancellation.addSuppressed(cleanupFailure)
         }
         throw cancellation
     }
 
-    private fun closeForPublishedCancellation(
-        input: InputStream,
-        publicationCancellation: CancellationException,
-    ): CancellationException = try {
-        input.close()
-        publicationCancellation
-    } catch (closeCancellation: CancellationException) {
-        if (closeCancellation !== publicationCancellation) {
-            closeCancellation.addSuppressed(publicationCancellation)
+    private suspend fun cleanupNewCopyInsideLock(
+        storedBook: StoredBook,
+        catalogStateUnknown: Boolean,
+    ): Throwable? {
+        if (storedBook.wasExisting) return null
+        if (catalogStateUnknown) {
+            val existingMatch = try {
+                catalog.findBySha256(storedBook.sha256)
+            } catch (failure: Throwable) {
+                return failure
+            }
+            if (existingMatch != null) {
+                return when (matchPrivateFiles(storedBook.file, existingMatch.privateFile)) {
+                    PrivateBookFileMatch.SAME -> null
+                    PrivateBookFileMatch.DIFFERENT -> deleteFailure(storedBook.file)
+                    PrivateBookFileMatch.INVALID ->
+                        IOException("Unable to validate the catalog's private book file")
+                }
+            }
         }
-        closeCancellation
-    } catch (closeFailure: Throwable) {
-        publicationCancellation.addSuppressed(closeFailure)
-        publicationCancellation
+        return deleteFailure(storedBook.file)
+    }
+
+    private fun deleteFailure(file: File): Throwable? = try {
+        if (deletePrivateFile(file)) null
+        else IOException("Private book cleanup did not delete $file")
+    } catch (failure: Throwable) {
+        failure
     }
 
     private fun closeAfterFailure(input: InputStream, failure: Throwable) {
         try {
             input.close()
-        } catch (closeCancellation: CancellationException) {
-            if (closeCancellation !== failure) {
-                closeCancellation.addSuppressed(failure)
-            }
-            throw closeCancellation
         } catch (closeFailure: Throwable) {
-            failure.addSuppressed(closeFailure)
+            val closeCancellation = closeFailure.promotedCancellation()
+            if (closeCancellation != null) {
+                if (closeCancellation !== failure &&
+                    closeCancellation.suppressed.none { it === failure }
+                ) {
+                    closeCancellation.addSuppressed(failure)
+                }
+                throw closeCancellation
+            }
+            when (closeFailure) {
+                is Exception,
+                is LinkageError,
+                -> failure.addSuppressed(closeFailure)
+                else -> {
+                    if (closeFailure !== failure) closeFailure.addSuppressed(failure)
+                    throw closeFailure
+                }
+            }
         }
     }
 
     private fun Book.withPrivateFile(file: File): Book = copy(filePath = file.toURI().toString())
+
+    private data class PublishedImport(
+        val storedBook: StoredBook,
+        val postStoreFailure: PublishedBookCleanupException? = null,
+    )
 
     private fun rejected(reason: ImportRejection) = ImportResult.Rejected(reason)
 }

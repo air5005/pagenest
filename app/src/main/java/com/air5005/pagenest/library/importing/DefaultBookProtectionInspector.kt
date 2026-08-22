@@ -22,9 +22,11 @@ class DefaultBookProtectionInspector(
         if (protected) ProtectionVerdict.PROTECTED else ProtectionVerdict.CLEAR
     } catch (cancellation: CancellationException) {
         throw cancellation
-    } catch (_: Exception) {
+    } catch (failure: Exception) {
+        failure.promotedCancellation()?.let { throw it }
         ProtectionVerdict.UNREADABLE
-    } catch (_: LinkageError) {
+    } catch (failure: LinkageError) {
+        failure.promotedCancellation()?.let { throw it }
         ProtectionVerdict.UNREADABLE
     }
 }

@@ -38,15 +38,18 @@ sealed interface CatalogWriteResult {
 data class CatalogMatch(val bookId: Long, val privateFile: File)
 
 interface BookImportCatalog {
-    /** Returns the ID and canonical app-private file represented by an existing SHA-256 row. */
+    /** Returns the ID and private-file candidate represented by an existing SHA-256 row. */
     suspend fun findBySha256(sha256: String): CatalogMatch?
 
     /**
      * Atomically inserts [book] under a database-unique [sha256], or returns the winning row.
      *
-     * Task 7 must implement this as one Room transaction backed by a SHA-256 unique constraint
-     * and must return the generated database ID. This method must not derive an ID from an
-     * inserted-row count. If it throws, no new catalog record may be visible.
+     * Task 7 must implement this as one Room transaction backed by a SHA-256 unique constraint,
+     * return the generated database ID, and never derive an ID from an inserted-row count. Its
+     * public boundary must not throw cancellation or another failure after commit; if an
+     * underlying call can do so, the adapter must resolve the committed row before returning or
+     * throwing. [BookImportService] defensively re-queries after failures, but that is not a
+     * substitute for this transaction contract.
      */
     suspend fun insertOrGet(book: Book, sha256: String): CatalogWriteResult
 }

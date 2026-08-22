@@ -5,10 +5,13 @@ import kotlinx.coroutines.sync.Mutex
 /**
  * Serializes the complete post-copy import transaction for one SHA-256 value.
  *
- * Task 7's production adapter must combine process-local coordination with an app-private
- * operating-system lock so separate PageNest processes use the same critical section. An
- * implementation may throw while acquiring the lock, but after [block] starts it must release
- * the lock without replacing a successful block result or a block failure with an unlock error.
+ * Task 7's production adapter must acquire one process-singleton mutex before opening a
+ * persistent app-private per-SHA lock file. That lock file is never unlinked. OS-lock acquisition
+ * must be cancellable, and both the process and OS locks stay held across the suspending [block].
+ * Release and channel close run in a non-cancellable context; their failures are suppressed and
+ * must never replace a committed [block] result or its primary failure. Acquisition may fail only
+ * before [block] starts. The adapter requires real child-process exclusion, acquisition
+ * cancellation/failure, and unlock/channel-close failure tests.
  */
 interface BookImportCoordinator {
     suspend fun <T> withHashLock(sha256: String, block: suspend () -> T): T

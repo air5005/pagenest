@@ -478,7 +478,7 @@ normalize format → open input → private atomic copy → acquire SHA lock
 → metadata parse → atomic catalog insert-or-get → Imported/Duplicate(bookId)
 ```
 
-Keep protection, lookup, parsing, atomic catalog publication, and their cleanup inside the SHA critical section. If protection or parsing fails, remove only a newly created private copy. Never delete a pre-existing duplicate. When a catalog match points to the same normalized/canonical private path, preserve the shared file; when it points elsewhere, delete only this import's redundant new copy. Convert expected failures to `ImportResult`; let coroutine cancellation propagate.
+Keep source close, protection, lookup, parsing, atomic catalog publication, and every post-publication cleanup inside the SHA critical section. If lock acquisition fails, close the source but retain the published orphan. Remove only a newly created private copy after proving there is no same-file catalog winner; never delete a pre-existing duplicate. Resolve catalog files only through `PrivateBookFileValidator`: `SAME` preserves the shared file, `DIFFERENT` deletes only this import's redundant new copy, and `INVALID` (missing, outside the trusted root, symlink, or non-regular) fails closed without deletion. Convert expected failures to `ImportResult`; discover and propagate cancellation through cause/suppressed graphs.
 
 - [ ] **Step 4: Run GREEN and commit**
 
@@ -493,22 +493,28 @@ git commit -m "feat: orchestrate safe local book imports"
 **Files:**
 - Create: `app/src/main/java/com/air5005/pagenest/library/importing/HandyReaderImportAdapters.kt`
 - Create: `app/src/test/java/com/air5005/pagenest/library/importing/HandyReaderImportAdaptersTest.kt`
+- Create: `app/src/test/java/com/air5005/pagenest/library/importing/BookImportCoordinatorProcessTest.kt`
+- Create: `app/src/androidTest/java/com/wxn/reader/data/source/local/AppDatabaseMigrationTest.kt`
 - Modify: `app/src/main/java/com/wxn/reader/data/dto/BookEntity.kt`
 - Modify: `app/src/main/java/com/wxn/reader/data/source/local/AppDatabase.kt`
 - Modify: `app/src/main/java/com/wxn/reader/data/source/local/dao/BookDao.kt`
 - Modify: `app/src/main/java/com/wxn/reader/di/AppModule.kt`
 - Modify: `app/src/main/java/com/wxn/reader/presentation/home/HomeViewModel.kt`
 - Modify: `app/src/main/res/values/strings.xml`
+- Create: `app/schemas/com.wxn.reader.data.source.local.AppDatabase/2.json`
 
 **Interfaces:**
 - Consumes: existing `FileParser`, Room `BookDao`/`AppDatabase`, `GetBookUrisUseCase`, and the Task 6 service.
 - Produces: `HomeViewModel.importBooks(uris: List<Uri>)` and localized import results.
-- Produces: a `BookImportCoordinator` combining an in-process mutex with an app-private per-SHA OS file lock.
-- Produces: a Room SHA-256 unique constraint plus transactional lookup/insert returning the generated row ID and canonical private file URI.
+- Produces: a `BookImportCoordinator` combining a process-singleton mutex with a persistent app-private per-SHA OS file lock.
+- Produces: a `PrivateBookFileValidator` that verifies live regular-file identities under the trusted root without following links.
+- Produces: Room schema v2 with a nullable legacy SHA-256 unique column plus transactional lookup/insert returning the generated row ID and private file candidate.
 
 - [ ] **Step 1: Write failing adapter tests**
 
-Verify the metadata adapter passes a `CachedFile` backed by the private file to `FileParser` and overwrites `Book.filePath` with the private file URI. Verify the Room catalog adapter implements `findBySha256` and `insertOrGet` transactionally, returns the database-generated row ID plus the catalog row's canonical private file, and resolves SHA conflicts as `Existing`. Verify the production coordinator serializes the same SHA across service instances/processes with an app-private OS lock and propagates cancellation.
+Verify the metadata adapter passes a `CachedFile` backed by the private file to `FileParser` and overwrites `Book.filePath` with the private file URI. Verify Room migration 1→2 preserves legacy rows with `sha256 = NULL`, permits multiple NULL values, enforces uniqueness for non-null hashes, and that INSERT-IGNORE/query returns `Inserted`/`Existing` with the real generated ID without `REPLACE`. Exercise transaction commit-then-cancel/throw boundaries so no visible row can cause service cleanup of its live file. Verify `PrivateBookFileValidator` rejects missing, outside-root, symlink, and non-regular candidates using a trusted root descriptor, `NOFOLLOW` opens, and live regular-file identity comparison.
+
+Verify the production coordinator with a real child process: acquire the process-wide singleton mutex, then a persistent per-SHA lock file that is never unlinked; make acquisition cancellable; hold both locks across the suspending block; release/close in `NonCancellable`; and suppress unlock/close failures so they cannot replace a committed result or primary block failure. Cover child-process exclusion, acquisition cancellation/failure, and unlock/channel-close failures.
 
 - [ ] **Step 2: Run RED**
 
@@ -518,7 +524,9 @@ Verify the metadata adapter passes a `CachedFile` backed by the private file to 
 
 - [ ] **Step 3: Implement adapters and Hilt providers**
 
-Keep Android `ContentResolver` access in an `ImportRequest` adapter and keep the core service testable with `InputStream`. Provide the private root as `File(context.filesDir, "books")` and lock files under a separate app-private directory. Add a unique indexed SHA-256 column to the Room schema and a migration; perform conflict lookup/insert in a transaction and use the actual generated primary key, never an inserted-count surrogate. Convert every catalog URI to a normalized/canonical app-private `File` before returning it. Do not request broad storage permissions.
+Keep Android `ContentResolver` access in an `ImportRequest` adapter and keep the core service testable with `InputStream`. Provide the private root as `File(context.filesDir, "books")` and persistent lock files under a separate app-private directory. Implement the validator with a pinned trusted-root directory descriptor and no-follow relative opens; do not use canonical-path comparison as a security check.
+
+Add nullable `sha256` to `BookEntity` so legacy rows migrate as NULL (SQLite unique indexes allow multiple NULLs), set `AppDatabase` to version 2, define `MIGRATION_1_2`, install it through `.addMigrations`, and export schema `2.json`. Add the non-null SHA unique index. Implement DAO INSERT IGNORE plus a query in one transaction, never the existing `REPLACE` path, and return the actual generated primary key. Ensure the adapter cannot surface cancellation/another throwable after a committed transaction in a way that makes the service delete the committed row's file. Do not request broad storage permissions.
 
 - [ ] **Step 4: Replace direct scan insertion with the service**
 
@@ -544,7 +552,7 @@ STORAGE_FAILED → 存储空间不足或复制失败
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add app/src/main/java/com/air5005/pagenest/library/importing app/src/main/java/com/wxn/reader/di/AppModule.kt app/src/main/java/com/wxn/reader/presentation/home/HomeViewModel.kt app/src/main/res/values/strings.xml app/src/test
+git add app/src/main/java/com/air5005/pagenest/library/importing app/src/main/java/com/wxn/reader/data/dto/BookEntity.kt app/src/main/java/com/wxn/reader/data/source/local/AppDatabase.kt app/src/main/java/com/wxn/reader/data/source/local/dao/BookDao.kt app/src/main/java/com/wxn/reader/di/AppModule.kt app/src/main/java/com/wxn/reader/presentation/home/HomeViewModel.kt app/src/main/res/values/strings.xml app/src/test app/src/androidTest app/schemas
 git commit -m "feat: connect private imports to the bookshelf"
 ```
 

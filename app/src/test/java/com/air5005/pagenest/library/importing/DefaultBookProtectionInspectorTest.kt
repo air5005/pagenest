@@ -1,6 +1,7 @@
 package com.air5005.pagenest.library.importing
 
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.CancellationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -107,6 +108,22 @@ class DefaultBookProtectionInspectorTest {
 
         val thrown = assertThrows(CancellationException::class.java) {
             inspector.inspect(File("a.mobi"), SupportedBookFormat.MOBI)
+        }
+
+        assertTrue(thrown === cancellation)
+    }
+
+    @Test
+    fun nestedCancellationFromAProductionProtectionProbePropagates() {
+        val cancellation = CancellationException("nested cancel protection probe")
+        val inspector = DefaultBookProtectionInspector(
+            mobiEncrypted = { throw IOException("native wrapper", cancellation) },
+            pdfEncrypted = { false },
+            epubProtected = { false },
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            inspector.inspect(File("book.mobi"), SupportedBookFormat.MOBI)
         }
 
         assertTrue(thrown === cancellation)

@@ -6,6 +6,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.FutureTask
@@ -160,6 +161,7 @@ class BookImportServiceTest {
             metadataParser = BookMetadataParser { _, _ -> error("parser must not run") },
             catalog = RecordingCatalog(),
             coordinator = InProcessBookImportCoordinator(),
+            privateBookFileValidator = StrictTestPrivateBookFileValidator(root),
         )
 
         val thrown = assertThrows(CancellationException::class.java) {
@@ -174,7 +176,7 @@ class BookImportServiceTest {
     }
 
     @Test
-    fun protectedBookDeletesNewCopyAndStopsBeforeCatalogLookup() {
+    fun protectedBookDeletesNewCopyAfterConfirmingNoCatalogWinner() {
         val root = File(temporaryFolder.root, "protected-books")
         var parsed = false
         val catalog = RecordingCatalog()
@@ -195,12 +197,12 @@ class BookImportServiceTest {
         assertEquals(ImportResult.Rejected(ImportRejection.PROTECTED), result)
         assertPrivateRootEmpty(root)
         assertFalse(parsed)
-        assertEquals(0, catalog.findCalls)
+        assertEquals(1, catalog.findCalls)
         assertEquals(0, catalog.insertCalls)
     }
 
     @Test
-    fun unreadableInspectionDeletesNewCopyAndStopsBeforeCatalogLookup() {
+    fun unreadableInspectionDeletesNewCopyAfterConfirmingNoCatalogWinner() {
         val root = File(temporaryFolder.root, "unreadable-books")
         val catalog = RecordingCatalog()
         val service = service(
@@ -216,7 +218,7 @@ class BookImportServiceTest {
 
         assertEquals(ImportResult.Rejected(ImportRejection.UNREADABLE), result)
         assertPrivateRootEmpty(root)
-        assertEquals(0, catalog.findCalls)
+        assertEquals(1, catalog.findCalls)
     }
 
     @Test
@@ -293,7 +295,7 @@ class BookImportServiceTest {
     }
 
     @Test
-    fun catalogLookupExceptionDeletesNewCopyAndReturnsStorageFailure() {
+    fun catalogLookupExceptionKeepsPublishedCopyBecauseCatalogStateIsUnknown() {
         val root = File(temporaryFolder.root, "lookup-failure-books")
         var parsed = false
         val catalog = RecordingCatalog(findFailure = IOException("database unavailable"))
@@ -312,13 +314,13 @@ class BookImportServiceTest {
         }
 
         assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
-        assertPrivateRootEmpty(root)
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "epub" })
         assertFalse(parsed)
         assertEquals(0, catalog.insertCalls)
     }
 
     @Test
-    fun catalogCancellationPropagatesAndDeletesNewCopyInsideHashLock() {
+    fun catalogCancellationPropagatesAndKeepsPublishedCopyBecauseStateIsUnknown() {
         val root = File(temporaryFolder.root, "catalog-cancellation-books")
         val cancellation = CancellationException("cancel catalog lookup")
         val service = service(
@@ -335,7 +337,30 @@ class BookImportServiceTest {
         }
 
         assertTrue(thrown === cancellation)
-        assertPrivateRootEmpty(root)
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "epub" })
+    }
+
+    @Test
+    fun nestedCatalogCancellationPropagatesAndKeepsPublishedCopy() {
+        val root = File(temporaryFolder.root, "nested-catalog-cancellation-books")
+        val cancellation = CancellationException("nested catalog cancellation")
+        val failure = IOException("catalog wrapper", cancellation)
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(findFailure = failure),
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("book.epub") { "book".byteInputStream() })
+            }
+        }
+
+        assertTrue(thrown === cancellation)
+        assertTrue(thrown.suppressed.contains(failure))
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "epub" })
     }
 
     @Test
@@ -362,6 +387,49 @@ class BookImportServiceTest {
     }
 
     @Test
+    fun catalogCommitThenThrowKeepsTheCommittedRowsPrivateFileLive() {
+        val root = File(temporaryFolder.root, "catalog-commit-then-throw-books")
+        val catalog = CommitThenFailCatalog(IOException("throw after commit"))
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> book("content://source/book") },
+            catalog = catalog,
+        )
+
+        val result = runSuspend {
+            service.execute(ImportRequest("book.pdf") { "book".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        val catalogFile = File(java.net.URI(catalog.row!!.book.filePath))
+        assertTrue("A post-commit throw must not leave the row URI dangling", catalogFile.isFile)
+    }
+
+    @Test
+    fun catalogCommitThenCancellationKeepsTheCommittedRowsPrivateFileLive() {
+        val root = File(temporaryFolder.root, "catalog-commit-then-cancel-books")
+        val cancellation = CancellationException("cancel after catalog commit")
+        val catalog = CommitThenFailCatalog(cancellation)
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> book("content://source/book") },
+            catalog = catalog,
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("book.pdf") { "book".byteInputStream() })
+            }
+        }
+
+        assertTrue(thrown === cancellation)
+        val catalogFile = File(java.net.URI(catalog.row!!.book.filePath))
+        assertTrue("Post-commit cancellation must not leave the row URI dangling", catalogFile.isFile)
+    }
+
+    @Test
     fun cleanupFailureIsReportedAsStorageFailureInsteadOfClaimingProtectedCleanup() {
         val root = File(temporaryFolder.root, "cleanup-failure-books")
         val catalog = RecordingCatalog()
@@ -382,8 +450,29 @@ class BookImportServiceTest {
         }
 
         assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
-        assertEquals(0, catalog.findCalls)
+        assertEquals(1, catalog.findCalls)
         assertTrue(root.walkTopDown().any { it.name == "blocker" })
+    }
+
+    @Test
+    fun fatalCatalogLookupDuringProtectedCleanupIsRethrownWithoutDeletingPublishedFile() {
+        val root = File(temporaryFolder.root, "fatal-protected-cleanup-catalog-books")
+        val fatal = AssertionError("catalog runtime is corrupted")
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.PROTECTED },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(findFailure = fatal),
+        )
+
+        val thrown = assertThrows(AssertionError::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("protected.epub") { "book".byteInputStream() })
+            }
+        }
+
+        assertTrue(thrown === fatal)
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "epub" })
     }
 
     @Test
@@ -436,6 +525,7 @@ class BookImportServiceTest {
             },
             catalog = catalog,
             coordinator = InProcessBookImportCoordinator(),
+            privateBookFileValidator = StrictTestPrivateBookFileValidator(root),
         )
 
         val result = runSuspend {
@@ -479,6 +569,7 @@ class BookImportServiceTest {
             metadataParser = BookMetadataParser { _, _ -> error("parser must not run") },
             catalog = RecordingCatalog(),
             coordinator = InProcessBookImportCoordinator(),
+            privateBookFileValidator = StrictTestPrivateBookFileValidator(root),
         )
 
         val thrown = assertThrows(CancellationException::class.java) {
@@ -520,6 +611,7 @@ class BookImportServiceTest {
             metadataParser = BookMetadataParser { _, _ -> error("parser must not run") },
             catalog = RecordingCatalog(),
             coordinator = InProcessBookImportCoordinator(),
+            privateBookFileValidator = StrictTestPrivateBookFileValidator(root),
         )
 
         val thrown = assertThrows(CancellationException::class.java) {
@@ -557,6 +649,7 @@ class BookImportServiceTest {
             metadataParser = BookMetadataParser { _, _ -> error("parser must not run") },
             catalog = RecordingCatalog(),
             coordinator = InProcessBookImportCoordinator(),
+            privateBookFileValidator = StrictTestPrivateBookFileValidator(root),
             deletePrivateFile = { false },
         )
 
@@ -569,6 +662,128 @@ class BookImportServiceTest {
         assertTrue(thrown === publicationCancellation)
         assertTrue(thrown.suppressed.any { it is IOException })
         assertEquals(1, root.listFiles().orEmpty().count { it.extension == "pdf" })
+    }
+
+    @Test
+    fun suppressedTask5RootCloseCancellationIsPromotedInsideHashLock() {
+        val root = temporaryFolder.newFolder("suppressed-published-cancellation-books")
+        val rootCloseCancellation = CancellationException("cancel published root close")
+        val operations = object : PrivateBookStoreFileOperations by StrongTestPrivateBookStoreFileOperations {
+            override fun openRoot(
+                root: File,
+                operations: PrivateBookStoreFileOperations,
+            ): PrivateBookStoreRootHandle {
+                val delegate = StrongTestPrivateBookStoreFileOperations.openRoot(root, operations)
+                return object : PrivateBookStoreRootHandle by delegate {
+                    override fun cleanupPartDurably(file: File): Boolean {
+                        delegate.cleanupPartDurably(file)
+                        throw IOException("published part cleanup failed")
+                    }
+
+                    override fun close() {
+                        delegate.close()
+                        throw rootCloseCancellation
+                    }
+                }
+            }
+        }
+        val service = BookImportService(
+            privateBookStore = PrivateBookStore(root, operations),
+            protectionInspector = BookProtectionInspector { _, _ -> error("inspector must not run") },
+            metadataParser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(),
+            coordinator = InProcessBookImportCoordinator(),
+            privateBookFileValidator = StrictTestPrivateBookFileValidator(root),
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("book.epub") { "published".byteInputStream() })
+            }
+        }
+
+        assertTrue(thrown === rootCloseCancellation)
+        assertTrue(thrown.suppressed.any { it is PublishedBookCleanupException })
+        assertPrivateRootEmpty(root)
+    }
+
+    @Test
+    fun cancellationGraphCycleTerminatesAndPromotesNestedSourceCloseCancellation() {
+        val root = File(temporaryFolder.root, "cyclic-close-cancellation-books")
+        val closeFailure = IOException("source close failed")
+        val cancellation = CancellationException("nested source close cancellation")
+        closeFailure.addSuppressed(cancellation)
+        cancellation.addSuppressed(closeFailure)
+        val source = object : ByteArrayInputStream("book".toByteArray()) {
+            override fun close() = throw closeFailure
+        }
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> error("inspector must not run") },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(),
+        )
+
+        val thrown = assertThrows(CancellationException::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("book.txt") { source })
+            }
+        }
+
+        assertTrue(thrown === cancellation)
+        assertTrue(thrown.suppressed.contains(closeFailure))
+        assertPrivateRootEmpty(root)
+    }
+
+    @Test
+    fun fatalSourceCloseFailureDeletesNewCopyInsideLockBeforeRethrow() {
+        val root = File(temporaryFolder.root, "fatal-source-close-books")
+        val fatal = AssertionError("fatal source close")
+        val source = object : ByteArrayInputStream("book".toByteArray()) {
+            override fun close() = throw fatal
+        }
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> error("inspector must not run") },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(),
+        )
+
+        val thrown = assertThrows(AssertionError::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("book.mobi") { source })
+            }
+        }
+
+        assertTrue(thrown === fatal)
+        assertPrivateRootEmpty(root)
+    }
+
+    @Test
+    fun fatalSourceCloseKeepsCleanupFailureAsSuppressedContext() {
+        val root = File(temporaryFolder.root, "fatal-close-cleanup-failure-books")
+        val fatal = AssertionError("fatal source close")
+        val cleanupFailure = IOException("cannot delete published copy")
+        val source = object : ByteArrayInputStream("book".toByteArray()) {
+            override fun close() = throw fatal
+        }
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> error("inspector must not run") },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(),
+            deletePrivateFile = { throw cleanupFailure },
+        )
+
+        val thrown = assertThrows(AssertionError::class.java) {
+            runSuspend {
+                service.execute(ImportRequest("book.azw3") { source })
+            }
+        }
+
+        assertTrue(thrown === fatal)
+        assertTrue(thrown.suppressed.contains(cleanupFailure))
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "azw3" })
     }
 
     @Test
@@ -593,6 +808,7 @@ class BookImportServiceTest {
             metadataParser = BookMetadataParser { _, _ -> error("parser must not run") },
             catalog = RecordingCatalog(),
             coordinator = InProcessBookImportCoordinator(),
+            privateBookFileValidator = StrictTestPrivateBookFileValidator(root),
         )
 
         val result = runSuspend {
@@ -605,7 +821,7 @@ class BookImportServiceTest {
     }
 
     @Test
-    fun cancellationFromCoordinatorPropagatesAndDeletesNewCopy() {
+    fun cancellationFromCoordinatorPropagatesAndKeepsPublishedCopy() {
         val root = File(temporaryFolder.root, "coordinator-cancellation-books")
         val cancellation = CancellationException("cancel lock acquisition")
         var parsed = false
@@ -634,7 +850,220 @@ class BookImportServiceTest {
 
         assertTrue(thrown === cancellation)
         assertFalse(parsed)
-        assertPrivateRootEmpty(root)
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "epub" })
+    }
+
+    @Test
+    fun coordinatorAcquisitionFailureKeepsPublishedCopyForAnotherWinner() {
+        val root = File(temporaryFolder.root, "acquisition-failure-winner-books")
+        val failure = IOException("cannot acquire hash lock")
+        val coordinator = ExistingWinnerBeforeOwnerAcquisitionCoordinator(failure)
+        val catalog = ThreadSafeAtomicCatalog()
+        var ownerSourceClosed = false
+        val ownerService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> error("owner must not inspect") },
+            parser = BookMetadataParser { _, _ -> error("owner must not parse") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val existingService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> book("content://existing/source") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val ownerTask = FutureTask {
+            runSuspend {
+                ownerService.execute(
+                    ImportRequest("owner.epub") {
+                        object : ByteArrayInputStream("same".toByteArray()) {
+                            override fun close() {
+                                ownerSourceClosed = true
+                                super.close()
+                            }
+                        }
+                    },
+                )
+            }
+        }
+        val existingTask = FutureTask {
+            runSuspend {
+                existingService.execute(
+                    ImportRequest("existing.epub") { "same".byteInputStream() },
+                )
+            }
+        }
+
+        Thread(ownerTask, ExistingWinnerBeforeOwnerAcquisitionCoordinator.OWNER_THREAD).start()
+        assertTrue(coordinator.ownerAttempted.await(5, TimeUnit.SECONDS))
+        Thread(existingTask, ExistingWinnerBeforeOwnerAcquisitionCoordinator.EXISTING_THREAD).start()
+        val ownerResult = ownerTask.get(10, TimeUnit.SECONDS)
+        val existingResult = existingTask.get(10, TimeUnit.SECONDS)
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), ownerResult)
+        assertEquals(ImportResult.Imported(1L), existingResult)
+        assertTrue(ownerSourceClosed)
+        val catalogFile = File(java.net.URI(catalog.rows.single().book.filePath))
+        assertTrue("Acquisition failure must not leave the winner URI dangling", catalogFile.isFile)
+    }
+
+    @Test
+    fun coordinatorAcquisitionCancellationKeepsPublishedCopyForAnotherWinner() {
+        val root = File(temporaryFolder.root, "acquisition-cancel-winner-books")
+        val cancellation = CancellationException("cancel hash lock acquisition")
+        val coordinator = ExistingWinnerBeforeOwnerAcquisitionCoordinator(cancellation)
+        val catalog = ThreadSafeAtomicCatalog()
+        val ownerService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> error("owner must not inspect") },
+            parser = BookMetadataParser { _, _ -> error("owner must not parse") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val existingService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> book("content://existing/source") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val ownerTask = FutureTask<Throwable> {
+            assertThrows(CancellationException::class.java) {
+                runSuspend {
+                    ownerService.execute(
+                        ImportRequest("owner.pdf") { "same".byteInputStream() },
+                    )
+                }
+            }
+        }
+        val existingTask = FutureTask {
+            runSuspend {
+                existingService.execute(
+                    ImportRequest("existing.pdf") { "same".byteInputStream() },
+                )
+            }
+        }
+
+        Thread(ownerTask, ExistingWinnerBeforeOwnerAcquisitionCoordinator.OWNER_THREAD).start()
+        assertTrue(coordinator.ownerAttempted.await(5, TimeUnit.SECONDS))
+        Thread(existingTask, ExistingWinnerBeforeOwnerAcquisitionCoordinator.EXISTING_THREAD).start()
+        val thrown = ownerTask.get(10, TimeUnit.SECONDS)
+        val existingResult = existingTask.get(10, TimeUnit.SECONDS)
+
+        assertTrue(thrown === cancellation)
+        assertEquals(ImportResult.Imported(1L), existingResult)
+        val catalogFile = File(java.net.URI(catalog.rows.single().book.filePath))
+        assertTrue("Acquisition cancellation must not leave the winner URI dangling", catalogFile.isFile)
+    }
+
+    @Test
+    fun fatalSourceCloseDuringCoordinatorAcquisitionFailureKeepsTheWinnersFile() {
+        val root = File(temporaryFolder.root, "acquisition-fatal-close-winner-books")
+        val acquisitionFailure = IOException("cannot acquire hash lock")
+        val closeFailure = AssertionError("owner source close failed fatally")
+        val coordinator = ExistingWinnerBeforeOwnerAcquisitionCoordinator(acquisitionFailure)
+        val catalog = ThreadSafeAtomicCatalog()
+        val ownerService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> error("owner must not inspect") },
+            parser = BookMetadataParser { _, _ -> error("owner must not parse") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val existingService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> book("content://existing/source") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val ownerTask = FutureTask<Throwable> {
+            assertThrows(AssertionError::class.java) {
+                runSuspend {
+                    ownerService.execute(
+                        ImportRequest("owner.txt") {
+                            object : ByteArrayInputStream("same".toByteArray()) {
+                                override fun close() = throw closeFailure
+                            }
+                        },
+                    )
+                }
+            }
+        }
+        val existingTask = FutureTask {
+            runSuspend {
+                existingService.execute(
+                    ImportRequest("existing.txt") { "same".byteInputStream() },
+                )
+            }
+        }
+
+        Thread(ownerTask, ExistingWinnerBeforeOwnerAcquisitionCoordinator.OWNER_THREAD).start()
+        assertTrue(coordinator.ownerAttempted.await(5, TimeUnit.SECONDS))
+        Thread(existingTask, ExistingWinnerBeforeOwnerAcquisitionCoordinator.EXISTING_THREAD).start()
+        val thrown = ownerTask.get(10, TimeUnit.SECONDS)
+        val existingResult = existingTask.get(10, TimeUnit.SECONDS)
+
+        assertTrue(thrown === closeFailure)
+        assertTrue(thrown.suppressed.any { it === acquisitionFailure })
+        assertEquals(ImportResult.Imported(1L), existingResult)
+        val catalogFile = File(java.net.URI(catalog.rows.single().book.filePath))
+        assertTrue("Fatal source close must not leave the winner URI dangling", catalogFile.isFile)
+    }
+
+    @Test
+    fun ownerSourceCloseFailureAfterAnotherWinnerCommitsKeepsTheirSharedFile() {
+        val root = File(temporaryFolder.root, "source-close-winner-books")
+        val coordinator = ExistingFirstSharedCoordinator()
+        val catalog = ThreadSafeAtomicCatalog()
+        val ownerService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> error("owner must not inspect") },
+            parser = BookMetadataParser { _, _ -> error("owner must not parse") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val existingService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> book("content://existing/source") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val ownerTask = FutureTask {
+            runSuspend {
+                ownerService.execute(
+                    ImportRequest("owner.azw3") {
+                        object : ByteArrayInputStream("same".toByteArray()) {
+                            override fun close() {
+                                throw IOException("owner source close failed")
+                            }
+                        }
+                    },
+                )
+            }
+        }
+        val existingTask = FutureTask {
+            runSuspend {
+                existingService.execute(
+                    ImportRequest("existing.azw3") { "same".byteInputStream() },
+                )
+            }
+        }
+
+        Thread(ownerTask, ExistingFirstSharedCoordinator.OWNER_THREAD).start()
+        assertTrue(coordinator.ownerEntered.await(5, TimeUnit.SECONDS))
+        Thread(existingTask, ExistingFirstSharedCoordinator.EXISTING_THREAD).start()
+        val ownerResult = ownerTask.get(10, TimeUnit.SECONDS)
+        val existingResult = existingTask.get(10, TimeUnit.SECONDS)
+
+        assertEquals(ImportResult.Imported(1L), existingResult)
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), ownerResult)
+        val catalogFile = File(java.net.URI(catalog.rows.single().book.filePath))
+        assertTrue("Source-close failure must not leave the winner URI dangling", catalogFile.isFile)
+        assertEquals(listOf(catalogFile), root.listFiles().orEmpty().toList())
     }
 
     @Test
@@ -662,10 +1091,13 @@ class BookImportServiceTest {
     @Test
     fun atomicCatalogExistingResultReturnsDuplicateAndDeletesThisNewCopy() {
         val root = File(temporaryFolder.root, "atomic-existing-books")
+        assertTrue(root.mkdirs())
+        val catalogFile = File(root, "catalog-existing.epub")
+        catalogFile.writeText("existing catalog book")
         val catalog = RecordingCatalog(
             writeResult = CatalogWriteResult.Existing(
                 88L,
-                File(temporaryFolder.root, "catalog-existing.epub"),
+                catalogFile,
             ),
         )
         val service = service(
@@ -682,16 +1114,19 @@ class BookImportServiceTest {
         assertEquals(ImportResult.Duplicate(88L), result)
         assertEquals(1, catalog.insertCalls)
         assertTrue(catalog.inserted.isEmpty())
-        assertPrivateRootEmpty(root)
+        assertEquals(listOf(catalogFile), root.listFiles().orEmpty().toList())
     }
 
     @Test
     fun atomicCatalogExistingCleanupFailureMapsToStorageFailure() {
         val root = File(temporaryFolder.root, "atomic-existing-cleanup-failure-books")
+        assertTrue(root.mkdirs())
+        val catalogFile = File(root, "catalog-existing.pdf")
+        catalogFile.writeText("existing catalog book")
         val catalog = RecordingCatalog(
             writeResult = CatalogWriteResult.Existing(
                 89L,
-                File(temporaryFolder.root, "catalog-existing.pdf"),
+                catalogFile,
             ),
         )
         val service = service(
@@ -707,16 +1142,19 @@ class BookImportServiceTest {
         }
 
         assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
-        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "pdf" })
+        assertEquals(2, root.listFiles().orEmpty().count { it.extension == "pdf" })
     }
 
     @Test
     fun atomicCatalogExistingDeleteReturningFalseMapsToStorageFailure() {
         val root = File(temporaryFolder.root, "atomic-existing-delete-false-books")
+        assertTrue(root.mkdirs())
+        val catalogFile = File(root, "catalog-existing.azw3")
+        catalogFile.writeText("existing catalog book")
         val catalog = RecordingCatalog(
             writeResult = CatalogWriteResult.Existing(
                 91L,
-                File(temporaryFolder.root, "catalog-existing.azw3"),
+                catalogFile,
             ),
         )
         val service = service(
@@ -732,7 +1170,7 @@ class BookImportServiceTest {
         }
 
         assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
-        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "azw3" })
+        assertEquals(2, root.listFiles().orEmpty().count { it.extension == "azw3" })
     }
 
     @Test
@@ -759,6 +1197,88 @@ class BookImportServiceTest {
         assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
         assertFalse(parsed)
         assertEquals(1, root.listFiles().orEmpty().count { it.extension == "epub" })
+    }
+
+    @Test
+    fun missingCatalogFileIsInvalidAndDoesNotDeleteTheNewCopy() {
+        val root = File(temporaryFolder.root, "missing-catalog-file-books")
+        val missingCatalogFile = File(root, "missing.epub")
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(existingMatch = CatalogMatch(101L, missingCatalogFile)),
+        )
+
+        val result = runSuspend {
+            service.execute(ImportRequest("book.epub") { "book".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "epub" })
+    }
+
+    @Test
+    fun outsideCatalogFileIsInvalidAndDoesNotDeleteTheNewCopy() {
+        val root = File(temporaryFolder.root, "outside-catalog-file-books")
+        val outsideCatalogFile = temporaryFolder.newFile("outside-catalog.pdf")
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(existingMatch = CatalogMatch(102L, outsideCatalogFile)),
+        )
+
+        val result = runSuspend {
+            service.execute(ImportRequest("book.pdf") { "book".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        assertTrue(outsideCatalogFile.isFile)
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "pdf" })
+    }
+
+    @Test
+    fun symlinkCatalogFileIsInvalidAndDoesNotDeleteTheNewCopy() {
+        val root = temporaryFolder.newFolder("symlink-catalog-file-books")
+        val target = temporaryFolder.newFile("symlink-target.mobi")
+        val catalogLink = File(root, "catalog-link.mobi")
+        Files.createSymbolicLink(catalogLink.toPath(), target.toPath())
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(existingMatch = CatalogMatch(103L, catalogLink)),
+        )
+
+        val result = runSuspend {
+            service.execute(ImportRequest("book.mobi") { "book".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        assertTrue(Files.isSymbolicLink(catalogLink.toPath()))
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "mobi" && it != catalogLink })
+    }
+
+    @Test
+    fun nonRegularCatalogFileIsInvalidAndDoesNotDeleteTheNewCopy() {
+        val root = temporaryFolder.newFolder("nonregular-catalog-file-books")
+        val catalogDirectory = File(root, "catalog-directory.txt")
+        assertTrue(catalogDirectory.mkdir())
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> error("parser must not run") },
+            catalog = RecordingCatalog(existingMatch = CatalogMatch(104L, catalogDirectory)),
+        )
+
+        val result = runSuspend {
+            service.execute(ImportRequest("book.txt") { "book".byteInputStream() })
+        }
+
+        assertEquals(ImportResult.Rejected(ImportRejection.STORAGE_FAILED), result)
+        assertTrue(catalogDirectory.isDirectory)
+        assertEquals(1, root.listFiles().orEmpty().count { it.extension == "txt" && it.isFile })
     }
 
     @Test
@@ -891,6 +1411,49 @@ class BookImportServiceTest {
     }
 
     @Test
+    fun existingSideInsertBeforeOwnerProtectionRejectionKeepsTheirSharedPrivateFile() {
+        val root = File(temporaryFolder.root, "concurrent-protected-owner-books")
+        val coordinator = ExistingFirstSharedCoordinator()
+        val catalog = ThreadSafeAtomicCatalog()
+        val ownerService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.PROTECTED },
+            parser = BookMetadataParser { _, _ -> error("protected owner must not parse") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val existingService = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { _, _ -> book("content://existing/source") },
+            catalog = catalog,
+            coordinator = coordinator,
+        )
+        val ownerTask = FutureTask {
+            runSuspend {
+                ownerService.execute(ImportRequest("owner.mobi") { "same".byteInputStream() })
+            }
+        }
+        val existingTask = FutureTask {
+            runSuspend {
+                existingService.execute(ImportRequest("existing.mobi") { "same".byteInputStream() })
+            }
+        }
+
+        Thread(ownerTask, ExistingFirstSharedCoordinator.OWNER_THREAD).start()
+        assertTrue(coordinator.ownerEntered.await(5, TimeUnit.SECONDS))
+        Thread(existingTask, ExistingFirstSharedCoordinator.EXISTING_THREAD).start()
+        val ownerResult = ownerTask.get(10, TimeUnit.SECONDS)
+        val existingResult = existingTask.get(10, TimeUnit.SECONDS)
+
+        assertEquals(ImportResult.Rejected(ImportRejection.PROTECTED), ownerResult)
+        assertEquals(ImportResult.Imported(1L), existingResult)
+        val privateFile = File(java.net.URI(catalog.rows.single().book.filePath))
+        assertTrue("Protection rejection must not leave the winner URI dangling", privateFile.isFile)
+        assertEquals(listOf(privateFile), root.listFiles().orEmpty().toList())
+    }
+
+    @Test
     fun ownerParseFailureDeletesFileBeforeExistingSideValidatesInsideSharedLock() {
         val root = File(temporaryFolder.root, "concurrent-owner-failure-books")
         val coordinator = OwnerFirstSharedCoordinator()
@@ -989,6 +1552,8 @@ class BookImportServiceTest {
         parser: BookMetadataParser,
         catalog: BookImportCatalog,
         coordinator: BookImportCoordinator = InProcessBookImportCoordinator(),
+        privateBookFileValidator: PrivateBookFileValidator =
+            StrictTestPrivateBookFileValidator(root),
         deletePrivateFile: (File) -> Boolean = { Files.deleteIfExists(it.toPath()) },
     ): BookImportService = BookImportService(
         privateBookStore = PrivateBookStore(root, StrongTestPrivateBookStoreFileOperations),
@@ -996,6 +1561,7 @@ class BookImportServiceTest {
         metadataParser = parser,
         catalog = catalog,
         coordinator = coordinator,
+        privateBookFileValidator = privateBookFileValidator,
         deletePrivateFile = deletePrivateFile,
     )
 
@@ -1145,6 +1711,43 @@ class BookImportServiceTest {
         }
     }
 
+    private class ExistingWinnerBeforeOwnerAcquisitionCoordinator(
+        private val ownerFailure: Throwable,
+        private val delegate: BookImportCoordinator = InProcessBookImportCoordinator(),
+    ) : BookImportCoordinator {
+        val ownerAttempted = CountDownLatch(1)
+        private val existingFinished = CountDownLatch(1)
+
+        override suspend fun <T> withHashLock(
+            sha256: String,
+            block: suspend () -> T,
+        ): T = when (Thread.currentThread().name) {
+            OWNER_THREAD -> {
+                ownerAttempted.countDown()
+                check(existingFinished.await(5, TimeUnit.SECONDS)) {
+                    "Existing-side import did not finish before owner acquisition failed"
+                }
+                throw ownerFailure
+            }
+            EXISTING_THREAD -> {
+                check(ownerAttempted.await(5, TimeUnit.SECONDS)) {
+                    "Owner did not attempt acquisition before existing-side import"
+                }
+                try {
+                    delegate.withHashLock(sha256, block)
+                } finally {
+                    existingFinished.countDown()
+                }
+            }
+            else -> error("Unexpected import thread: ${Thread.currentThread().name}")
+        }
+
+        companion object {
+            const val OWNER_THREAD = "acquisition-failure-owner"
+            const val EXISTING_THREAD = "acquisition-failure-existing"
+        }
+    }
+
     private class ThreadSafeAtomicCatalog : BookImportCatalog {
         data class Row(val id: Long, val book: Book, val sha256: String)
 
@@ -1172,6 +1775,48 @@ class BookImportServiceTest {
                     CatalogWriteResult.Inserted(row.id)
                 }
             }
+    }
+
+    private class CommitThenFailCatalog(
+        private val failure: Throwable,
+    ) : BookImportCatalog {
+        data class Row(val id: Long, val book: Book, val sha256: String)
+
+        var row: Row? = null
+
+        override suspend fun findBySha256(sha256: String): CatalogMatch? =
+            row?.takeIf { it.sha256 == sha256 }?.let { existing ->
+                CatalogMatch(existing.id, File(java.net.URI(existing.book.filePath)))
+            }
+
+        override suspend fun insertOrGet(book: Book, sha256: String): CatalogWriteResult {
+            row = Row(1L, book, sha256)
+            throw failure
+        }
+    }
+
+    private class StrictTestPrivateBookFileValidator(
+        privateRoot: File,
+    ) : PrivateBookFileValidator {
+        private val root = privateRoot.toPath().toAbsolutePath().normalize()
+
+        override fun validate(file: File): Boolean {
+            val path = file.toPath().toAbsolutePath().normalize()
+            return path.startsWith(root) &&
+                Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) &&
+                !Files.isSymbolicLink(path)
+        }
+
+        override fun match(storedFile: File, catalogFile: File): PrivateBookFileMatch {
+            if (!validate(storedFile) || !validate(catalogFile)) {
+                return PrivateBookFileMatch.INVALID
+            }
+            return if (Files.isSameFile(storedFile.toPath(), catalogFile.toPath())) {
+                PrivateBookFileMatch.SAME
+            } else {
+                PrivateBookFileMatch.DIFFERENT
+            }
+        }
     }
 
     private class RecordingCatalog(
