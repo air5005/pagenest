@@ -5,10 +5,15 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.nio.ByteBuffer
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 import java.nio.channels.FileChannel
+import java.nio.file.attribute.BasicFileAttributes
+import java.security.MessageDigest
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -22,9 +27,117 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
+internal object StrongTestPrivateBookStoreFileOperations :
+    PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+    override fun openExistingBook(file: File): ExistingBookInput =
+        JvmExistingBookInput.open(file, StrongTestJvmExistingBookFileOperations)
+
+    override fun readJvmAttributes(file: File): BasicFileAttributes =
+        StrongTestJvmExistingBookFileOperations.readAttributes(file.toPath())
+}
+
+internal object StrongTestJvmExistingBookFileOperations : JvmExistingBookFileOperations {
+    override fun readAttributes(path: Path): BasicFileAttributes {
+        val delegate = SystemJvmExistingBookFileOperations.readAttributes(path)
+        val created = delegate.creationTime().toInstant()
+        val digest = if (delegate.isRegularFile) digest(path) else null
+        val identity = StrongTestFileIdentity(
+            delegate.isDirectory,
+            created.epochSecond,
+            created.nano,
+            delegate.size(),
+            digest,
+        )
+        return object : BasicFileAttributes by delegate {
+            override fun fileKey(): Any = identity
+        }
+    }
+
+    override fun openChannel(path: Path): FileChannel =
+        SystemJvmExistingBookFileOperations.openChannel(path)
+
+    override fun openVerificationChannel(path: Path): FileChannel =
+        SystemJvmExistingBookFileOperations.openVerificationChannel(path)
+
+    private fun digest(path: Path): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        Files.newByteChannel(
+            path,
+            setOf(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS),
+        ).use { channel ->
+            val buffer = ByteBuffer.allocate(8 * 1024)
+            while (channel.read(buffer) >= 0) {
+                if (buffer.position() == 0) continue
+                buffer.flip()
+                digest.update(buffer)
+                buffer.clear()
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+}
+
+private data class StrongTestFileIdentity(
+    val directory: Boolean,
+    val createdSeconds: Long,
+    val createdNanoseconds: Int,
+    val size: Long,
+    val digest: String?,
+)
+
 class PrivateBookStoreTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun legacyAbsoluteRootConstructorFailsClosedOnAndroidRuntime() {
+        val originalVmName = System.getProperty("java.vm.name")
+        val originalRuntimeName = System.getProperty("java.runtime.name")
+        try {
+            System.setProperty("java.vm.name", "Dalvik")
+            System.setProperty("java.runtime.name", "Android Runtime")
+
+            assertThrows(IOException::class.java) {
+                PrivateBookStore(File(temporaryFolder.root, "books"))
+            }
+        } finally {
+            System.setProperty("java.vm.name", originalVmName)
+            System.setProperty("java.runtime.name", originalRuntimeName)
+        }
+    }
+
+    @Test
+    fun trustedRootRejectsSymlinkChildWithoutExternalWrites() {
+        val trustedParent = temporaryFolder.newFolder("trusted-parent")
+        val attacker = temporaryFolder.newFolder("trusted-child-attacker")
+        Files.createSymbolicLink(File(trustedParent, "books").toPath(), attacker.toPath())
+        val store = PrivateBookStore.inTrustedDirectory(
+            trustedParent,
+            "books",
+            SystemPrivateBookStoreFileOperations,
+        )
+
+        assertThrows(IOException::class.java) {
+            store.store("hello".byteInputStream(), "book.epub")
+        }
+
+        assertTrue(attacker.listFiles()!!.isEmpty())
+    }
+
+    @Test
+    fun trustedRootRejectsInvalidChildBasenames() {
+        val trustedParent = temporaryFolder.newFolder("trusted-name-parent")
+
+        listOf("", ".", "..", "nested/books", "nested\\books", "nul\u0000name").forEach { name ->
+            assertThrows(IllegalArgumentException::class.java) {
+                PrivateBookStore.inTrustedDirectory(
+                    trustedParent,
+                    name,
+                    SystemPrivateBookStoreFileOperations,
+                )
+            }
+        }
+    }
 
     @Test
     fun duplicateContentUsesOnePrivateCopy() {
@@ -362,6 +475,40 @@ class PrivateBookStoreTest {
     }
 
     @Test
+    fun rootHandleCloseFailureReportsAlreadyPublishedBook() {
+        val root = temporaryFolder.newFolder("root-close-books")
+        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun openRoot(
+                rootDirectory: File,
+                operations: PrivateBookStoreFileOperations,
+            ): PrivateBookStoreRootHandle {
+                val delegate = SystemPrivateBookStoreFileOperations.openRoot(
+                    rootDirectory,
+                    operations,
+                )
+                return object : PrivateBookStoreRootHandle by delegate {
+                    override fun close() {
+                        delegate.close()
+                        throw IOException("root close failed")
+                    }
+                }
+            }
+        }
+
+        val failure = assertThrows(PublishedBookCleanupException::class.java) {
+            PrivateBookStore(root, operations).store("hello".byteInputStream(), "book.epub")
+        }
+
+        assertEquals("root close failed", failure.cause?.message)
+        assertEquals(
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824.epub",
+            failure.storedBook.file.name,
+        )
+        assertArrayEquals("hello".toByteArray(), failure.storedBook.file.readBytes())
+        assertTrue(root.listFiles()!!.none { it.name.endsWith(".part") })
+    }
+
+    @Test
     fun loserDirectorySyncFailureKeepsExistingFinalAndRecoverablePart() {
         val root = temporaryFolder.newFolder("books")
         val finalFile = File(
@@ -433,6 +580,47 @@ class PrivateBookStoreTest {
         assertEquals(listOf("cleanup unlink failed"), failure.suppressed.map { it.message })
         assertEquals(1, root.listFiles()!!.count { it.name.endsWith(".part") })
         assertEquals(0, root.listFiles()!!.count { it.name.endsWith(".epub") })
+    }
+
+    @Test
+    fun earlyFailureUsesOwnedDurableCleanupAfterRootPathSwap() {
+        val root = temporaryFolder.newFolder("cleanup-swap-books")
+        val pinnedRoot = File(temporaryFolder.root, "cleanup-swap-pinned")
+        val attacker = temporaryFolder.newFolder("cleanup-swap-attacker")
+        var ownedCleanupCalled = false
+        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun openRoot(
+                rootDirectory: File,
+                operations: PrivateBookStoreFileOperations,
+            ): PrivateBookStoreRootHandle {
+                val delegate = SystemPrivateBookStoreFileOperations.openRoot(
+                    rootDirectory,
+                    operations,
+                )
+                return object : PrivateBookStoreRootHandle by delegate {
+                    override fun publishAtomically(source: File, target: File) {
+                        Files.move(rootDirectory.toPath(), pinnedRoot.toPath())
+                        Files.createSymbolicLink(rootDirectory.toPath(), attacker.toPath())
+                        throw IOException("publication failed after root swap")
+                    }
+
+                    override fun cleanupPartDurably(file: File): Boolean {
+                        ownedCleanupCalled = true
+                        return Files.deleteIfExists(File(pinnedRoot, file.name).toPath())
+                    }
+                }
+            }
+        }
+
+        val failure = assertThrows(IOException::class.java) {
+            PrivateBookStore(root, operations).store("hello".byteInputStream(), "book.epub")
+        }
+
+        assertEquals("publication failed after root swap", failure.message)
+        assertTrue(ownedCleanupCalled)
+        assertTrue(pinnedRoot.listFiles()!!.isEmpty())
+        assertTrue(attacker.listFiles()!!.isEmpty())
+        assertTrue(Files.isSymbolicLink(root.toPath()))
     }
 
     @Test
@@ -598,9 +786,50 @@ class PrivateBookStoreTest {
             override fun openExistingBook(file: File): ExistingBookInput {
                 val delegate = SystemPrivateBookStoreFileOperations.openExistingBook(file)
                 return object : ExistingBookInput by delegate {
-                    override fun verifyPathStillMatches() {
+                    override fun verifiedStateAfterHash(): ExistingBookFileState {
                         FileOutputStream(finalFile, true).use { it.write('!'.code) }
-                        delegate.verifyPathStillMatches()
+                        return delegate.verifiedStateAfterHash()
+                    }
+                }
+            }
+        }
+
+        assertThrows(IOException::class.java) {
+            PrivateBookStore(root, operations).store(
+                PROCESS_CONTENT.byteInputStream(),
+                "book.pdf",
+            )
+        }
+
+        assertEquals("$PROCESS_CONTENT!", finalFile.readText())
+        assertTrue(root.listFiles()!!.none { it.name.endsWith(".part") })
+    }
+
+    @Test
+    fun sameInodeMutationBetweenSecondStatAndEntryStatIsRejected() {
+        val root = temporaryFolder.newFolder("between-stat-books")
+        val finalFile = File(root, "$PROCESS_CONTENT_SHA256.pdf").apply {
+            writeText(PROCESS_CONTENT)
+        }
+        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun openRoot(
+                rootDirectory: File,
+                operations: PrivateBookStoreFileOperations,
+            ): PrivateBookStoreRootHandle {
+                val delegate = SystemPrivateBookStoreFileOperations.openRoot(
+                    rootDirectory,
+                    operations,
+                )
+                return object : PrivateBookStoreRootHandle by delegate {
+                    override fun openExistingBook(file: File): ExistingBookInput {
+                        val input = delegate.openExistingBook(file)
+                        return object : ExistingBookInput by input {
+                            override fun verifiedStateAfterHash(): ExistingBookFileState {
+                                val state = input.verifiedStateAfterHash()
+                                FileOutputStream(finalFile, true).use { it.write('!'.code) }
+                                return state
+                            }
+                        }
                     }
                 }
             }
@@ -635,6 +864,89 @@ class PrivateBookStoreTest {
         }
 
         assertEquals("attacker", finalFile.readText())
+    }
+
+    @Test
+    fun jvmAdapterRejectsRestoredRegularFileSwapInsideOpenIdentityWindow() {
+        val root = temporaryFolder.newFolder("jvm-restored-open-window")
+        val finalFile = File(root, "final.pdf").apply { writeText("original") }
+        val heldOriginal = File(root, "held-original.pdf")
+        val heldAttacker = File(root, "held-attacker.pdf")
+        val attacker = File(root, "attacker.pdf").apply { writeText("attacker") }
+        val originalModified = Files.getLastModifiedTime(finalFile.toPath())
+        Files.setLastModifiedTime(attacker.toPath(), originalModified)
+        val operations = object : JvmExistingBookFileOperations by SystemJvmExistingBookFileOperations {
+            override fun openChannel(path: Path): FileChannel {
+                Files.move(path, heldOriginal.toPath())
+                Files.move(attacker.toPath(), path)
+                val opened = SystemJvmExistingBookFileOperations.openChannel(path)
+                Files.move(path, heldAttacker.toPath())
+                Files.move(heldOriginal.toPath(), path)
+                return opened
+            }
+        }
+
+        assertThrows(IOException::class.java) {
+            JvmExistingBookInput.open(finalFile, operations).close()
+        }
+
+        assertEquals("original", finalFile.readText())
+        assertEquals("attacker", heldAttacker.readText())
+    }
+
+    @Test
+    fun jvmAdapterFailsClosedWhenFileKeyIsUnavailable() {
+        val root = temporaryFolder.newFolder("jvm-null-file-key")
+        val finalFile = File(root, "final.pdf").apply { writeText("original") }
+        val operations = object : JvmExistingBookFileOperations by SystemJvmExistingBookFileOperations {
+            override fun readAttributes(path: Path): BasicFileAttributes {
+                val delegate = SystemJvmExistingBookFileOperations.readAttributes(path)
+                return object : BasicFileAttributes by delegate {
+                    override fun fileKey(): Any? = null
+                }
+            }
+        }
+
+        assertThrows(IOException::class.java) {
+            JvmExistingBookInput.open(finalFile, operations).close()
+        }
+    }
+
+    @Test
+    fun jvmAdapterRejectsSameInodeRewriteWithForgedTimestamp() {
+        val root = temporaryFolder.newFolder("jvm-forged-rewrite")
+        val finalFile = File(root, "$PROCESS_CONTENT_SHA256.pdf").apply {
+            writeText(PROCESS_CONTENT)
+        }
+        val operations = object : PrivateBookStoreFileOperations by SystemPrivateBookStoreFileOperations {
+            override fun openRoot(
+                rootDirectory: File,
+                operations: PrivateBookStoreFileOperations,
+            ): PrivateBookStoreRootHandle {
+                val delegate = SystemPrivateBookStoreFileOperations.openRoot(rootDirectory, operations)
+                return object : PrivateBookStoreRootHandle by delegate {
+                    override fun openExistingBook(file: File): ExistingBookInput {
+                        val input = delegate.openExistingBook(file)
+                        return object : ExistingBookInput by input {
+                            override fun verifiedStateAfterHash(): ExistingBookFileState {
+                                val state = input.verifiedStateAfterHash()
+                                val modified = Files.getLastModifiedTime(finalFile.toPath())
+                                val bytes = finalFile.readBytes()
+                                finalFile.writeBytes(bytes.mapIndexed { index, byte ->
+                                    if (index == 0) (byte.toInt() xor 1).toByte() else byte
+                                }.toByteArray())
+                                Files.setLastModifiedTime(finalFile.toPath(), modified)
+                                return state
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertThrows(IOException::class.java) {
+            PrivateBookStore(root, operations).store(PROCESS_CONTENT.byteInputStream(), "book.pdf")
+        }
     }
 
     @Test
