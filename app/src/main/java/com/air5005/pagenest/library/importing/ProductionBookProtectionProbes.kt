@@ -62,7 +62,16 @@ object ProductionBookProtectionProbes {
             throw IOException("EPUB encryption metadata has an unexpected root element")
         }
 
-        val encryptedData = root.directElementChildren()
+        val rootChildren = root.directElementChildren()
+        if (rootChildren.any {
+                it.localName == "EncryptedKey" &&
+                    it.namespaceURI == XML_ENCRYPTION_NAMESPACE
+            }
+        ) {
+            return@use true
+        }
+
+        val encryptedData = rootChildren
         if (encryptedData.isEmpty() || encryptedData.any {
                 it.localName != "EncryptedData" || it.namespaceURI != XML_ENCRYPTION_NAMESPACE
             }

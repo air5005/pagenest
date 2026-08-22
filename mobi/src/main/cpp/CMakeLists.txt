@@ -68,6 +68,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         util/app_ext.cpp
         util/file_ext.h
         util/file_ext.cpp
+        util/safe_cover_writer.h
+        util/safe_cover_writer.c
         util/mobi_util.h
         util/mobi_util.cpp
         util/epub_util.h

@@ -3,6 +3,25 @@
 //
 
 #include "mobi_util.h"
+#include "safe_cover_writer.h"
+
+namespace {
+
+MOBIPdbRecord *find_mobi_cover_record(MOBIData *mobi_data) {
+    MOBIExthHeader *cover_offset = mobi_get_exthrecord_by_tag(mobi_data, EXTH_COVEROFFSET);
+    if (cover_offset == nullptr) {
+        return nullptr;
+    }
+    const auto *offset_bytes = static_cast<const unsigned char *>(cover_offset->data);
+    uint32_t offset = mobi_decode_exthvalue(offset_bytes, cover_offset->size);
+    size_t first_resource = mobi_get_first_resource_record(mobi_data);
+    if (first_resource == MOBI_NOTSET || offset > SIZE_MAX - first_resource) {
+        return nullptr;
+    }
+    return mobi_get_record_by_seqnumber(mobi_data, first_resource + offset);
+}
+
+}
 
 void mobi_util::mobi_data_free() {
     if (mobi_rawml != nullptr) {
@@ -536,6 +555,25 @@ int mobi_util::loadMobi(std::string fullpath,
         identifier = "";
     }
     isEncrypted = meta_isEncrypted;
+
+    if (!meta_isEncrypted) {
+        MOBIPdbRecord *cover_record = find_mobi_cover_record(mobi_data);
+        if (cover_record != nullptr) {
+            const char *cover_extension = safe_cover_extension_from_bytes(
+                    cover_record->data,
+                    cover_record->size);
+            char output_path[4096];
+            if (cover_extension != nullptr && safe_cover_write_bytes(
+                    app_ext::appFileDir.c_str(),
+                    cover_extension,
+                    cover_record->data,
+                    cover_record->size,
+                    output_path,
+                    sizeof(output_path))) {
+                coverPath = output_path;
+            }
+        }
+    }
 
     if (meta_title) {
         free(meta_title);

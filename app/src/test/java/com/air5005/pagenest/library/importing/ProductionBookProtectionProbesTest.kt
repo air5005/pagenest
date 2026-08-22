@@ -272,6 +272,26 @@ class ProductionBookProtectionProbesTest {
     }
 
     @Test
+    fun epubProbeProtectsAStandardsValidTopLevelEncryptedKey() {
+        val epub = epubWith(
+            "META-INF/encryption.xml" to """
+                <ocf:encryption
+                    xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container"
+                    xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+                    <enc:EncryptedKey>
+                        <enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#kw-aes256"/>
+                        <enc:CipherData>
+                            <enc:CipherValue>AA==</enc:CipherValue>
+                        </enc:CipherData>
+                    </enc:EncryptedKey>
+                </ocf:encryption>
+            """.trimIndent(),
+        )
+
+        assertTrue(ProductionBookProtectionProbes.epubProtected(epub))
+    }
+
+    @Test
     fun securityMetadataBoundedStreamCountsActualDecompressedBytes() {
         val input = SecurityMetadataBoundedInputStream(
             ByteArrayInputStream(ByteArray(65_537)),

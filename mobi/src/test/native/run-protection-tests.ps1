@@ -17,17 +17,23 @@ $env:PATH = "$outputDirectory;$toolchainDirectory;$env:PATH"
 & $clang `
     --target=x86_64-pc-windows-msvc `
     -std=c99 `
+    -DSAFE_COVER_TESTING `
     -Wall `
     -Wextra `
     -Werror `
+    -mno-stack-arg-probe `
     -nostdlib `
     -shared `
     -fuse-ld=lld `
     '-Wl,/noentry' `
     '-Wl,/export:run_protection_tests' `
+    '-Wl,/export:run_safe_cover_tests' `
     -I $sourceDirectory `
+    -I (Join-Path $repoRoot 'mobi\src\main\cpp\util') `
     (Join-Path $PSScriptRoot 'protection_test.c') `
+    (Join-Path $PSScriptRoot 'safe_cover_test.c') `
     (Join-Path $sourceDirectory 'protection_core.c') `
+    (Join-Path $repoRoot 'mobi\src\main\cpp\util\safe_cover_writer.c') `
     -o $outputLibrary
 if ($LASTEXITCODE -ne 0) {
     throw "Native protection test compilation failed with exit code $LASTEXITCODE"
@@ -39,6 +45,9 @@ using System.Runtime.InteropServices;
 public static class NativeProtectionTests {
     [DllImport("$escapedLibrary", CallingConvention = CallingConvention.Cdecl)]
     public static extern int run_protection_tests();
+
+    [DllImport("$escapedLibrary", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int run_safe_cover_tests();
 }
 "@
 $failures = [NativeProtectionTests]::run_protection_tests()
@@ -46,3 +55,8 @@ if ($failures -ne 0) {
     throw "$failures native protection fixture(s) failed"
 }
 Write-Output '9 native protection fixtures passed'
+$coverFailures = [NativeProtectionTests]::run_safe_cover_tests()
+if ($coverFailures -ne 0) {
+    throw "$coverFailures native safe-cover fixture(s) failed"
+}
+Write-Output '9 native safe-cover fixtures passed'

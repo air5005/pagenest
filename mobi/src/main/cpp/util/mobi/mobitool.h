@@ -120,9 +120,6 @@ int dump_rawml(const MOBIData *m, const char *fullpath);
  */
 int dump_cover(/*in*/const MOBIData *m, /*in*/const char *fullpath, /*out*/char** targetPath);
 
-int dump_cover2(/*in*/const MOBIData *m, /*in*/const char *fullpath, /**/const char *targetDir, /*out*/char** targetPath);
-
-
 /**
  @brief Dump parsed markup files and resources into created folder
  @param[in] rawml MOBIRawml structure holding parsed records

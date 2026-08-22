@@ -3,6 +3,44 @@
 //
 
 #include "epub_util.h"
+#include "safe_cover_writer.h"
+#include <algorithm>
+
+namespace {
+
+constexpr size_t MAX_COVER_BYTES = 32 * 1024 * 1024;
+
+bool contains_token(const std::string &tokens, const std::string &expected) {
+    std::istringstream stream(tokens);
+    std::string token;
+    while (stream >> token) {
+        if (token == expected) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string resolved_epub_entry(
+        const std::string &package_path,
+        const std::string &relative_path) {
+    if (relative_path.empty() || relative_path[0] == '/' ||
+            relative_path.find('\\') != std::string::npos ||
+            relative_path.find('?') != std::string::npos ||
+            relative_path.find('#') != std::string::npos ||
+            relative_path.find(':') != std::string::npos) {
+        return "";
+    }
+    fs::path resolved = (fs::path(package_path).parent_path() / relative_path).lexically_normal();
+    std::string value = resolved.generic_string();
+    if (resolved.is_absolute() || value.empty() || value == ".." ||
+            value.rfind("../", 0) == 0) {
+        return "";
+    }
+    return value;
+}
+
+}
 
 const std::string epub_zfile_container = "META-INF/container.xml";
 const std::string epub_zfile_mimetype = "mimetype";
@@ -369,6 +407,53 @@ int epub_util::load_epub(std::string fullpath,  //文件路径
     book_date = xml_ext::getText(opfMetadataEle->FirstChildElement("dc:date"));
     book_isbn = xml_ext::getText(
             xml_ext::getChildByNameAndAttr(opfMetadataEle, "dc:identifier", "opf:scheme", "ISBN"));
+    auto manifest = opfRoot->FirstChildElement("manifest");
+    if (manifest != nullptr) {
+        std::string cover_id = xml_ext::getEleAttr(
+                xml_ext::getChildByNameAndAttr(opfMetadataEle, "meta", "name", "cover"),
+                "content");
+        tinyxml2::XMLElement *cover_item = nullptr;
+        int cover_matches = 0;
+        for (auto item = manifest->FirstChildElement("item");
+                item != nullptr;
+                item = item->NextSiblingElement("item")) {
+            std::string id = xml_ext::getEleAttr(item, "id");
+            std::string properties = xml_ext::getEleAttr(item, "properties");
+            if ((!cover_id.empty() && id == cover_id) ||
+                    contains_token(properties, "cover-image")) {
+                cover_item = item;
+                cover_matches++;
+            }
+        }
+        if (cover_matches == 1) {
+            std::string cover_href = xml_ext::getEleAttr(cover_item, "href");
+            std::string cover_media_type = xml_ext::getEleAttr(cover_item, "media-type");
+            std::string allowed_extension = file_ext::get_media_type_ext(cover_media_type);
+            std::string cover_entry = resolved_epub_entry(content_path, cover_href);
+            size_t exact_matches = static_cast<size_t>(std::count(
+                    zipfiles.begin(), zipfiles.end(), cover_entry));
+            std::string cover_data;
+            if (!allowed_extension.empty() && !cover_entry.empty() && exact_matches == 1 &&
+                    zip_ext::read_zip_file(uf, cover_entry, cover_data) == 1 &&
+                    !cover_data.empty() && cover_data.size() <= MAX_COVER_BYTES) {
+                const auto *bytes = reinterpret_cast<const unsigned char *>(cover_data.data());
+                const char *detected_extension = safe_cover_extension_from_bytes(
+                        bytes,
+                        cover_data.size());
+                char output_path[4096];
+                if (detected_extension != nullptr && allowed_extension == detected_extension &&
+                        safe_cover_write_bytes(
+                                app_ext::appFileDir.c_str(),
+                                detected_extension,
+                                bytes,
+                                cover_data.size(),
+                                output_path,
+                                sizeof(output_path))) {
+                    book_coverPath = output_path;
+                }
+            }
+        }
+    }
     unzClose(uf);
 
     LOGI("%s:invoke done", __func__);
