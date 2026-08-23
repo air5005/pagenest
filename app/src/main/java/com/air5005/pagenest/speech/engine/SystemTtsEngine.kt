@@ -298,9 +298,10 @@ class SystemTtsEngine internal constructor(
             initializationCompleted.set(true)
             commands.close()
             ownerState.closed = true
-            terminalizeDrainedCommands(drainClosedCommandsForRelease())
+            val drainedCommands = drainClosedCommandsForRelease()
             ownerCloseFinished.set(true)
             acknowledgeCloseIfFinished()
+            terminalizeDrainedCommands(drainedCommands)
         }
     }
 

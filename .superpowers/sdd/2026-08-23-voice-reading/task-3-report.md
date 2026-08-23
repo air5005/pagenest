@@ -367,3 +367,55 @@ Result: `BUILD SUCCESSFUL in 45s`.
 ```
 
 Result: `BUILD SUCCESSFUL in 3m 55s`; XML totals were 214 tests, 0 failures, 0 errors. `assembleDebug` and `lintDebug` both completed in the same fresh invocation.
+
+## Fix Round 5
+
+### Summary and TDD evidence
+
+Round 5 closes the final pre-start fallback reentrancy gap. The queued owner executor keeps both initialization and the actor from entering, while an undispatched `Dispatchers.Unconfined` caller admits a suspending `speak`. Cancelling the owner scope drains that call on a bounded driver thread; its `finally` resumes inline and re-enters `close()` before returning. The regression asserts only public behavior and the external factory boundary: both owner tasks remain queued, the factory is never called, the cancellation driver returns, the nested close returns, and speech completes as engine `Cancelled`.
+
+Focused RED against the prior ordering:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*SystemTtsEngineCloseAdmissionTest.pre-start fallback publishes close before inline resumed caller reenters close'
+```
+
+Result: the bounded driver failed with `java.util.concurrent.TimeoutException` at `SystemTtsEngineCloseAdmissionTest.kt:68`; 1 test, 1 failed, `BUILD FAILED in 1m 3s`. Production was unchanged for this run.
+
+The minimal production change captures the drained command list, publishes `ownerCloseFinished` and the initialization/close latch while still holding the admission lock, and only then completes drained callers. The same exact focused command was GREEN with `BUILD SUCCESSFUL in 57s`.
+
+### Lifecycle and mutation evidence
+
+- Pre-start fallback still atomically closes admission and the command channel, suppresses both queued coroutine bodies, marks ownership closed, and drains commands under the fair admission lock. No Android platform exists in this branch of the lifecycle.
+- Because `ownerThread` is necessarily null here, close acknowledgment is published before a drained continuation can run arbitrary inline caller code. A reentrant or repeated `close()` therefore observes the completed latch instead of waiting on its own finalizer thread.
+- External off-thread admissions cannot enter while fallback terminalization holds the admission lock. Drained speech, voices, and stop callers retain their exact-once terminal outcomes.
+- Normal actor close ordering is unchanged: platform adoption and release still precede external completion. Cancellation-resistant late initialization retains the separate two-phase owner-close/initialization-completion acknowledgment and owner-confined orphan release.
+- Mutating the fallback back to terminalize-before-ack deterministically restores the bounded timeout. Omitting channel close/drain, either published close phase, or caller terminalization is covered by this test plus the existing pre-start, admission, concurrent/repeated close, late initialization, and exact-once release tests.
+
+### Verification gates
+
+All runs used `JAVA_HOME=C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot` and Android SDK `C:\Users\Administrator\AppData\Local\Android\Sdk`.
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*SystemTts*'
+```
+
+Result: 28/28 tests passed, `BUILD SUCCESSFUL in 46s`.
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest
+```
+
+Result: `BUILD SUCCESSFUL in 1m 7s`; XML totals were 215 tests, 0 failures, 0 errors, 0 skipped.
+
+```powershell
+./gradlew.bat :app:assembleDebug
+```
+
+Result: `BUILD SUCCESSFUL in 42s`.
+
+```powershell
+./gradlew.bat :app:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL in 3m 24s`; 280 tasks, 24 executed and 256 up-to-date.

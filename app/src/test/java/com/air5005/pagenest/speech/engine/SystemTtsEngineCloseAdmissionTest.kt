@@ -37,6 +37,49 @@ import kotlin.coroutines.EmptyCoroutineContext
 
 class SystemTtsEngineCloseAdmissionTest {
     @Test
+    fun `pre-start fallback publishes close before inline resumed caller reenters close`() {
+        val queuedExecutor = QueuedExecutor()
+        val ownerDispatcher = queuedExecutor.asCoroutineDispatcher()
+        val ownerScope = CoroutineScope(SupervisorJob() + ownerDispatcher)
+        val callerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val factoryCalls = AtomicInteger(0)
+        val engine = SystemTtsEngine(
+            PlatformTextToSpeechFactory {
+                factoryCalls.incrementAndGet()
+                CloseRecordingPlatform()
+            },
+            ownerScope,
+        )
+        val reentrantCloseReturned = CountDownLatch(1)
+        val admittedSpeech = callerScope.async(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                engine.speak(request("inline-reentry"))
+            } finally {
+                engine.close()
+                reentrantCloseReturned.countDown()
+            }
+        }
+        val driver = Executors.newSingleThreadExecutor()
+        try {
+            assertEquals(2, queuedExecutor.size)
+            assertEquals(0, factoryCalls.get())
+            assertFalse(admittedSpeech.isCompleted)
+
+            driver.submit { ownerScope.cancel() }.get(5, TimeUnit.SECONDS)
+
+            assertTrue(reentrantCloseReturned.await(0, TimeUnit.SECONDS))
+            assertEquals(SpeechEngineResult.Cancelled, runBlocking { admittedSpeech.await() })
+            assertEquals(0, factoryCalls.get())
+            engine.close()
+        } finally {
+            callerScope.cancel()
+            ownerScope.cancel()
+            driver.shutdownNow()
+            driver.awaitTermination(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
     fun `pre-start owner cancellation terminalizes admitted calls and close returns`() {
         val queuedExecutor = QueuedExecutor()
         val ownerDispatcher = queuedExecutor.asCoroutineDispatcher()
