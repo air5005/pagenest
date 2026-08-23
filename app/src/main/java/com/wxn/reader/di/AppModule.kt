@@ -3,6 +3,8 @@ package com.wxn.reader.di
 import android.app.Application
 import android.content.Context
 import androidx.room.Room
+import com.air5005.pagenest.speech.engine.AndroidTextToSpeechFactory
+import com.air5005.pagenest.speech.engine.SystemTtsEngine
 import com.air5005.pagenest.library.importing.AndroidImportRequestFactory
 import com.air5005.pagenest.library.importing.BookImportCatalog
 import com.air5005.pagenest.library.importing.BookImportCoordinator
@@ -71,6 +73,9 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 
 @Module
@@ -84,6 +89,15 @@ object AppModule {
     fun provideContext(@ApplicationContext context: Context): Context {
         return context
     }
+
+    @Provides
+    @Singleton
+    fun provideSystemTtsEngine(
+        @ApplicationContext context: Context,
+    ): SystemTtsEngine = SystemTtsEngine(
+        factory = AndroidTextToSpeechFactory(context),
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+    )
 
     @Provides
     @Singleton
