@@ -7,6 +7,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import com.air5005.pagenest.speech.content.PdfSpeechContentSource
+import com.air5005.pagenest.speech.content.PdfSpeechDocument
+import com.air5005.pagenest.speech.content.SpeechSegmenter
 import com.wxn.base.bean.Book
 import com.wxn.base.util.Logger
 import com.wxn.reader.domain.model.ReadingActive
@@ -150,6 +153,17 @@ class PdfReaderViewModel @Inject constructor(
                 _errorMessage.value = "Failed to load page ${index + 1}: ${e.message}"
             }
         }
+    }
+
+    fun openSpeechContentSource(
+        segmenter: SpeechSegmenter = SpeechSegmenter(),
+    ): PdfSpeechContentSource {
+        check(::contentUri.isInitialized) { "PDF content URI is not initialized" }
+        return PdfSpeechContentSource(
+            bookId = _pdfId.value,
+            document = PdfSpeechDocument.open(getApplication(), contentUri),
+            segmenter = segmenter,
+        )
     }
 
 

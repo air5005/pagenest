@@ -2,6 +2,10 @@ package com.wxn.reader.presentation.mainReader
 
 import android.content.Context
 import android.graphics.RectF
+import androidx.annotation.MainThread
+import com.air5005.pagenest.speech.content.SpeechLineSnapshot
+import com.air5005.pagenest.speech.content.SpeechPageNavigator
+import com.air5005.pagenest.speech.content.SpeechPageSnapshot
 import com.wxn.base.bean.Book
 import com.wxn.base.bean.Locator
 import com.wxn.base.bean.ReaderText
@@ -41,6 +45,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.withContext
 import java.io.Reader
 import javax.inject.Inject
 import kotlin.collections.firstOrNull
@@ -62,7 +67,7 @@ open class PageViewController @Inject constructor(
     val updateBookUseCase: UpdateBookUseCase,
     val appPreferencesUtil: AppPreferencesUtil,
     val textParser: TextParser
-) : PageViewDataProvider, PageViewCallback, SelectTextCallback {
+) : PageViewDataProvider, PageViewCallback, SelectTextCallback, SpeechPageNavigator {
 
     var scope: CoroutineScope? = null
 //    var titleDate = MutableLiveData<String>()
@@ -1006,6 +1011,52 @@ open class PageViewController @Inject constructor(
     }
 
     fun currentPage() : TextPage? = textChapter(0)?.page(durChapterPos())
+
+    @MainThread
+    fun speechPageSnapshot(): SpeechPageSnapshot {
+        val page = currentPage() ?: TextPage(index = durPageIndex)
+        return SpeechPageSnapshot(
+            chapterIndex = curTextChapter?.position ?: durChapterIndex,
+            pageIndex = page.index,
+            progression = progression,
+            lines = page.textLines.map { line ->
+                SpeechLineSnapshot(
+                    paragraphIndex = line.paragraphIndex,
+                    text = line.text,
+                    charStartOffset = line.charStartOffset,
+                    charEndOffset = line.charEndOffset,
+                    isImage = line.isImage,
+                    isLine = line.isLine,
+                )
+            },
+        )
+    }
+
+    override suspend fun currentSpeechPage(): SpeechPageSnapshot? =
+        withContext(Dispatchers.Main.immediate) { speechPageSnapshot() }
+
+    override suspend fun nextSpeechPage(): SpeechPageSnapshot? =
+        withContext(Dispatchers.Main.immediate) {
+            val moved = pageFactory?.moveToNext(upContent = false) ?: false
+            if (moved) speechPageSnapshot() else null
+        }
+
+    override suspend fun previousSpeechPage(): SpeechPageSnapshot? =
+        withContext(Dispatchers.Main.immediate) {
+            val moved = pageFactory?.moveToPrev(upContent = false) ?: false
+            if (moved) speechPageSnapshot() else null
+        }
+
+    override suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? =
+        withContext(Dispatchers.Main.immediate) {
+            if (chapterIndex != durChapterIndex) return@withContext null
+            val chapter = curTextChapter ?: return@withContext null
+            if (pageIndex !in chapter.pages.indices) return@withContext null
+            setPageIndex(pageIndex)
+            speechPageSnapshot()
+        }
+
+    override fun close() = Unit
 
     fun stopReadPage() {
         scope?.launchIO {
