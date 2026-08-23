@@ -249,3 +249,81 @@ Result: `BUILD SUCCESSFUL in 3m 23s`.
 - Removing per-call exception containment restores timeouts or wrong results; catching stop before terminalizing callers breaks cancellation assertions; combining stop/shutdown in one try prevents the second release call after the first throws.
 - Mapping close rejection to initialization failure fails the explicit stable-error regression test.
 - JVM tests use a deterministic platform seam rather than a device voice engine. The existing SDK XML version warning remains non-fatal and unrelated to these changes.
+
+## Fix Round 3
+
+### Summary and files
+
+Round 3 makes close acknowledgment cover both externally observable completion and cancellation-resistant initialization. Owner close now closes and drains the command channel, adopts any already-enqueued initialized platform, and attempts platform stop/shutdown before completing active, pending, voice, or drained callers. A reentrant owner/Main `close()` therefore cannot return from a resumed caller before release has been attempted.
+
+Off-owner close acknowledgment now requires two independently published phases: owner close/release has finished and the initialization job has actually completed. If a factory catches cancellation and returns a platform late, its failed channel send releases that orphan on the owner dispatcher before initialization completion opens the close latch. The owner thread never blocks awaiting initialization, avoiding a Main-dispatcher deadlock.
+
+Files:
+
+- `app/src/main/java/com/air5005/pagenest/speech/engine/SystemTtsEngine.kt`
+- `app/src/test/java/com/air5005/pagenest/speech/engine/SystemTtsEngineCloseAdmissionTest.kt`
+
+### RED/GREEN evidence
+
+Owner reentrant close ordering:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*SystemTtsEngineCloseAdmissionTest'
+```
+
+- RED: 4 tests, 1 failed, `BUILD FAILED in 47s`. The synchronous completion observer re-entered `close()` on the owner dispatcher and recorded release counts `[(0, 0)]` instead of `[(1, 1)]` at the nested close return.
+- GREEN: after moving release ahead of every caller completion and externally observable terminal completion, 4/4 passed, `BUILD SUCCESSFUL in 56s`.
+
+Cancellation-resistant late initialization:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*SystemTtsEngineCloseAdmissionTest'
+```
+
+- RED: 5 tests, 1 failed, `BUILD FAILED in 46s`. The off-owner close-return latch opened while the cancellation-catching factory was still gated and before its platform had stop/shutdown attempted.
+- GREEN: the owner-close plus initialization-completion handshake held acknowledgment until the late platform's failed send and owner-confined orphan release; 5/5 passed, `BUILD SUCCESSFUL in 57s`.
+
+Both tests are deterministic: the reentrant case installs a direct completion observer on the owner dispatcher, and the late-initialization case uses cancellation and return latches/deferreds with bounded assertions. Neither uses sleeps.
+
+### Lifecycle, cancellation, and thread evidence
+
+- `finishCloseOnOwner` closes and drains commands, adopts any buffered initialized platform, and calls exact-once release before completing any caller that can synchronously re-enter the engine.
+- Close acknowledgment is a two-phase atomic handshake. It opens only after owner close has finished and the initialization job's completion handler has run.
+- A factory that ignores cancellation cannot orphan a platform after off-owner close returns. Its platform is released after the closed-channel send fails and before initialization completion acknowledges close.
+- Owner/Main close never waits for initialization, so a late factory completion that needs that dispatcher cannot deadlock it. Off-owner close waits on the acknowledgment latch.
+- The late-platform test records stop/shutdown exclusively on `late-init-owner`; completion bookkeeping may run on any thread but performs no Android calls.
+- Existing factory-throw, initialization cancellation, start/callback exception, replay nonce, admission race, stop/close, and exact-once tests remain green.
+
+### Final gates
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*SystemTtsEngine*Test'
+```
+
+Result: 26/26, `BUILD SUCCESSFUL in 46s`.
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest
+```
+
+The first run had one setup timeout in the pre-existing `off owner concurrent close` test while awaiting its listener-installation precondition; both new Round 3 cases passed. Immediate focused reproduction passed 5/5 in 45s. A fresh full rerun passed 213/213 with zero failures/errors, `BUILD SUCCESSFUL in 1m 8s`.
+
+```powershell
+./gradlew.bat :app:assembleDebug
+```
+
+Result: `BUILD SUCCESSFUL in 41s`.
+
+```powershell
+./gradlew.bat :app:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL in 3m 20s`; 280 tasks, 24 executed and 256 up-to-date.
+
+### Mutation self-review and concerns
+
+- Moving release below caller completion restores the reentrant observation `[(0, 0)]`; omitting either handshake phase lets off-owner close return before a cancellation-resistant factory releases its late platform.
+- Waiting for initialization from owner/Main deadlocks when the factory continuation requires that dispatcher; acknowledgment therefore waits only off-owner while owner close remains responsive.
+- Closing without draining can miss an already-buffered `Initialized` command. Draining without adopting its platform leaks it. Releasing after terminalizing drained callers recreates the reentrancy gap.
+- The initialization completion callback only publishes atomics and counts down a latch; every platform call remains owner-confined. Stop and shutdown retain exact-once/best-effort exception containment.
+- Real Android voice availability remains device-dependent. The JVM suite validates ownership and lifecycle through deterministic fakes; the existing SDK XML warning remains non-fatal.

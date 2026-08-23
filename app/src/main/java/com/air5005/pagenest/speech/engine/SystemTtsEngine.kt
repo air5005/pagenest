@@ -28,6 +28,8 @@ class SystemTtsEngine internal constructor(
     private val commands = Channel<Command>(Channel.UNLIMITED)
     private val closeRequested = AtomicBoolean(false)
     private val closeFinished = CountDownLatch(1)
+    private val ownerCloseFinished = AtomicBoolean(false)
+    private val initializationCompleted = AtomicBoolean(false)
     private val invocationNonce = AtomicLong(0)
     private val ownerState = OwnerState()
 
@@ -47,6 +49,13 @@ class SystemTtsEngine internal constructor(
     }
     private val ownerJob: Job = ownerScope.launch {
         runOwnerLoop()
+    }
+
+    init {
+        initializationJob.invokeOnCompletion {
+            initializationCompleted.set(true)
+            acknowledgeCloseIfFinished()
+        }
     }
 
     override suspend fun voices(localeTag: String): List<SpeechVoice> {
@@ -230,24 +239,42 @@ class SystemTtsEngine internal constructor(
         if (ownerState.closed) return
         ownerState.closed = true
         initializationJob.cancel()
+        commands.close()
+        val drainedCommands = drainClosedCommandsForRelease()
+        releasePlatform()
         ownerState.pendingSpeech?.complete(SpeechEngineResult.Cancelled)
         ownerState.pendingSpeech = null
         ownerState.activeSpeech?.complete(SpeechEngineResult.Cancelled)
         ownerState.activeSpeech = null
         ownerState.pendingVoiceQueries.forEach { it.reply.complete(emptyList()) }
         ownerState.pendingVoiceQueries.clear()
-        commands.close()
-        drainClosedCommands()
-        releasePlatform()
-        closeFinished.countDown()
+        terminalizeDrainedCommands(drainedCommands)
+        ownerCloseFinished.set(true)
+        acknowledgeCloseIfFinished()
     }
 
-    private fun drainClosedCommands() {
+    private fun acknowledgeCloseIfFinished() {
+        if (ownerCloseFinished.get() && initializationCompleted.get()) {
+            closeFinished.countDown()
+        }
+    }
+
+    private fun drainClosedCommandsForRelease(): List<Command> {
+        val drained = mutableListOf<Command>()
         while (true) {
-            when (val command = commands.tryReceive().getOrNull() ?: return) {
+            when (val command = commands.tryReceive().getOrNull() ?: return drained) {
                 is Command.Initialized -> {
                     if (ownerState.platform == null) ownerState.platform = command.platform
                 }
+                else -> drained += command
+            }
+        }
+    }
+
+    private fun terminalizeDrainedCommands(commands: List<Command>) {
+        commands.forEach { command ->
+            when (command) {
+                is Command.Initialized -> Unit
                 is Command.Voices -> command.reply.complete(emptyList())
                 is Command.Speak -> command.call.complete(SpeechEngineResult.Cancelled)
                 is Command.CancelCaller -> command.call.markTerminal()

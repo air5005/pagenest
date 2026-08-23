@@ -5,17 +5,23 @@ import com.air5005.pagenest.speech.model.SpeechError
 import com.air5005.pagenest.speech.model.SpeechPosition
 import com.air5005.pagenest.speech.model.SpeechSegment
 import com.wxn.base.bean.Locator
+import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.lang.reflect.Proxy
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -23,8 +29,103 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.coroutines.EmptyCoroutineContext
 
 class SystemTtsEngineCloseAdmissionTest {
+    @Test
+    fun `off owner close waits for cancellation resistant late initialization release`() {
+        withOwner("late-init-owner") { ownerScope, platform ->
+            val factory = CancellationIgnoringFactory(platform)
+            val engine = SystemTtsEngine(factory, ownerScope)
+            assertTrue(factory.entered.await(5, TimeUnit.SECONDS))
+            val closer = Executors.newSingleThreadExecutor()
+            val closeReturned = CountDownLatch(1)
+            try {
+                val closeFuture = closer.submit {
+                    engine.close()
+                    closeReturned.countDown()
+                }
+                assertTrue(factory.cancellationObserved.await(5, TimeUnit.SECONDS))
+                assertFalse(closeReturned.await(200, TimeUnit.MILLISECONDS))
+                assertEquals(0, platform.stopCalls.get())
+                assertEquals(0, platform.shutdownCalls.get())
+
+                factory.allowReturn.complete(Unit)
+                closeFuture.get(5, TimeUnit.SECONDS)
+
+                assertTrue(closeReturned.await(0, TimeUnit.SECONDS))
+                assertEquals(1, platform.stopCalls.get())
+                assertEquals(1, platform.shutdownCalls.get())
+                assertEquals(setOf("late-init-owner"), platform.callThreadNames.toSet())
+            } finally {
+                factory.allowReturn.complete(Unit)
+                closer.shutdownNow()
+            }
+        }
+    }
+
+    @Test
+    fun `owner reentrant close return observes exact once release`() {
+        withOwner("owner-reentrant") { ownerScope, platform ->
+            val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, ownerScope)
+            assertTrue(platform.listenerInstalled.await(5, TimeUnit.SECONDS))
+            val releaseObservedAtReentrantReturn = CopyOnWriteArrayList<Pair<Int, Int>>()
+            val continuation = Proxy.newProxyInstance(
+                CancellableContinuation::class.java.classLoader,
+                arrayOf(CancellableContinuation::class.java),
+            ) { _, method, _ ->
+                when (method.name) {
+                    "getContext" -> EmptyCoroutineContext
+                    "isActive" -> true
+                    "isCompleted", "isCancelled" -> false
+                    "resume", "resumeWith" -> {
+                        engine.close()
+                        releaseObservedAtReentrantReturn +=
+                            platform.stopCalls.get() to platform.shutdownCalls.get()
+                        Unit
+                    }
+                    else -> defaultValue(method.returnType)
+                }
+            }
+            runBlocking(ownerScope.coroutineContext) {
+                installActiveSpeech(engine, continuation)
+                assertEquals(0, platform.stopCalls.get())
+                assertEquals(0, platform.shutdownCalls.get())
+                engine.close()
+            }
+
+            assertEquals(listOf(1 to 1), releaseObservedAtReentrantReturn)
+            assertEquals(1, platform.stopCalls.get())
+            assertEquals(1, platform.shutdownCalls.get())
+        }
+    }
+
+    private fun installActiveSpeech(
+        engine: SystemTtsEngine,
+        continuation: Any,
+    ) {
+        val callClass = SystemTtsEngine::class.java.declaredClasses.single {
+            it.simpleName == "SpeechCall"
+        }
+        val constructor = callClass.declaredConstructors.single().apply { isAccessible = true }
+        val call = constructor.newInstance(request("reentrant"), "reentrant-id", continuation)
+        val stateField = SystemTtsEngine::class.java.getDeclaredField("ownerState").apply {
+            isAccessible = true
+        }
+        val state = stateField.get(engine)
+        state.javaClass.getDeclaredField("activeSpeech").apply {
+            isAccessible = true
+            set(state, call)
+        }
+    }
+
+    private fun defaultValue(returnType: Class<*>): Any? = when (returnType) {
+        java.lang.Boolean.TYPE -> false
+        java.lang.Integer.TYPE -> 0
+        java.lang.Long.TYPE -> 0L
+        else -> null
+    }
+
     @Test
     fun `close races terminate admitted speak voices and stop callers`() {
         listOf("speak", "voices", "stop").forEach { operation ->
@@ -243,5 +344,25 @@ private class CloseRecordingPlatform : PlatformTextToSpeech {
 
     private fun recordThread() {
         callThreadNames += Thread.currentThread().name.substringBefore(" @coroutine#")
+    }
+}
+
+private class CancellationIgnoringFactory(
+    private val platform: PlatformTextToSpeech,
+) : PlatformTextToSpeechFactory {
+    val entered = CountDownLatch(1)
+    val cancellationObserved = CountDownLatch(1)
+    val allowReturn = CompletableDeferred<Unit>()
+    private val never = CompletableDeferred<Unit>()
+
+    override suspend fun create(): PlatformTextToSpeech? {
+        entered.countDown()
+        try {
+            never.await()
+        } catch (_: CancellationException) {
+            cancellationObserved.countDown()
+            withContext(NonCancellable) { allowReturn.await() }
+        }
+        return platform
     }
 }
