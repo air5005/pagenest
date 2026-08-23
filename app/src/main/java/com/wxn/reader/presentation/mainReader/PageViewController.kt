@@ -6,6 +6,8 @@ import androidx.annotation.MainThread
 import com.air5005.pagenest.speech.content.SpeechLineSnapshot
 import com.air5005.pagenest.speech.content.SpeechPageNavigator
 import com.air5005.pagenest.speech.content.SpeechPageSnapshot
+import com.air5005.pagenest.speech.model.SpeechSegment
+import com.air5005.pagenest.speech.session.SpeechHighlightSink
 import com.wxn.base.bean.Book
 import com.wxn.base.bean.Locator
 import com.wxn.base.bean.ReaderText
@@ -1146,6 +1148,54 @@ open class PageViewController @Inject constructor(
     }
 
     override fun close() = Unit
+
+    fun speechHighlightSink(): SpeechHighlightSink = object : SpeechHighlightSink {
+        override suspend fun show(segment: SpeechSegment) {
+            showSpeechHighlight(segment)
+        }
+
+        override suspend fun clear() {
+            clearSpeechHighlight()
+        }
+    }
+
+    suspend fun showSpeechHighlight(segment: SpeechSegment) {
+        withContext(Dispatchers.Main.immediate) {
+            clearSpeechHighlightOnMain(refresh = false)
+            val locator = segment.locator
+            currentPage()?.textLines?.forEach { line ->
+                line.isReadAloud = when {
+                    line.paragraphIndex < locator.startParagraphIndex -> false
+                    line.paragraphIndex > locator.endParagraphIndex -> false
+                    locator.startParagraphIndex == locator.endParagraphIndex ->
+                        line.charEndOffset > locator.startTextOffset &&
+                            line.charStartOffset < locator.endTextOffset
+                    line.paragraphIndex == locator.startParagraphIndex ->
+                        line.charEndOffset > locator.startTextOffset
+                    line.paragraphIndex == locator.endParagraphIndex ->
+                        line.charStartOffset < locator.endTextOffset
+                    else -> true
+                }
+            }
+            callBack?.upContent(resetPageOffset = false)
+        }
+    }
+
+    suspend fun clearSpeechHighlight() {
+        withContext(Dispatchers.Main.immediate) {
+            clearSpeechHighlightOnMain(refresh = true)
+        }
+    }
+
+    @MainThread
+    private fun clearSpeechHighlightOnMain(refresh: Boolean) {
+        listOf(prevTextChapter, curTextChapter, nextTextChapter)
+            .filterNotNull()
+            .flatMap { it.pages }
+            .flatMap { it.textLines }
+            .forEach { it.isReadAloud = false }
+        if (refresh) callBack?.upContent(resetPageOffset = false)
+    }
 
     fun stopReadPage() {
         scope?.launchIO {
