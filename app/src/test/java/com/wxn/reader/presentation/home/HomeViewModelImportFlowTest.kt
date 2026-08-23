@@ -40,11 +40,14 @@ import io.mockk.unmockkAll
 import java.util.concurrent.CancellationException
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -53,6 +56,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -79,7 +83,7 @@ class HomeViewModelImportFlowTest {
         service = mockk()
         requestFactory = mockk()
         val preferencesUtil = mockk<AppPreferencesUtil>()
-        every { preferencesUtil.appPrefsFlow } returns emptyFlow()
+        every { preferencesUtil.appPrefsFlow } returns flow { awaitCancellation() }
         viewModel = HomeViewModel(
             getBooksUseCase = mockk(relaxed = true),
             getBookUrisUseCase = mockk(relaxed = true),
@@ -111,6 +115,17 @@ class HomeViewModelImportFlowTest {
     }
 
     @Test
+    fun fixtureKeepsTheProductionInitializerSuspendedUntilTeardown() {
+        mainDispatcher.scheduler.runCurrent()
+
+        val initializerIsActive = viewModel.viewModelScope.coroutineContext[Job]
+            ?.children
+            ?.any { it.isActive }
+            ?: false
+        assertTrue("The initializer must suspend instead of failing", initializerIsActive)
+    }
+
+    @Test
     fun scanReportsEveryOutcomeAndCountsOnlyImportedBooksAsAdded() = runBlocking {
         val imported = document("content://scan/Imported.epub", "Imported.epub")
         val duplicate = document("content://scan/Duplicate.epub", "Duplicate.epub")
@@ -131,7 +146,10 @@ class HomeViewModelImportFlowTest {
         invokeProductionScan(mockk<AppPreferences> {
             every { scanDirectories } returns setOf("content://scan")
         })
-        awaitState { viewModel.importProgressState.value == ImportProgressState.Complete }
+        awaitState {
+            viewModel.importProgressState.value == ImportProgressState.Complete &&
+                !viewModel.isAddingBooks.value
+        }
         mainDispatcher.scheduler.runCurrent()
 
         assertEquals(
@@ -164,7 +182,10 @@ class HomeViewModelImportFlowTest {
         }
 
         viewModel.importBooks(uris)
-        awaitState { viewModel.importProgressState.value == ImportProgressState.Complete }
+        awaitState {
+            viewModel.importProgressState.value == ImportProgressState.Complete &&
+                !viewModel.isAddingBooks.value
+        }
         mainDispatcher.scheduler.runCurrent()
 
         assertEquals(
@@ -209,26 +230,34 @@ class HomeViewModelImportFlowTest {
         mockkObject(DocumentUtil)
         coEvery { DocumentUtil.getFilesFromDirectory(any(), any()) } returns listOf(broken)
         every { requestFactory.create(broken.uri) } returns request("Broken.epub")
-        coEvery { service.execute(any()) } throws IOException("database unavailable")
-
-        invokeProductionScan(mockk<AppPreferences> {
-            every { scanDirectories } returns setOf("content://scan")
-        })
-        awaitState {
-            viewModel.importProgressState.value is ImportProgressState.Error ||
-                viewModel.importProgressState.value == ImportProgressState.Complete
+        val callCount = AtomicInteger(0)
+        coEvery { service.execute(any()) } answers {
+            callCount.incrementAndGet()
+            throw IOException("database unavailable")
         }
-        mainDispatcher.scheduler.runCurrent()
+        val preferences = mockk<AppPreferences> {
+            every { scanDirectories } returns setOf("content://scan")
+        }
 
-        assertEquals(
-            ImportProgressState.Error("database unavailable"),
-            viewModel.importProgressState.value,
-        )
-        assertEquals(
-            SnackbarState.Visible("Error updating library: database unavailable"),
-            viewModel.snackbarState.value,
-        )
-        assertFalse(viewModel.isAddingBooks.value)
+        repeat(20) { attempt ->
+            invokeProductionScan(preferences)
+            awaitState {
+                callCount.get() == attempt + 1 &&
+                    viewModel.importProgressState.value is ImportProgressState.Error &&
+                    !viewModel.isAddingBooks.value
+            }
+            mainDispatcher.scheduler.runCurrent()
+
+            assertEquals(
+                ImportProgressState.Error("database unavailable"),
+                viewModel.importProgressState.value,
+            )
+            assertEquals(
+                SnackbarState.Visible("Error updating library: database unavailable"),
+                viewModel.snackbarState.value,
+            )
+            assertFalse(viewModel.isAddingBooks.value)
+        }
     }
 
     private fun invokeProductionScan(preferences: AppPreferences) {
