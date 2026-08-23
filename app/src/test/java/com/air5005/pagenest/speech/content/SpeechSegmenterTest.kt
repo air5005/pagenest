@@ -82,6 +82,20 @@ class SpeechSegmenterTest {
     }
 
     @Test
+    fun `locator ranges retain original UTF-16 offsets through leading and interior CRLF`() {
+        val result = segmenter.fromParagraph(
+            position(textOffset = 10),
+            " \r\nalpha\r\n beta\t ",
+            progression = 0.25,
+        )
+
+        assertEquals(listOf("alpha\n beta"), result.map { it.text })
+        assertEquals(listOf(10), result.map { it.position.textOffset })
+        assertEquals(listOf(13), result.map { it.locator.startTextOffset })
+        assertEquals(listOf(25), result.map { it.locator.endTextOffset })
+    }
+
+    @Test
     fun `segments have stable ids and exact UTF-16 locator ranges`() {
         val position = position(textOffset = 10)
         val text = "😀".repeat(500) + "x"

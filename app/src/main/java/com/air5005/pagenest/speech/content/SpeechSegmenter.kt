@@ -10,7 +10,8 @@ class SpeechSegmenter {
         text: String,
         progression: Double,
     ): List<SpeechSegment> {
-        val normalizedText = text.replace("\r\n", "\n")
+        val normalized = normalizeCrLf(text)
+        val normalizedText = normalized.text
         val firstContentIndex = normalizedText.indexOfFirst { !it.isWhitespace() }
         if (firstContentIndex == -1) return emptyList()
 
@@ -19,7 +20,7 @@ class SpeechSegmenter {
         val codePoints = paragraphText.codePoints().toArray()
         val segments = mutableListOf<SpeechSegment>()
         var codePointStart = 0
-        var textOffset = position.textOffset + firstContentIndex
+        var normalizedSegmentStart = firstContentIndex
 
         while (codePointStart < codePoints.size) {
             val maximumEnd = minOf(codePointStart + MAX_CODE_POINTS, codePoints.size)
@@ -31,8 +32,10 @@ class SpeechSegmenter {
             val segmentText = String(codePoints, codePointStart, codePointEnd - codePointStart)
             val segmentPosition = position
             val partIndex = segments.size
-            val id = stableId(segmentPosition, partIndex)
-            val endTextOffset = textOffset + segmentText.length
+            val normalizedSegmentEnd = normalizedSegmentStart + segmentText.length
+            val startTextOffset = position.textOffset + normalized.sourceOffsets[normalizedSegmentStart]
+            val endTextOffset = position.textOffset + normalized.sourceOffsets[normalizedSegmentEnd]
+            val id = stableId(segmentPosition, partIndex, startTextOffset, endTextOffset)
 
             segments += SpeechSegment(
                 id = id,
@@ -43,7 +46,7 @@ class SpeechSegmenter {
                     id = id,
                     chapterIndex = position.chapterIndex,
                     startParagraphIndex = position.paragraphIndex,
-                    startTextOffset = textOffset,
+                    startTextOffset = startTextOffset,
                     endParagraphIndex = position.paragraphIndex,
                     endTextOffset = endTextOffset,
                     text = segmentText,
@@ -52,7 +55,7 @@ class SpeechSegmenter {
             )
 
             codePointStart = codePointEnd
-            textOffset = endTextOffset
+            normalizedSegmentStart = normalizedSegmentEnd
         }
 
         return segments
@@ -65,14 +68,45 @@ class SpeechSegmenter {
         return maximumEnd
     }
 
-    private fun stableId(position: SpeechPosition, partIndex: Int): String = listOf(
+    private fun normalizeCrLf(text: String): NormalizedText {
+        val normalizedText = StringBuilder(text.length)
+        val sourceOffsets = mutableListOf(0)
+        var sourceIndex = 0
+
+        while (sourceIndex < text.length) {
+            if (text[sourceIndex] == '\r' && text.getOrNull(sourceIndex + 1) == '\n') {
+                normalizedText.append('\n')
+                sourceIndex += 2
+            } else {
+                normalizedText.append(text[sourceIndex])
+                sourceIndex += 1
+            }
+            sourceOffsets += sourceIndex
+        }
+
+        return NormalizedText(normalizedText.toString(), sourceOffsets.toIntArray())
+    }
+
+    private fun stableId(
+        position: SpeechPosition,
+        partIndex: Int,
+        startTextOffset: Int,
+        endTextOffset: Int,
+    ): String = listOf(
         position.bookId,
         position.chapterIndex,
         position.pageIndex ?: "none",
         position.paragraphIndex,
         position.textOffset,
         partIndex,
+        startTextOffset,
+        endTextOffset,
     ).joinToString(":")
+
+    private data class NormalizedText(
+        val text: String,
+        val sourceOffsets: IntArray,
+    )
 
     private companion object {
         const val MAX_CODE_POINTS = 500
