@@ -377,3 +377,106 @@ Result: `BUILD SUCCESSFUL` in 4 minutes 12 seconds (335 tasks: 41 executed,
 
 - Device/HyperOS verification remains outside Task 4 and was not run. Per user direction, Task 4 is
   archived after this fix round and no Task 5 work was started.
+
+## Fix Round 3/5 — single-load transactional seek candidate
+
+Base: `19b85b8e3b71c4f95b9b0e242dd85980f2e47cd9`
+
+### Behavioral TDD evidence
+
+1. Unloaded seek uses one exact parsed candidate
+
+   Added real `PageViewController` plus real `ReflowableSpeechContentSource` tests using the existing
+   parser/layout seam. The seam returns layout A (matching the locator) on its first call and layout B
+   (different paragraph, missing the locator) on its second call:
+
+   - `valid unloaded source seek loads once and commits the validated candidate`
+   - `invalid unloaded source seek loads once without mutating controller or source`
+
+   RED command:
+
+   ```powershell
+   ./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest'
+   ```
+
+   Result: `BUILD FAILED` in 1 minute 15 seconds: 7 tests, 1 failure. The valid unloaded seek expected
+   one layout load but observed two. The first layout validated, the second drifted layout was activated,
+   and the source then rejected the locator. The invalid-candidate control loaded once and preserved both
+   controller and source.
+
+   GREEN command:
+
+   ```powershell
+   ./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest' --tests '*ReflowableSpeechContentSourceTest' --tests '*SpeechSessionNavigationTest'
+   ```
+
+   Result: `BUILD SUCCESSFUL` in 1 minute 16 seconds: 14 tests passed. `SpeechPageNavigator` now returns
+   an opaque `LoadedSpeechPage`; the controller candidate owns the exact parsed `TextChapter`, page index,
+   immutable snapshot, and controller identity. The source validates segments against that snapshot and
+   activates that same candidate, so no coordinate-based reload occurs between validation and commit.
+
+2. Layout generation fences stale candidates
+
+   Added:
+
+   - `layout refresh invalidates a loaded speech candidate before activation`
+
+   RED command:
+
+   ```powershell
+   ./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest'
+   ```
+
+   Result: `BUILD FAILED` in 1 minute: 8 tests, 1 failure. A candidate loaded before a layout refresh
+   still activated and moved the real controller.
+
+   GREEN regression command:
+
+   ```powershell
+   ./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest' --tests '*ReflowableSpeechContentSourceTest' --tests '*SpeechSessionNavigationTest' --tests '*SpeechSessionTest'
+   ```
+
+   Result: `BUILD SUCCESSFUL` in 1 minute 14 seconds: 4 suites, 37 tests, 0 failures, 0 errors,
+   0 skipped. Candidate creation fences the atomic layout generation before and after async chapter
+   loading; activation checks the same generation on `Dispatchers.Main.immediate` before any reader
+   mutation. Content/layout reload, book reset, style update, and controller clear invalidate old
+   candidates. Private chapter preload and ordinary manual page navigation retain existing behavior.
+
+### Mutation self-review
+
+- Actual temporary mutation: removed the activation-time generation comparison. Exact command
+  `./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest.layout refresh invalidates*'`
+  failed 1/1 (`BUILD FAILED` in 1 minute 12 seconds). The fence was restored and the same exact test
+  passed 1/1 (`BUILD SUCCESSFUL` in 1 minute 14 seconds) before final gates.
+- The original A-then-B RED kills any restoration of preview plus coordinate reload: it observes two
+  parser/layout calls and the desired exact-candidate result is absent.
+- The invalid unloaded test kills activation before locator validation and checks both real controller
+  coordinates/object identity and source segment identity.
+- Candidate ownership rejects tokens from another controller. Candidate activation is Main-safe; the
+  source performs the small controller/source commit under `NonCancellable` only after all cancellable
+  loading and locator validation have completed. No parser instance or resource lifecycle was added.
+- Self-review removed the old concrete `seekSpeechPage` compatibility method after it became test-only;
+  the controller regression now exercises the production candidate API directly.
+
+### Round 3 gates
+
+The first complete command reached 252 tests but hit the existing load-sensitive 5-second fixture
+timeout in
+`SystemTtsEngineCloseAdmissionTest > off owner concurrent close waits for exact once release before returning`
+(1 failure, `BUILD FAILED` in 4 minutes 24 seconds). No TTS production or test code changed. The exact
+isolated test immediately passed 1/1 (`BUILD SUCCESSFUL` in 50 seconds).
+
+Fresh successful complete command:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL` in 4 minutes 2 seconds (335 tasks: 41 executed,
+294 up-to-date). XML totals: 22 suites, 252 tests, 0 failures, 0 errors, 0 skipped.
+`assembleDebug` and `lintDebug` both completed.
+
+### Remaining boundary
+
+- Device/HyperOS verification remains outside Task 4 and was not run. Per user direction, Task 4 is
+  archived after this fix round and no Task 5 work was started.

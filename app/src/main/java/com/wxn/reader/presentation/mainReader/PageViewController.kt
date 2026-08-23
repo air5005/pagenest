@@ -3,6 +3,7 @@ package com.wxn.reader.presentation.mainReader
 import android.content.Context
 import android.graphics.RectF
 import androidx.annotation.MainThread
+import com.air5005.pagenest.speech.content.LoadedSpeechPage
 import com.air5005.pagenest.speech.content.SpeechLineSnapshot
 import com.air5005.pagenest.speech.content.SpeechPageNavigator
 import com.air5005.pagenest.speech.content.SpeechPageSnapshot
@@ -49,6 +50,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import java.io.Reader
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlin.collections.firstOrNull
 import kotlin.collections.iterator
@@ -133,6 +135,7 @@ open class PageViewController @Inject constructor(
     override var isScroll: Boolean = false
 
     private var screenTimeOut: Long = 0
+    private val speechLayoutGeneration = AtomicLong(0L)
 
     val progression: Double
         get() {
@@ -216,6 +219,7 @@ open class PageViewController @Inject constructor(
     }
 
     suspend fun resetBook(book: Book, initChapterLoadListener: ((Boolean) -> Unit)) {
+        speechLayoutGeneration.incrementAndGet()
         Logger.i("PageViewController::resetBook:book=$book")
         this.prevTextChapter = null
         this.curTextChapter = null
@@ -350,6 +354,7 @@ open class PageViewController @Inject constructor(
     }
 
     override fun loadContent(resetPageOffset: Boolean) {
+        speechLayoutGeneration.incrementAndGet()
         Logger.i("PageViewController::loadContent:resetPageOffset=$resetPageOffset,durChapterIndex=$durChapterIndex, isInitFinish=$isInitFinish")
         if (isInitFinish) {
             scope?.launchIO {
@@ -1131,23 +1136,40 @@ open class PageViewController @Inject constructor(
         }
     }
 
-    override suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? {
+    override suspend fun loadSpeechPage(chapterIndex: Int, pageIndex: Int): LoadedSpeechPage? {
         if (chapterIndex !in 0 until chapterSize || pageIndex < 0) return null
-        val chapter = loadSpeechChapter(chapterIndex) ?: return null
-        if (pageIndex !in chapter.pages.indices) return null
-        return withContext(Dispatchers.Main.immediate) {
-            activateSpeechChapter(chapter, pageIndex)
-        }
-    }
-
-    override suspend fun previewSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? {
-        if (chapterIndex !in 0 until chapterSize || pageIndex < 0) return null
+        val layoutGeneration = speechLayoutGeneration.get()
         val chapter = loadSpeechChapter(chapterIndex) ?: return null
         val page = chapter.pages.getOrNull(pageIndex) ?: return null
         return withContext(Dispatchers.Main.immediate) {
-            speechPageSnapshot(chapter, page, chapter.position, page.index)
+            if (layoutGeneration != speechLayoutGeneration.get()) return@withContext null
+            ControllerLoadedSpeechPage(
+                owner = this@PageViewController,
+                chapter = chapter,
+                pageIndex = pageIndex,
+                layoutGeneration = layoutGeneration,
+                snapshot = speechPageSnapshot(chapter, page, chapter.position, page.index),
+            )
         }
     }
+
+    override suspend fun activateSpeechPage(candidate: LoadedSpeechPage): Boolean {
+        val loaded = candidate as? ControllerLoadedSpeechPage ?: return false
+        if (loaded.owner !== this) return false
+        return withContext(Dispatchers.Main.immediate) {
+            if (loaded.layoutGeneration != speechLayoutGeneration.get()) return@withContext false
+            activateSpeechChapter(loaded.chapter, loaded.pageIndex)
+            true
+        }
+    }
+
+    private class ControllerLoadedSpeechPage(
+        val owner: PageViewController,
+        val chapter: TextChapter,
+        val pageIndex: Int,
+        val layoutGeneration: Long,
+        override val snapshot: SpeechPageSnapshot,
+    ) : LoadedSpeechPage
 
     private suspend fun loadSpeechChapter(chapterIndex: Int): TextChapter? {
         val cached = withContext(Dispatchers.Main.immediate) {
@@ -1307,6 +1329,7 @@ open class PageViewController @Inject constructor(
      * update view after modify preference
      */
     fun updatePageViews() {
+        speechLayoutGeneration.incrementAndGet()
         ChapterProvider.upStyle(context) {
             loadContent(true)
             callBack?.upContent()
@@ -1318,6 +1341,7 @@ open class PageViewController @Inject constructor(
     }
 
     fun clear() {
+        speechLayoutGeneration.incrementAndGet()
         scope?.launchIO {
             book?.let {
                 BookHelper.closeBook(context, it, textParser)

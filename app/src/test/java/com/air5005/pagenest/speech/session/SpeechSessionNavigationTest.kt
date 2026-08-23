@@ -1,5 +1,6 @@
 package com.air5005.pagenest.speech.session
 
+import com.air5005.pagenest.speech.content.LoadedSpeechPage
 import com.air5005.pagenest.speech.content.ReflowableSpeechContentSource
 import com.air5005.pagenest.speech.content.SpeechLineSnapshot
 import com.air5005.pagenest.speech.content.SpeechPageNavigator
@@ -100,6 +101,10 @@ class SpeechSessionNavigationTest {
     )
 
     private class OnePageNavigator : SpeechPageNavigator {
+        private data class Candidate(
+            override val snapshot: SpeechPageSnapshot,
+        ) : LoadedSpeechPage
+
         private val page = SpeechPageSnapshot(
             chapterIndex = 0,
             pageIndex = 0,
@@ -110,10 +115,9 @@ class SpeechSessionNavigationTest {
         override suspend fun currentSpeechPage(): SpeechPageSnapshot = page
         override suspend fun nextSpeechPage(): SpeechPageSnapshot? = null
         override suspend fun previousSpeechPage(): SpeechPageSnapshot? = null
-        override suspend fun previewSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? =
-            page.takeIf { chapterIndex == 0 && pageIndex == 0 }
-        override suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? =
-            page.takeIf { chapterIndex == 0 && pageIndex == 0 }
+        override suspend fun loadSpeechPage(chapterIndex: Int, pageIndex: Int): LoadedSpeechPage? =
+            page.takeIf { chapterIndex == 0 && pageIndex == 0 }?.let(::Candidate)
+        override suspend fun activateSpeechPage(candidate: LoadedSpeechPage): Boolean = candidate is Candidate
 
         override fun close() = Unit
     }

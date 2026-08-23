@@ -2,6 +2,8 @@ package com.air5005.pagenest.speech.content
 
 import com.air5005.pagenest.speech.model.SpeechPosition
 import com.air5005.pagenest.speech.model.SpeechSegment
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 data class SpeechLineSnapshot(
     val paragraphIndex: Int,
@@ -19,12 +21,16 @@ data class SpeechPageSnapshot(
     val lines: List<SpeechLineSnapshot>,
 )
 
+interface LoadedSpeechPage {
+    val snapshot: SpeechPageSnapshot
+}
+
 interface SpeechPageNavigator : AutoCloseable {
     suspend fun currentSpeechPage(): SpeechPageSnapshot?
     suspend fun nextSpeechPage(): SpeechPageSnapshot?
     suspend fun previousSpeechPage(): SpeechPageSnapshot?
-    suspend fun previewSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot?
-    suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot?
+    suspend fun loadSpeechPage(chapterIndex: Int, pageIndex: Int): LoadedSpeechPage?
+    suspend fun activateSpeechPage(candidate: LoadedSpeechPage): Boolean
     override fun close()
 }
 
@@ -67,12 +73,17 @@ class ReflowableSpeechContentSource(
     override suspend fun seek(position: SpeechPosition): SpeechSegment? {
         ensureOpen()
         if (position.bookId != bookId || position.pageIndex == null) return null
-        val preview = navigator.previewSpeechPage(position.chapterIndex, position.pageIndex) ?: return null
-        if (findSegmentIndex(segmentsForPage(preview), position) < 0) return null
-        val targetPage = navigator.seekSpeechPage(position.chapterIndex, position.pageIndex) ?: return null
-        setPage(targetPage)
-        segmentIndex = findSegmentIndex(segments, position)
-        return segments.getOrNull(segmentIndex)
+        val candidate = navigator.loadSpeechPage(position.chapterIndex, position.pageIndex) ?: return null
+        val candidateSegments = segmentsForPage(candidate.snapshot)
+        val targetIndex = findSegmentIndex(candidateSegments, position)
+        if (targetIndex < 0) return null
+        return withContext(NonCancellable) {
+            if (!navigator.activateSpeechPage(candidate)) return@withContext null
+            page = candidate.snapshot
+            segments = candidateSegments
+            segmentIndex = targetIndex
+            segments[targetIndex]
+        }
     }
 
     override fun close() {

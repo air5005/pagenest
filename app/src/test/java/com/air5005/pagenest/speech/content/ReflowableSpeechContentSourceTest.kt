@@ -25,7 +25,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -108,6 +110,11 @@ class ReflowableSpeechContentSourceTest {
     private class FakeSpeechPageNavigator(
         vararg pages: SpeechPageSnapshot,
     ) : SpeechPageNavigator {
+        private data class Candidate(
+            val index: Int,
+            override val snapshot: SpeechPageSnapshot,
+        ) : LoadedSpeechPage
+
         private val values = pages.toList()
         private var index = 0
 
@@ -125,16 +132,18 @@ class ReflowableSpeechContentSourceTest {
             return values[index]
         }
 
-        override suspend fun previewSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? =
-            values.firstOrNull { it.chapterIndex == chapterIndex && it.pageIndex == pageIndex }
-
-        override suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? {
+        override suspend fun loadSpeechPage(chapterIndex: Int, pageIndex: Int): LoadedSpeechPage? {
             val target = values.indexOfFirst {
                 it.chapterIndex == chapterIndex && it.pageIndex == pageIndex
             }
             if (target < 0) return null
-            index = target
-            return values[index]
+            return Candidate(target, values[target])
+        }
+
+        override suspend fun activateSpeechPage(candidate: LoadedSpeechPage): Boolean {
+            val loaded = candidate as? Candidate ?: return false
+            index = loaded.index
+            return true
         }
 
         override fun close() = Unit
@@ -257,11 +266,91 @@ class PageViewControllerSpeechSnapshotTest {
         mockkObject(ChapterProvider)
         coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } returns target
 
-        val snapshot = controller.seekSpeechPage(chapterIndex = 2, pageIndex = 1)
+        val candidate = requireNotNull(controller.loadSpeechPage(chapterIndex = 2, pageIndex = 1))
+        val activated = controller.activateSpeechPage(candidate)
 
-        assertEquals("sought", snapshot?.lines?.single()?.text)
+        assertTrue(activated)
+        assertEquals("sought", candidate.snapshot.lines.single().text)
         assertEquals(2, controller.durChapterIndex)
         assertEquals(1, controller.durPageIndex)
+    }
+
+    @Test
+    fun `valid unloaded source seek loads once and commits the validated candidate`() = runTest {
+        val validated = textChapter(
+            2,
+            TextPage(index = 0, textLines = arrayListOf(textLine("validated"))),
+        )
+        val drifted = textChapter(
+            2,
+            TextPage(index = 0, textLines = arrayListOf(textLine("drifted", paragraphIndex = 9))),
+        )
+        val controller = unloadedController()
+        var layoutLoads = 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            layoutLoads++
+            if (layoutLoads == 1) validated else drifted
+        }
+        val source = ReflowableSpeechContentSource(1, controller, SpeechSegmenter())
+        requireNotNull(source.current())
+
+        val result = source.seek(SpeechPosition(1, 2, 0, paragraphIndex = 0, textOffset = 0))
+
+        assertEquals(1, layoutLoads)
+        assertEquals("validated", result?.text)
+        assertSame(validated, controller.curTextChapter)
+        assertEquals(2, controller.durChapterIndex)
+        assertEquals(0, controller.durPageIndex)
+        assertEquals(result, source.current())
+    }
+
+    @Test
+    fun `invalid unloaded source seek loads once without mutating controller or source`() = runTest {
+        val invalid = textChapter(
+            2,
+            TextPage(index = 0, textLines = arrayListOf(textLine("other", paragraphIndex = 9))),
+        )
+        val controller = unloadedController()
+        val originalChapter = requireNotNull(controller.curTextChapter)
+        var layoutLoads = 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            layoutLoads++
+            invalid
+        }
+        val source = ReflowableSpeechContentSource(1, controller, SpeechSegmenter())
+        val originalSegment = requireNotNull(source.current())
+
+        val result = source.seek(SpeechPosition(1, 2, 0, paragraphIndex = 0, textOffset = 0))
+
+        assertNull(result)
+        assertEquals(1, layoutLoads)
+        assertSame(originalChapter, controller.curTextChapter)
+        assertEquals(0, controller.durChapterIndex)
+        assertEquals(0, controller.durPageIndex)
+        assertEquals(originalSegment, source.current())
+    }
+
+    @Test
+    fun `layout refresh invalidates a loaded speech candidate before activation`() = runTest {
+        val target = textChapter(
+            2,
+            TextPage(index = 0, textLines = arrayListOf(textLine("target"))),
+        )
+        val controller = unloadedController()
+        val originalChapter = requireNotNull(controller.curTextChapter)
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } returns target
+        val candidate = requireNotNull(controller.loadSpeechPage(chapterIndex = 2, pageIndex = 0))
+
+        controller.loadContent(resetPageOffset = true)
+        val activated = controller.activateSpeechPage(candidate)
+
+        assertFalse(activated)
+        assertSame(originalChapter, controller.curTextChapter)
+        assertEquals(0, controller.durChapterIndex)
+        assertEquals(0, controller.durPageIndex)
     }
 
     @Test
@@ -330,9 +419,28 @@ class PageViewControllerSpeechSnapshotTest {
         return controller
     }
 
-    private fun textLine(text: String) = TextLine(
+    private fun unloadedController(): PageViewController {
+        val controller = controllerWith(
+            TextPage(index = 0, textLines = arrayListOf(textLine("current"))),
+        )
+        controller.durChapterIndex = 0
+        controller.curTextChapter = textChapter(
+            0,
+            TextPage(index = 0, textLines = arrayListOf(textLine("current"))),
+        )
+        controller.chapterSize = 3
+        controller.book = book()
+        every { controller.getChapterByIdUserCase(1, 2) } returns flowOf(bookChapter(2))
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } returns
+            listOf(ReaderText.Text(line = "target"))
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        return controller
+    }
+
+    private fun textLine(text: String, paragraphIndex: Int = 0) = TextLine(
         text = text,
-        paragraphIndex = 0,
+        paragraphIndex = paragraphIndex,
         charStartOffset = 0,
         charEndOffset = text.length,
     )
