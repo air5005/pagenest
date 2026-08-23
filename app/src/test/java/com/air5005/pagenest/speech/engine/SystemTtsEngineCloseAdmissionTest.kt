@@ -8,7 +8,9 @@ import com.wxn.base.bean.Locator
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -25,6 +27,8 @@ import java.lang.reflect.Proxy
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -32,6 +36,59 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.coroutines.EmptyCoroutineContext
 
 class SystemTtsEngineCloseAdmissionTest {
+    @Test
+    fun `pre-start owner cancellation terminalizes admitted calls and close returns`() {
+        val queuedExecutor = QueuedExecutor()
+        val ownerDispatcher = queuedExecutor.asCoroutineDispatcher()
+        val ownerScope = CoroutineScope(SupervisorJob() + ownerDispatcher)
+        val callerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val factoryCalls = AtomicInteger(0)
+        val engine = SystemTtsEngine(
+            PlatformTextToSpeechFactory {
+                factoryCalls.incrementAndGet()
+                CloseRecordingPlatform()
+            },
+            ownerScope,
+        )
+        val admittedSpeech = callerScope.async(start = CoroutineStart.UNDISPATCHED) {
+            engine.speak(request("queued"))
+        }
+        val admittedVoices = callerScope.async(start = CoroutineStart.UNDISPATCHED) {
+            engine.voices("zh-CN")
+        }
+        val admittedStop = callerScope.async(start = CoroutineStart.UNDISPATCHED) {
+            engine.stop()
+        }
+        val closer = Executors.newSingleThreadExecutor()
+        try {
+            assertTrue(queuedExecutor.size >= 2)
+            assertFalse(admittedSpeech.isCompleted)
+            assertFalse(admittedVoices.isCompleted)
+            assertFalse(admittedStop.isCompleted)
+
+            ownerScope.cancel()
+            closer.submit { engine.close() }.get(5, TimeUnit.SECONDS)
+
+            assertEquals(0, factoryCalls.get())
+            assertTrue(admittedSpeech.isCompleted)
+            assertTrue(admittedVoices.isCompleted)
+            assertTrue(admittedStop.isCompleted)
+            assertEquals(SpeechEngineResult.Cancelled, runBlocking { admittedSpeech.await() })
+            assertEquals(emptyList<SpeechVoice>(), runBlocking { admittedVoices.await() })
+            runBlocking { admittedStop.await() }
+            assertEquals(
+                SpeechEngineResult.Failed(SpeechError.SystemTtsUnavailable),
+                runBlocking { engine.speak(request("rejected")) },
+            )
+            assertEquals(emptyList<SpeechVoice>(), runBlocking { engine.voices("zh-CN") })
+            runBlocking { engine.stop() }
+        } finally {
+            callerScope.cancel()
+            ownerScope.cancel()
+            closer.shutdownNow()
+        }
+    }
+
     @Test
     fun `off owner close waits for cancellation resistant late initialization release`() {
         withOwner("late-init-owner") { ownerScope, platform ->
@@ -278,6 +335,15 @@ class SystemTtsEngineCloseAdmissionTest {
         rate = 1f,
         pitch = 1f,
     )
+}
+
+private class QueuedExecutor : Executor {
+    private val tasks = ConcurrentLinkedQueue<Runnable>()
+    val size: Int get() = tasks.size
+
+    override fun execute(command: Runnable) {
+        tasks += command
+    }
 }
 
 private inline fun <T> java.util.concurrent.ExecutorService.useExecutor(

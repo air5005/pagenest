@@ -7,6 +7,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -14,10 +17,12 @@ import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.coroutines.resume
 import kotlin.concurrent.withLock
 
+@OptIn(InternalCoroutinesApi::class)
 class SystemTtsEngine internal constructor(
     factory: PlatformTextToSpeechFactory,
     ownerScope: CoroutineScope,
@@ -32,10 +37,16 @@ class SystemTtsEngine internal constructor(
     private val initializationCompleted = AtomicBoolean(false)
     private val invocationNonce = AtomicLong(0)
     private val ownerState = OwnerState()
+    private val initializationStartState = AtomicInteger(NOT_STARTED)
+    private val ownerLoopStartState = AtomicInteger(NOT_STARTED)
+    private val fallbackOwnerScope = CoroutineScope(
+        SupervisorJob() + ownerScope.coroutineContext.minusKey(Job),
+    )
 
     @Volatile
     private var ownerThread: Thread? = null
     private val initializationJob: Job = ownerScope.launch {
+        if (!initializationStartState.compareAndSet(NOT_STARTED, STARTED)) return@launch
         val platform = try {
             factory.create()
         } catch (cancelled: CancellationException) {
@@ -48,6 +59,7 @@ class SystemTtsEngine internal constructor(
         }
     }
     private val ownerJob: Job = ownerScope.launch {
+        if (!ownerLoopStartState.compareAndSet(NOT_STARTED, STARTED)) return@launch
         runOwnerLoop()
     }
 
@@ -55,6 +67,25 @@ class SystemTtsEngine internal constructor(
         initializationJob.invokeOnCompletion {
             initializationCompleted.set(true)
             acknowledgeCloseIfFinished()
+        }
+        ownerJob.invokeOnCompletion(onCancelling = true, invokeImmediately = true) {
+            if (ownerLoopStartState.compareAndSet(NOT_STARTED, SUPPRESSED)) {
+                if (initializationStartState.compareAndSet(NOT_STARTED, SUPPRESSED)) {
+                    finishCloseBeforeOwnerStart()
+                } else {
+                    fallbackOwnerScope.launch {
+                        ownerThread = Thread.currentThread()
+                        try {
+                            admissionLock.withLock {
+                                closeRequested.set(true)
+                                finishCloseOnOwner()
+                            }
+                        } finally {
+                            fallbackOwnerScope.cancel()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -256,6 +287,20 @@ class SystemTtsEngine internal constructor(
     private fun acknowledgeCloseIfFinished() {
         if (ownerCloseFinished.get() && initializationCompleted.get()) {
             closeFinished.countDown()
+        }
+    }
+
+    private fun finishCloseBeforeOwnerStart() {
+        admissionLock.withLock {
+            if (ownerCloseFinished.get()) return
+            closeRequested.set(true)
+            initializationJob.cancel()
+            initializationCompleted.set(true)
+            commands.close()
+            ownerState.closed = true
+            terminalizeDrainedCommands(drainClosedCommandsForRelease())
+            ownerCloseFinished.set(true)
+            acknowledgeCloseIfFinished()
         }
     }
 
@@ -471,6 +516,9 @@ class SystemTtsEngine internal constructor(
     private companion object {
         const val MIN_RATE_OR_PITCH = 0.25f
         const val MAX_RATE_OR_PITCH = 2f
+        const val NOT_STARTED = 0
+        const val STARTED = 1
+        const val SUPPRESSED = 2
 
         fun initializationFailure() =
             SpeechEngineResult.Failed(SpeechError.SystemTtsInitializationFailed)

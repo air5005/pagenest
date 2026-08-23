@@ -327,3 +327,43 @@ Result: `BUILD SUCCESSFUL in 3m 20s`; 280 tasks, 24 executed and 256 up-to-date.
 - Closing without draining can miss an already-buffered `Initialized` command. Draining without adopting its platform leaks it. Releasing after terminalizing drained callers recreates the reentrancy gap.
 - The initialization completion callback only publishes atomics and counts down a latch; every platform call remains owner-confined. Stop and shutdown retain exact-once/best-effort exception containment.
 - Real Android voice availability remains device-dependent. The JVM suite validates ownership and lifecycle through deterministic fakes; the existing SDK XML warning remains non-fatal.
+
+## Fix Round 4
+
+### Summary and TDD evidence
+
+Round 4 closes the pre-start cancellation hole. A deterministic queued executor keeps both initialization and the owner actor from entering their coroutine bodies, while undispatched callers admit `speak`, `voices`, and `stop`. Cancelling the injected scope before draining that executor now reserves both bodies against later entry, closes and drains the command channel, terminalizes every admitted caller, and completes the two-phase close acknowledgment without touching Android off owner.
+
+Focused RED:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*SystemTtsEngineCloseAdmissionTest.pre-start owner cancellation terminalizes admitted calls and close returns'
+```
+
+Base behavior failed at the bounded off-owner `close()` future with `java.util.concurrent.TimeoutException` at `SystemTtsEngineCloseAdmissionTest.kt:70`; `BUILD FAILED in 53s`.
+
+The first implementation attempt proved that ordinary `Job.invokeOnCompletion` is too late for this state: a dispatched `launch` cancelled before body entry remains incomplete until its queued runnable is executed. The minimal correction uses the cancellation-phase completion hook plus atomic start reservations. Focused GREEN passed with `BUILD SUCCESSFUL in 57s`.
+
+### Lifecycle and ownership
+
+- Initialization and actor entry each atomically transition from not-started to started. The cancellation fallback can instead reserve a not-started body as suppressed, so a stale queued runnable can never acquire a platform or start the actor later.
+- When both bodies are suppressed, no platform can exist. The fallback performs only engine bookkeeping off owner: closes/drains commands, returns `Cancelled`/empty/unit to admitted callers, publishes both close phases, and wakes repeated/concurrent close callers.
+- If initialization already entered before the actor, fallback finalization is dispatched through an independent scope carrying the same owner context. Any buffered platform is adopted and released there; any factory that returns after channel closure releases its orphan there. Off-owner close still waits for initialization completion, so it cannot acknowledge while release is pending.
+- Normal actor finalization remains unchanged. The fallback is guarded by the same atomic entry state, close state, and exact-once release state, so a body that ran cannot double-terminalize or double-release.
+- The regression also verifies post-close rejected `speak`, `voices`, and `stop` calls terminate with their stable results. The factory call count remains zero in the never-started case.
+
+### Verification gates
+
+All runs used `JAVA_HOME=C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot` and Android SDK `C:\Users\Administrator\AppData\Local\Android\Sdk`.
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*SystemTtsEngine*Test'
+```
+
+Result: `BUILD SUCCESSFUL in 45s`.
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL in 3m 55s`; XML totals were 214 tests, 0 failures, 0 errors. `assembleDebug` and `lintDebug` both completed in the same fresh invocation.
