@@ -378,8 +378,6 @@ Result: `BUILD SUCCESSFUL` in 4 minutes 12 seconds (335 tasks: 41 executed,
 - Device/HyperOS verification remains outside Task 4 and was not run. Per user direction, Task 4 is
   archived after this fix round and no Task 5 work was started.
 
-
-
 ## Fix Round 3/5 — single-load transactional seek candidate
 
 Base: `19b85b8e3b71c4f95b9b0e242dd85980f2e47cd9`
@@ -589,3 +587,104 @@ Result: `BUILD SUCCESSFUL` in 4 minutes 29 seconds (335 tasks: 42 executed,
 
 - Device/HyperOS verification remains outside Task 4 and was not run. Per user direction, Task 4 is
   archived after this fix round and no Task 5 work was started.
+
+## Fix Round 5/5 - fence every reader-state install with a layout epoch and operation serial
+
+Base: `892207d1f2dacddaf142b11cd9602b0f3143c443`
+
+### Root cause and correction
+
+The Round 4 install check accepted a nullable reload generation. The three layout-reload loads passed
+their generation, but the four asynchronous current/adjacent loads started by manual next/previous
+chapter navigation passed `null`. A slow manual load could therefore finish after a newer layout reload,
+mutate the current/previous/next caches on Main, and fire callbacks. Because the stale manual install did
+not advance the layout generation, speech then accepted that stale cache as a candidate under the latest
+generation.
+
+Every `loadContent` invocation now carries an immutable, non-null `ReaderLoadToken`. The atomic layout
+state owns both the speech layout generation and a distinct reader-load operation serial. Layout reloads
+advance both values and retain their active-reload requirement; manual navigation advances only the
+operation serial, so it preserves the current speech layout while making the newest navigation operation
+authoritative. Reset, clear, style/layout invalidation, and unavailable reload scope advance the epoch and
+serial together. Both successful installation and initialization-failure callbacks validate the complete
+token on `Dispatchers.Main.immediate` before touching reader state.
+
+The existing reload fence and `NonCancellable` matching completion remain unchanged in behavior. Manual
+save calls, synchronous cache rotation, callbacks for the winning load, and detached speech parsing are
+preserved. No parser, book, coroutine scope, or resource owner was added.
+
+### Behavioral RED / GREEN evidence
+
+Initial focused RED, before production edits:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests "com.air5005.pagenest.speech.content.PageViewControllerSpeechSnapshotTest.manual load started before layout reload cannot overwrite refreshed reader state"
+```
+
+Result: `BUILD FAILED` in 1 minute 10 seconds. After the E1 reload installed `fresh-layout`, releasing
+the older E0 manual parser gate changed the real controller back to `stale-manual` (expected
+`fresh-layout`). The same fixture also observes callback count, source position, and the speech candidate
+accepted from the controller cache.
+
+Focused GREEN after the token correction:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests "com.air5005.pagenest.speech.content.PageViewControllerSpeechSnapshotTest.manual load started before layout reload cannot overwrite refreshed reader state"
+```
+
+Result: `BUILD SUCCESSFUL` in 1 minute 22 seconds: 1 test passed.
+
+Relevant controller/speech layout suite:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests "com.air5005.pagenest.speech.content.PageViewControllerSpeechSnapshotTest"
+```
+
+Result: `BUILD SUCCESSFUL` in 1 minute 8 seconds. This includes the existing failed and cancelled reload
+recovery controls; neither leaves the speech rejection window permanently active.
+
+### Added deterministic gate coverage
+
+1. `manual load started before layout reload cannot overwrite refreshed reader state`
+2. `manual navigation without a newer operation installs its current and adjacent chapters`
+3. `latest manual navigation wins when two manual operations finish out of order`
+4. `reset invalidates a manual load that was already parsing`
+5. `clear invalidates a manual load that was already parsing`
+
+All asynchronous ordering uses `CompletableDeferred` parser/layout gates and test-scheduler drains; no
+real sleep is used. The primary test proves the rejected old operation cannot install or fire stale page
+callbacks, and that the controller, source, and newly admitted speech candidate all retain E1. The normal
+control proves current and adjacent manual loads still install. The two-operation test proves the latest
+manual intent wins within one layout epoch. Reset and clear each reject already-parsed old work.
+
+### Mutation and self-review
+
+- Actual temporary mutation: removed only the reader-load serial comparison while retaining the layout
+  generation check. `latest manual navigation wins when two manual operations finish out of order`
+  failed 1/1 because the older completion replaced `latest-2`. After restoring the serial comparison,
+  the same exact test passed 1/1 (`BUILD SUCCESSFUL` in 1 minute 23 seconds).
+- The initial RED kills a nullable or layout-only install fence: the old E0 manual completion overwrites
+  E1 and becomes an accepted speech candidate.
+- The normal-navigation control kills unconditional manual rejection and checks both current and adjacent
+  cache installation.
+- Reset and clear controls kill omission of serial invalidation at either lifecycle boundary.
+- Review confirmed all cache mutation and callbacks remain Main-safe, stale failure cannot consume the
+  current initialization callback, active reload ownership can only be released by its matching reload,
+  and no new resource lifecycle exists.
+
+### Round 5 full gates
+
+Fresh complete command:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL` in 4 minutes 40 seconds (335 tasks: 41 executed,
+294 up-to-date). Unit XML totals: 22 suites, 261 tests, 0 failures, 0 errors, 0 skipped.
+`assembleDebug` and `lintDebug` both completed.
+
+### Remaining boundary
+
+- Device/HyperOS verification remains outside Task 4 and was not run. Per user direction, Task 4 is
+  archived after Round 5/5 and no Task 5 work was started.

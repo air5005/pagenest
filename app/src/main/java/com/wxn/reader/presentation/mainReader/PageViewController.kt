@@ -146,40 +146,83 @@ open class PageViewController @Inject constructor(
     private data class SpeechLayoutState(
         val generation: Long = 0L,
         val activeReloadGeneration: Long? = null,
+        val readerLoadSerial: Long = 0L,
+    )
+
+    private data class ReaderLoadToken(
+        val layoutGeneration: Long,
+        val readerLoadSerial: Long,
+        val requiresActiveLayoutReload: Boolean,
     )
 
     private fun invalidateSpeechLayout() {
         while (true) {
             val current = speechLayoutState.get()
-            val invalidated = SpeechLayoutState(generation = current.generation + 1L)
+            val invalidated = SpeechLayoutState(
+                generation = current.generation + 1L,
+                readerLoadSerial = current.readerLoadSerial + 1L,
+            )
             if (speechLayoutState.compareAndSet(current, invalidated)) return
         }
     }
 
-    private fun beginSpeechLayoutReload(): Long {
+    private fun beginReaderLoad(): ReaderLoadToken {
+        while (true) {
+            val current = speechLayoutState.get()
+            val loading = current.copy(readerLoadSerial = current.readerLoadSerial + 1L)
+            if (speechLayoutState.compareAndSet(current, loading)) {
+                return ReaderLoadToken(
+                    layoutGeneration = loading.generation,
+                    readerLoadSerial = loading.readerLoadSerial,
+                    requiresActiveLayoutReload = false,
+                )
+            }
+        }
+    }
+
+    private fun currentReaderLoadToken(): ReaderLoadToken {
+        val current = speechLayoutState.get()
+        return ReaderLoadToken(
+            layoutGeneration = current.generation,
+            readerLoadSerial = current.readerLoadSerial,
+            requiresActiveLayoutReload = false,
+        )
+    }
+
+    private fun beginSpeechLayoutReload(): ReaderLoadToken {
         while (true) {
             val current = speechLayoutState.get()
             val generation = current.generation + 1L
             val reloading = SpeechLayoutState(
                 generation = generation,
                 activeReloadGeneration = generation,
+                readerLoadSerial = current.readerLoadSerial + 1L,
             )
-            if (speechLayoutState.compareAndSet(current, reloading)) return generation
+            if (speechLayoutState.compareAndSet(current, reloading)) {
+                return ReaderLoadToken(
+                    layoutGeneration = reloading.generation,
+                    readerLoadSerial = reloading.readerLoadSerial,
+                    requiresActiveLayoutReload = true,
+                )
+            }
         }
     }
 
-    private fun finishSpeechLayoutReload(generation: Long) {
+    private fun finishSpeechLayoutReload(token: ReaderLoadToken) {
         while (true) {
             val current = speechLayoutState.get()
-            if (current.activeReloadGeneration != generation) return
+            if (current.activeReloadGeneration != token.layoutGeneration) return
             val finished = current.copy(activeReloadGeneration = null)
             if (speechLayoutState.compareAndSet(current, finished)) return
         }
     }
 
-    private fun isCurrentSpeechLayoutReload(generation: Long): Boolean {
+    private fun isCurrentReaderLoad(token: ReaderLoadToken): Boolean {
         val current = speechLayoutState.get()
-        return current.generation == generation && current.activeReloadGeneration == generation
+        return current.generation == token.layoutGeneration &&
+            current.readerLoadSerial == token.readerLoadSerial &&
+            (!token.requiresActiveLayoutReload ||
+                current.activeReloadGeneration == token.layoutGeneration)
     }
 
     val progression: Double
@@ -405,27 +448,27 @@ open class PageViewController @Inject constructor(
             invalidateSpeechLayout()
             return
         }
-        val reloadGeneration = beginSpeechLayoutReload()
+        val readerLoadToken = beginSpeechLayoutReload()
         reloadScope.launchIO {
             try {
                 loadContent(
                     durChapterIndex,
                     resetPageOffset = resetPageOffset,
-                    speechReloadGeneration = reloadGeneration,
+                    readerLoadToken = readerLoadToken,
                 )
                 loadContent(
                     durChapterIndex + 1,
                     resetPageOffset = resetPageOffset,
-                    speechReloadGeneration = reloadGeneration,
+                    readerLoadToken = readerLoadToken,
                 )
                 loadContent(
                     durChapterIndex - 1,
                     resetPageOffset = resetPageOffset,
-                    speechReloadGeneration = reloadGeneration,
+                    readerLoadToken = readerLoadToken,
                 )
             } finally {
                 withContext(NonCancellable + Dispatchers.Main.immediate) {
-                    finishSpeechLayoutReload(reloadGeneration)
+                    finishSpeechLayoutReload(readerLoadToken)
                 }
             }
         }
@@ -651,8 +694,8 @@ open class PageViewController @Inject constructor(
         chapterIndex: Int,
         upContent: Boolean = true,
         resetPageOffset: Boolean,
+        readerLoadToken: ReaderLoadToken,
         applyToReaderState: Boolean = true,
-        speechReloadGeneration: Long? = null,
     ): TextChapter? {
 //        Logger.i("PageViewController::loadContent:index=$index,upContent=$upContent,resetPageOffset=$resetPageOffset,bookid=${book?.id},bookname=${book?.title}")
         if (chapterIndex < 0) return null
@@ -666,10 +709,7 @@ open class PageViewController @Inject constructor(
             Logger.e("PageViewController::${ex.message}, failed")
             if (applyToReaderState) {
                 withContext(Dispatchers.Main.immediate) {
-                    if ((speechReloadGeneration == null ||
-                            isCurrentSpeechLayoutReload(speechReloadGeneration)) &&
-                        isInitFinish
-                    ) {
+                    if (isCurrentReaderLoad(readerLoadToken) && isInitFinish) {
                         onInitChapterLoadListener?.invoke(false)
                         onInitChapterLoadListener = null
                     }
@@ -750,9 +790,7 @@ open class PageViewController @Inject constructor(
 
             if (!applyToReaderState) return textChapter
             return withContext(Dispatchers.Main.immediate) {
-                if (speechReloadGeneration != null &&
-                    !isCurrentSpeechLayoutReload(speechReloadGeneration)
-                ) {
+                if (!isCurrentReaderLoad(readerLoadToken)) {
                     return@withContext null
                 }
 
@@ -844,17 +882,18 @@ open class PageViewController @Inject constructor(
         prevTextChapter = curTextChapter
         curTextChapter = nextTextChapter
         nextTextChapter = null
+        val readerLoadToken = beginReaderLoad()
         if (curTextChapter == null) {
             Coroutines.mainScope().launchIO {
                 Logger.d("PageViewController::moveToNextChapter:when curTextChapter is null, durChapterIndex=$durChapterIndex")
-                loadContent(durChapterIndex, upContent, false)
+                loadContent(durChapterIndex, upContent, false, readerLoadToken)
             }
         } else {
             callBack?.upContent()
         }
         Coroutines.mainScope().launchIO {
             Logger.d("PageViewController::moveToNextChapter:, durChapterIndex=${durChapterIndex + 1}")
-            loadContent(durChapterIndex.plus(1), upContent, false)
+            loadContent(durChapterIndex.plus(1), upContent, false, readerLoadToken)
         }
         saveRead()
         callBack?.upView()
@@ -878,11 +917,12 @@ open class PageViewController @Inject constructor(
         nextTextChapter = curTextChapter
         curTextChapter = prevTextChapter
         prevTextChapter = null
+        val readerLoadToken = beginReaderLoad()
 
         if (curTextChapter == null) {
             Coroutines.mainScope().launchIO {
                 Logger.d("PageViewController::moveToPrevChapter when curTextChapter is null, durChapterIndex=${durChapterIndex}")
-                loadContent(durChapterIndex, upContent, false)
+                loadContent(durChapterIndex, upContent, false, readerLoadToken)
             }
         } else if (upContent) {
             callBack?.upContent()
@@ -890,7 +930,7 @@ open class PageViewController @Inject constructor(
 
         Coroutines.mainScope().launchIO {
             Logger.d("PageViewController::moveToPrevChapter, durChapterIndex=${durChapterIndex - 1}")
-            loadContent(durChapterIndex.minus(1), upContent, false)
+            loadContent(durChapterIndex.minus(1), upContent, false, readerLoadToken)
         }
         saveRead()
         callBack?.upView()
@@ -1269,11 +1309,13 @@ open class PageViewController @Inject constructor(
                 .firstOrNull { it?.position == chapterIndex }
         }
         if (cached != null) return cached
+        val readerLoadToken = currentReaderLoadToken()
         return withContext(Dispatchers.IO) {
             loadContent(
                 chapterIndex = chapterIndex,
                 upContent = false,
                 resetPageOffset = false,
+                readerLoadToken = readerLoadToken,
                 applyToReaderState = false,
             )
         }

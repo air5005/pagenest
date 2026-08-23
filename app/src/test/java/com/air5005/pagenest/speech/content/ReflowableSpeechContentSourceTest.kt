@@ -1,5 +1,6 @@
 package com.air5005.pagenest.speech.content
 
+import android.graphics.RectF
 import com.air5005.pagenest.speech.model.SpeechPosition
 import com.wxn.base.bean.Book
 import com.wxn.base.bean.BookChapter
@@ -476,6 +477,274 @@ class PageViewControllerSpeechSnapshotTest {
     }
 
     @Test
+    fun `manual load started before layout reload cannot overwrite refreshed reader state`() = runTest {
+        val controller = manualNavigationController()
+        controller.scope = this
+        val listener = RecordingClickListener()
+        controller.clickListener = listener
+        val source = ReflowableSpeechContentSource(1, controller, SpeechSegmenter())
+        val oldManualEntered = CompletableDeferred<Unit>()
+        val allowOldManual = CompletableDeferred<Unit>()
+        val oldManualLayoutBuilt = CompletableDeferred<Unit>()
+        val chapterOneLoads = AtomicInteger()
+        every { controller.getChapterByIdUserCase(1, any()) } answers {
+            flowOf(bookChapter(secondArg()))
+        }
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            val chapter = thirdArg<BookChapter>()
+            when {
+                chapter.chapterIndex != 1 -> listOf(ReaderText.Text(line = "fresh-${chapter.chapterIndex}"))
+                chapterOneLoads.incrementAndGet() == 1 -> {
+                    oldManualEntered.complete(Unit)
+                    allowOldManual.await()
+                    listOf(ReaderText.Text(line = "stale-manual"))
+                }
+
+                else -> listOf(ReaderText.Text(line = "fresh-layout"))
+            }
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            val chapter = firstArg<BookChapter>()
+            val text = secondArg<List<ReaderText>>()
+                .filterIsInstance<ReaderText.Text>()
+                .single()
+                .line
+            textChapter(
+                chapter.chapterIndex,
+                TextPage(index = 0, textLines = arrayListOf(textLine(text, paragraphIndex = 1))),
+            ).also {
+                if (text == "stale-manual") oldManualLayoutBuilt.complete(Unit)
+            }
+        }
+
+        assertTrue(controller.moveToNextChapter(upContent = true))
+        oldManualEntered.await()
+        controller.loadContent(resetPageOffset = true)
+        val freshPosition = SpeechPosition(1, 1, 0, paragraphIndex = 1, textOffset = 0)
+        val refreshed = awaitSeek(source, freshPosition)
+        val callbacksAfterRefresh = listener.pageChanges.get()
+
+        allowOldManual.complete(Unit)
+        oldManualLayoutBuilt.await()
+        testScheduler.advanceUntilIdle()
+        val acceptedAfterOldManual = requireNotNull(
+            controller.loadSpeechPage(chapterIndex = 1, pageIndex = 0),
+        )
+
+        assertEquals("fresh-layout", refreshed.text)
+        assertEquals("fresh-layout", currentChapterText(controller))
+        assertEquals("fresh-layout", acceptedAfterOldManual.snapshot.lines.single().text)
+        assertEquals(refreshed, source.current())
+        assertEquals(callbacksAfterRefresh, listener.pageChanges.get())
+    }
+
+    @Test
+    fun `manual navigation without a newer operation installs its current and adjacent chapters`() = runTest {
+        val controller = manualNavigationController()
+        val currentBuilt = CompletableDeferred<Unit>()
+        val adjacentBuilt = CompletableDeferred<Unit>()
+        every { controller.getChapterByIdUserCase(1, any()) } answers {
+            flowOf(bookChapter(secondArg()))
+        }
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            val chapter = thirdArg<BookChapter>()
+            listOf(ReaderText.Text(line = "manual-${chapter.chapterIndex}"))
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            val chapter = firstArg<BookChapter>()
+            val loaded = textChapter(
+                chapter.chapterIndex,
+                TextPage(
+                    index = 0,
+                    textLines = arrayListOf(textLine("manual-${chapter.chapterIndex}")),
+                ),
+            )
+            if (chapter.chapterIndex == 1) currentBuilt.complete(Unit) else adjacentBuilt.complete(Unit)
+            loaded
+        }
+
+        assertTrue(controller.moveToNextChapter(upContent = true))
+        currentBuilt.await()
+        adjacentBuilt.await()
+        awaitCurrentChapterText(controller, "manual-1")
+        val candidate = requireNotNull(controller.loadSpeechPage(chapterIndex = 1, pageIndex = 0))
+
+        assertEquals("manual-1", currentChapterText(controller))
+        assertEquals("manual-2", controller.nextTextChapter?.pages?.single()?.textLines?.single()?.text)
+        assertEquals("manual-1", candidate.snapshot.lines.single().text)
+    }
+
+    @Test
+    fun `latest manual navigation wins when two manual operations finish out of order`() = runTest {
+        val controller = manualNavigationController().apply { chapterSize = 4 }
+        val firstCurrentEntered = CompletableDeferred<Unit>()
+        val firstAdjacentEntered = CompletableDeferred<Unit>()
+        val allowFirstCurrent = CompletableDeferred<Unit>()
+        val allowFirstAdjacent = CompletableDeferred<Unit>()
+        val firstCurrentBuilt = CompletableDeferred<Unit>()
+        val firstAdjacentBuilt = CompletableDeferred<Unit>()
+        val chapterTwoLoads = AtomicInteger()
+        every { controller.getChapterByIdUserCase(1, any()) } answers {
+            flowOf(bookChapter(secondArg()))
+        }
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            val chapter = thirdArg<BookChapter>()
+            when {
+                chapter.chapterIndex == 1 -> {
+                    firstCurrentEntered.complete(Unit)
+                    allowFirstCurrent.await()
+                    listOf(ReaderText.Text(line = "older-1"))
+                }
+
+                chapter.chapterIndex == 2 && chapterTwoLoads.incrementAndGet() == 1 -> {
+                    firstAdjacentEntered.complete(Unit)
+                    allowFirstAdjacent.await()
+                    listOf(ReaderText.Text(line = "older-2"))
+                }
+
+                else -> listOf(ReaderText.Text(line = "latest-${chapter.chapterIndex}"))
+            }
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            val chapter = firstArg<BookChapter>()
+            val text = secondArg<List<ReaderText>>()
+                .filterIsInstance<ReaderText.Text>()
+                .single()
+                .line
+            textChapter(
+                chapter.chapterIndex,
+                TextPage(index = 0, textLines = arrayListOf(textLine(text))),
+            ).also {
+                if (text == "older-1") firstCurrentBuilt.complete(Unit)
+                if (text == "older-2") firstAdjacentBuilt.complete(Unit)
+            }
+        }
+
+        assertTrue(controller.moveToNextChapter(upContent = true))
+        firstCurrentEntered.await()
+        firstAdjacentEntered.await()
+        assertTrue(controller.moveToNextChapter(upContent = true))
+        awaitCurrentChapterText(controller, "latest-2")
+
+        allowFirstCurrent.complete(Unit)
+        allowFirstAdjacent.complete(Unit)
+        firstCurrentBuilt.await()
+        firstAdjacentBuilt.await()
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(2, controller.durChapterIndex)
+        assertEquals("latest-2", currentChapterText(controller))
+        assertEquals("latest-3", controller.nextTextChapter?.pages?.single()?.textLines?.single()?.text)
+    }
+
+    @Test
+    fun `reset invalidates a manual load that was already parsing`() = runTest {
+        val controller = manualNavigationController()
+        val oldManualEntered = CompletableDeferred<Unit>()
+        val allowOldManual = CompletableDeferred<Unit>()
+        val oldManualBuilt = CompletableDeferred<Unit>()
+        val listener = RecordingClickListener()
+        controller.clickListener = listener
+        every { controller.getChapterByIdUserCase(1, any()) } answers {
+            flowOf(bookChapter(secondArg()))
+        }
+        every { controller.getChapterCountByBookIdUserCase(1) } returns flowOf(3)
+        coEvery { controller.getAnnotationsUseCase(1) } returns flowOf(emptyList())
+        coEvery { controller.getNotesForBookUseCase(1) } returns flowOf(emptyList())
+        coEvery { controller.getBookmarksForBookUseCase(1) } returns flowOf(emptyList())
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            val chapter = thirdArg<BookChapter>()
+            if (chapter.chapterIndex == 1) {
+                oldManualEntered.complete(Unit)
+                allowOldManual.await()
+            }
+            listOf(ReaderText.Text(line = "old-${chapter.chapterIndex}"))
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            val chapter = firstArg<BookChapter>()
+            textChapter(
+                chapter.chapterIndex,
+                TextPage(index = 0, textLines = arrayListOf(textLine("old-${chapter.chapterIndex}"))),
+            ).also {
+                if (chapter.chapterIndex == 1) oldManualBuilt.complete(Unit)
+            }
+        }
+
+        assertTrue(controller.moveToNextChapter(upContent = true))
+        oldManualEntered.await()
+        controller.resetBook(book()) { }
+        val callbacksAfterReset = listener.pageChanges.get()
+
+        allowOldManual.complete(Unit)
+        oldManualBuilt.await()
+        testScheduler.advanceUntilIdle()
+
+        assertNull(controller.prevTextChapter)
+        assertNull(controller.curTextChapter)
+        assertNull(controller.nextTextChapter)
+        assertEquals(callbacksAfterReset, listener.pageChanges.get())
+    }
+
+    @Test
+    fun `clear invalidates a manual load that was already parsing`() = runTest {
+        val controller = manualNavigationController()
+        val oldManualEntered = CompletableDeferred<Unit>()
+        val allowOldManual = CompletableDeferred<Unit>()
+        val oldManualBuilt = CompletableDeferred<Unit>()
+        val listener = RecordingClickListener()
+        controller.clickListener = listener
+        every { controller.getChapterByIdUserCase(1, any()) } answers {
+            flowOf(bookChapter(secondArg()))
+        }
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            val chapter = thirdArg<BookChapter>()
+            if (chapter.chapterIndex == 1) {
+                oldManualEntered.complete(Unit)
+                allowOldManual.await()
+            }
+            listOf(ReaderText.Text(line = "old-${chapter.chapterIndex}"))
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            val chapter = firstArg<BookChapter>()
+            textChapter(
+                chapter.chapterIndex,
+                TextPage(index = 0, textLines = arrayListOf(textLine("old-${chapter.chapterIndex}"))),
+            ).also {
+                if (chapter.chapterIndex == 1) oldManualBuilt.complete(Unit)
+            }
+        }
+
+        assertTrue(controller.moveToNextChapter(upContent = true))
+        oldManualEntered.await()
+        controller.clear()
+        val callbacksAfterClear = listener.pageChanges.get()
+
+        allowOldManual.complete(Unit)
+        oldManualBuilt.await()
+        testScheduler.advanceUntilIdle()
+
+        assertNull(controller.prevTextChapter)
+        assertNull(controller.curTextChapter)
+        assertNull(controller.nextTextChapter)
+        assertEquals(callbacksAfterClear, listener.pageChanges.get())
+    }
+
+    @Test
     fun `failed reload clears its fence and keeps the current valid layout available`() = runTest {
         val controller = reloadableController()
         controller.scope = this
@@ -627,6 +896,39 @@ class PageViewControllerSpeechSnapshotTest {
         return controller
     }
 
+    private fun manualNavigationController(): PageViewController {
+        val controller = controllerWith(
+            TextPage(index = 0, textLines = arrayListOf(textLine("chapter-0"))),
+        )
+        controller.durChapterIndex = 0
+        controller.curTextChapter = textChapter(
+            0,
+            TextPage(index = 0, textLines = arrayListOf(textLine("chapter-0"))),
+        )
+        controller.nextTextChapter = null
+        controller.chapterSize = 3
+        controller.book = book()
+        controller.isInitFinish = true
+        return controller
+    }
+
+    private fun currentChapterText(controller: PageViewController): String? =
+        controller.curTextChapter?.pages?.single()?.textLines?.single()?.text
+
+    private class RecordingClickListener : PageViewController.OnClickListener {
+        val pageChanges = AtomicInteger()
+
+        override fun onCenterClick() = Unit
+        override fun onLinkClick(href: String?, clickX: Float, clickY: Float) = Unit
+        override fun onPageChange() {
+            pageChanges.incrementAndGet()
+        }
+        override fun onSelectedText(startX: Float, startY: Float, endX: Float, endY: Float) = Unit
+        override fun onSelectedCancel() = Unit
+        override fun onCheckedAnnotation(annotationIds: List<String>, rect: RectF) = Unit
+        override fun onCheckedNote(noteId: String, rect: RectF) = Unit
+    }
+
     private suspend fun awaitSeek(
         source: ReflowableSpeechContentSource,
         position: SpeechPosition,
@@ -636,6 +938,15 @@ class PageViewControllerSpeechSnapshotTest {
             yield()
         }
         error("unreachable")
+    }
+
+    private suspend fun awaitCurrentChapterText(
+        controller: PageViewController,
+        expected: String,
+    ) = withTimeout(5_000) {
+        while (currentChapterText(controller) != expected) {
+            yield()
+        }
     }
 
     private fun textLine(text: String, paragraphIndex: Int = 0) = TextLine(
