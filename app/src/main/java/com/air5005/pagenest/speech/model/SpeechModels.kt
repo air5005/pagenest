@@ -33,6 +33,10 @@ sealed interface SpeechError {
     data object QuotaExceeded : SpeechError { override val kind = Kind.QUOTA }
     data object NoExtractableText : SpeechError { override val kind = Kind.CONTENT }
     data object SystemTtsUnavailable : SpeechError { override val kind = Kind.ENGINE }
+    data object SystemTtsInitializationFailed : SpeechError { override val kind = Kind.ENGINE }
+    data object SystemTtsStartFailed : SpeechError { override val kind = Kind.ENGINE }
+    data object SystemTtsPlaybackFailed : SpeechError { override val kind = Kind.ENGINE }
+    data object NoOfflineVoiceAvailable : SpeechError { override val kind = Kind.ENGINE }
     data object MissingLanguageData : SpeechError { override val kind = Kind.ENGINE }
     data object UnsupportedLocale : SpeechError { override val kind = Kind.ENGINE }
     data object AudioDecodeFailure : SpeechError { override val kind = Kind.DECODE }

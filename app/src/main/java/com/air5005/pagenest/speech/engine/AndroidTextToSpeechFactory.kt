@@ -32,6 +32,7 @@ internal data class PlatformSpeechVoice(
     val id: String,
     val displayName: String,
     val localeTag: String,
+    val networkConnectionRequired: Boolean,
 )
 
 internal interface PlatformUtteranceProgressListener {
@@ -134,6 +135,7 @@ private class AndroidPlatformTextToSpeech(
                 id = voice.name,
                 displayName = voice.name,
                 localeTag = voice.locale.toLanguageTag(),
+                networkConnectionRequired = voice.isNetworkConnectionRequired,
             )
         }
 

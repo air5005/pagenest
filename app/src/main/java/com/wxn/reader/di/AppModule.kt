@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.room.Room
 import com.air5005.pagenest.speech.engine.AndroidTextToSpeechFactory
+import com.air5005.pagenest.speech.engine.SpeechEngine
 import com.air5005.pagenest.speech.engine.SystemTtsEngine
 import com.air5005.pagenest.library.importing.AndroidImportRequestFactory
 import com.air5005.pagenest.library.importing.BookImportCatalog
@@ -96,8 +97,12 @@ object AppModule {
         @ApplicationContext context: Context,
     ): SystemTtsEngine = SystemTtsEngine(
         factory = AndroidTextToSpeechFactory(context),
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+        ownerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
     )
+
+    @Provides
+    @Singleton
+    fun provideSpeechEngine(systemTtsEngine: SystemTtsEngine): SpeechEngine = systemTtsEngine
 
     @Provides
     @Singleton

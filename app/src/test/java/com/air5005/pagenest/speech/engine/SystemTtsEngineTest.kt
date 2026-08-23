@@ -1,9 +1,11 @@
 package com.air5005.pagenest.speech.engine
 
 import android.speech.tts.TextToSpeech
+import com.air5005.pagenest.speech.model.SpeechError
 import com.air5005.pagenest.speech.model.SpeechPosition
 import com.air5005.pagenest.speech.model.SpeechSegment
 import com.wxn.base.bean.Locator
+import com.wxn.reader.di.AppModule
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -12,11 +14,25 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertSame
 import org.junit.Test
 import java.util.Locale
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SystemTtsEngineTest {
+    @Test
+    fun `dependency injection exposes the system singleton as SpeechEngine`() = runTest {
+        val concrete = SystemTtsEngine(
+            PlatformTextToSpeechFactory { FakePlatformTts() },
+            backgroundScope,
+        )
+
+        val abstraction: SpeechEngine = AppModule.provideSpeechEngine(concrete)
+
+        assertSame(concrete, abstraction)
+    }
+
     @Test
     fun `completion resumes exactly once and cancellation stops utterance`() = runTest {
         val platform = FakePlatformTts()
@@ -37,9 +53,11 @@ class SystemTtsEngineTest {
     @Test
     fun `voices returns only platform voices for the requested locale`() = runTest {
         val platform = FakePlatformTts().apply {
-            availableVoices += PlatformSpeechVoice("zh-main", "Chinese", "zh-CN")
-            availableVoices += PlatformSpeechVoice("en-main", "English", "en-US")
-            availableVoices += PlatformSpeechVoice("zh-alt", "Chinese alternate", "zh-CN")
+            availableVoices.clear()
+            availableVoices += PlatformSpeechVoice("zh-main", "Chinese", "zh-CN", false)
+            availableVoices += PlatformSpeechVoice("en-main", "English", "en-US", false)
+            availableVoices += PlatformSpeechVoice("zh-cloud", "Chinese cloud", "zh-CN", true)
+            availableVoices += PlatformSpeechVoice("zh-alt", "Chinese alternate", "zh-CN", false)
         }
         val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, backgroundScope)
 
@@ -55,7 +73,7 @@ class SystemTtsEngineTest {
     @Test
     fun `speak applies bounded configuration and uses queue flush with a generation utterance id`() = runTest {
         val platform = FakePlatformTts().apply {
-            availableVoices += PlatformSpeechVoice("zh-main", "Chinese", "zh-CN")
+            availableVoices += PlatformSpeechVoice("zh-main", "Chinese", "zh-CN", false)
         }
         val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, backgroundScope)
         assertEquals("system", engine.id)
@@ -69,10 +87,10 @@ class SystemTtsEngineTest {
         assertEquals(listOf(0.25f), platform.rates)
         assertEquals(listOf(2f), platform.pitches)
         assertEquals(
-            FakePlatformTts.Spoken("边界", TextToSpeech.QUEUE_FLUSH, "7:segment-边界"),
+            FakePlatformTts.Spoken("边界", TextToSpeech.QUEUE_FLUSH, "7:segment-边界:1"),
             platform.spoken.single(),
         )
-        platform.complete("7:segment-边界")
+        platform.complete("7:segment-边界:1")
         assertEquals(SpeechEngineResult.Completed, result.await())
 
         val oppositeBounds = request("反向边界").copy(rate = 4f, pitch = 0.1f)
@@ -88,7 +106,7 @@ class SystemTtsEngineTest {
     fun `speak categorizes initialization and locale availability failures`() = runTest {
         val unavailable = SystemTtsEngine(PlatformTextToSpeechFactory { null }, backgroundScope)
         assertEquals(
-            SpeechEngineResult.Failed(com.air5005.pagenest.speech.model.SpeechError.SystemTtsUnavailable),
+            SpeechEngineResult.Failed(SpeechError.SystemTtsInitializationFailed),
             unavailable.speak(request("无引擎")),
         )
 
@@ -128,7 +146,7 @@ class SystemTtsEngineTest {
         runCurrent()
         callbackPlatform.error(callbackPlatform.spoken.single().utteranceId)
         assertEquals(
-            SpeechEngineResult.Failed(com.air5005.pagenest.speech.model.SpeechError.SystemTtsUnavailable),
+            SpeechEngineResult.Failed(SpeechError.SystemTtsPlaybackFailed),
             withTimeout(100) { callbackResult.await() },
         )
 
@@ -138,9 +156,27 @@ class SystemTtsEngineTest {
             backgroundScope,
         )
         assertEquals(
-            SpeechEngineResult.Failed(com.air5005.pagenest.speech.model.SpeechError.SystemTtsUnavailable),
+            SpeechEngineResult.Failed(SpeechError.SystemTtsStartFailed),
             withTimeout(100) { startEngine.speak(request("启动错误")) },
         )
+    }
+
+    @Test
+    fun `network voices are hidden and cannot be selected for offline speech`() = runTest {
+        val platform = FakePlatformTts().apply {
+            availableVoices.clear()
+            availableVoices += PlatformSpeechVoice("zh-cloud", "Chinese cloud", "zh-CN", true)
+        }
+        val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, backgroundScope)
+
+        assertEquals(emptyList<SpeechVoice>(), engine.voices("zh-CN"))
+        assertEquals(
+            SpeechEngineResult.Failed(SpeechError.NoOfflineVoiceAvailable),
+            withTimeout(100) {
+                engine.speak(request("离线").copy(voiceId = "zh-cloud"))
+            },
+        )
+        assertEquals(emptyList<FakePlatformTts.Spoken>(), platform.spoken)
     }
 
     @Test
@@ -160,6 +196,27 @@ class SystemTtsEngineTest {
         val newId = platform.spoken.last().utteranceId
         platform.complete(oldId)
         platform.error(oldId)
+        assertFalse(second.isCompleted)
+        platform.complete(newId)
+        assertEquals(SpeechEngineResult.Completed, second.await())
+    }
+
+    @Test
+    fun `identical request replay uses a new invocation id and rejects the old callback`() = runTest {
+        val platform = FakePlatformTts()
+        val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, backgroundScope)
+        val replayedRequest = request("重复段")
+        val first = async { engine.speak(replayedRequest) }
+        runCurrent()
+        val oldId = platform.spoken.single().utteranceId
+        engine.stop()
+        assertEquals(SpeechEngineResult.Cancelled, first.await())
+
+        val second = async { engine.speak(replayedRequest) }
+        runCurrent()
+        val newId = platform.spoken.last().utteranceId
+        assertNotEquals(oldId, newId)
+        platform.complete(oldId)
         assertFalse(second.isCompleted)
         platform.complete(newId)
         assertEquals(SpeechEngineResult.Completed, second.await())
@@ -236,7 +293,9 @@ private class FakePlatformTts : PlatformTextToSpeech {
 
     var listener: PlatformUtteranceProgressListener? = null
     val spoken = mutableListOf<Spoken>()
-    val availableVoices = mutableListOf<PlatformSpeechVoice>()
+    val availableVoices = mutableListOf(
+        PlatformSpeechVoice("zh-offline", "Chinese offline", "zh-CN", false),
+    )
     val selectedVoices = mutableListOf<String>()
     val languageTags = mutableListOf<String>()
     val rates = mutableListOf<Float>()
