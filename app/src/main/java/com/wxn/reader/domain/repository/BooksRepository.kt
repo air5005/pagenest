@@ -41,7 +41,13 @@ interface BooksRepository {
     suspend fun deleteBookByUri(bookUri: String)
 
     suspend fun getReadingProgress(bookId: Long): String
-    suspend fun setReadingProgress(bookId: Long, locator: String, progression: Float)
+    suspend fun setReadingProgress(
+        bookId: Long,
+        locator: String,
+        progression: Float,
+        scrollIndex: Int? = null,
+        scrollOffset: Int? = null,
+    )
     suspend fun setReadingStatus(bookId: Long, status: ReadingStatus)
 
     // annotation (Highlights / Underlines)

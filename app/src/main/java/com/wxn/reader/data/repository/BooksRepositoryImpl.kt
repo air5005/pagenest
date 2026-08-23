@@ -163,8 +163,14 @@ class BooksRepositoryImpl @Inject constructor(
         bookDao.setReadingStatus(bookId, status)
     }
 
-    override suspend fun setReadingProgress(bookId: Long, locator: String, progression: Float) = withContext(Dispatchers.IO) {
-        bookDao.setReadingProgress(bookId, locator, progression)
+    override suspend fun setReadingProgress(
+        bookId: Long,
+        locator: String,
+        progression: Float,
+        scrollIndex: Int?,
+        scrollOffset: Int?,
+    ) = withContext(Dispatchers.IO) {
+        bookDao.setReadingProgress(bookId, locator, progression, scrollIndex, scrollOffset)
     }
 
 

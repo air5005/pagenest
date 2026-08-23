@@ -8,13 +8,18 @@ import org.json.JSONObject
 import javax.inject.Inject
 
 class SetReadingProgressUseCase @Inject constructor(private val repository: BooksRepository) {
-    suspend operator fun invoke(bookId: Long, locator: String) = withContext(Dispatchers.IO) {
+    suspend operator fun invoke(
+        bookId: Long,
+        locator: String,
+        scrollIndex: Int? = null,
+        scrollOffset: Int? = null,
+    ) = withContext(Dispatchers.IO) {
         val progression = getProgressionFromLocator(locator)
 
 
         updateReadingStatus(bookId, progression)
 
-        repository.setReadingProgress(bookId, locator, progression)
+        repository.setReadingProgress(bookId, locator, progression, scrollIndex, scrollOffset)
 
     }
 
@@ -30,8 +35,11 @@ class SetReadingProgressUseCase @Inject constructor(private val repository: Book
     private fun getProgressionFromLocator(locatorJson: String): Float {
         return try {
             val locator = JSONObject(locatorJson)
-            val locations = locator.optJSONObject("locations")
-            (locations?.optDouble("totalProgression", 0.0)?.toFloat() ?: 0f) * 100f
+            val progression = locator.optJSONObject("locations")
+                ?.takeIf { it.has("totalProgression") }
+                ?.optDouble("totalProgression")
+                ?: locator.optDouble("progression", 0.0)
+            progression.toFloat() * 100f
         } catch (e: Exception) {
             0f
         }

@@ -2,6 +2,12 @@ package com.air5005.pagenest.speech.progress
 
 import com.air5005.pagenest.speech.model.SpeechPosition
 import com.air5005.pagenest.speech.model.SpeechSegment
+import com.air5005.pagenest.speech.content.PdfPageTextExtractor
+import com.air5005.pagenest.speech.content.PdfSpeechContentSource
+import com.air5005.pagenest.speech.content.PdfSpeechDocument
+import com.air5005.pagenest.speech.content.SpeechSegmenter
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.wxn.base.bean.Book
 import com.wxn.base.bean.Locator
 import com.wxn.reader.domain.repository.BooksRepository
@@ -13,6 +19,7 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,7 +39,7 @@ class SpeechProgressCommitterTest {
         committer.commitCompleted(completed)
 
         coVerify(exactly = 1) {
-            repository.setReadingProgress(41, completed.locator.toJsonString(), 0f)
+            repository.setReadingProgress(41, completed.locator.toJsonString(), 42f, 0, 3)
         }
         coVerify(exactly = 0) { repository.updateBook(any()) }
     }
@@ -50,7 +57,7 @@ class SpeechProgressCommitterTest {
         assertEquals("6", updated.captured.locator)
         assertEquals(60f, updated.captured.progress)
         coVerify(exactly = 1) { repository.updateBook(any()) }
-        coVerify(exactly = 0) { repository.setReadingProgress(any(), any(), any()) }
+        coVerify(exactly = 0) { repository.setReadingProgress(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -64,6 +71,37 @@ class SpeechProgressCommitterTest {
 
         assertEquals("0", updated.captured.locator)
         assertEquals(0f, updated.captured.progress)
+    }
+
+    @Test
+    fun `first completed part of a real multi-segment PDF page does not persist the page`() = runTest {
+        val repository = mockk<BooksRepository>(relaxed = true)
+        coEvery { repository.getBookById(44) } returns book(id = 44, fileType = "pdf")
+        val source = longPdfSource(bookId = 44)
+        val first = requireNotNull(source.current())
+        assertEquals(0, first.partIndex)
+        requireNotNull(source.next())
+
+        committer(repository).commitCompleted(first)
+
+        coVerify(exactly = 0) { repository.updateBook(any()) }
+        source.close()
+    }
+
+    @Test
+    fun `real multi-segment PDF page persists exactly once after its final part`() = runTest {
+        val repository = mockk<BooksRepository>(relaxed = true)
+        coEvery { repository.getBookById(45) } returns book(id = 45, fileType = "pdf")
+        val source = longPdfSource(bookId = 45)
+        val first = requireNotNull(source.current())
+        val final = requireNotNull(source.next())
+        assertEquals(1, final.partIndex)
+
+        committer(repository).commitCompleted(first)
+        committer(repository).commitCompleted(final)
+
+        coVerify(exactly = 1) { repository.updateBook(any()) }
+        source.close()
     }
 
     private fun committer(repository: BooksRepository) = RoomSpeechProgressCommitter(
@@ -104,4 +142,14 @@ class SpeechProgressCommitterTest {
         fileType = fileType,
         locator = "old",
     )
+
+    private fun longPdfSource(bookId: Long): PdfSpeechContentSource {
+        val document = PDDocument().apply { addPage(PDPage()) }
+        val speechDocument = PdfSpeechDocument(
+            document = document,
+            dispatcher = Dispatchers.Unconfined,
+            extractor = PdfPageTextExtractor { _, _ -> "a".repeat(501) },
+        )
+        return PdfSpeechContentSource(bookId, speechDocument, SpeechSegmenter())
+    }
 }

@@ -11,6 +11,7 @@ import com.air5005.pagenest.speech.model.SpeechSegment
 import com.air5005.pagenest.speech.model.currentSegment
 import com.air5005.pagenest.speech.progress.SpeechProgressCommitter
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -46,6 +47,15 @@ object MonotonicSpeechClock : SpeechClock {
     }
 }
 
+/**
+ * Serializes playback and navigation commands for one reader.
+ *
+ * A command returns normally only after the owner actor applies it. Once admitted, caller
+ * cancellation does not revoke it. A handler failure is returned to that command; commands that
+ * are rejected after closure fail with [IllegalStateException], while admitted commands aborted
+ * by owner/session closure fail with [CancellationException]. No admitted acknowledgement is left
+ * pending when the session terminates.
+ */
 class SpeechSession(
     private val engine: SpeechEngine,
     private val progressCommitter: SpeechProgressCommitter,
@@ -69,7 +79,12 @@ class SpeechSession(
     private var playbackJob: Job? = null
     private var timerJob: Job? = null
     private var timerVersion = 0L
-    private val ownerJob = scope.launch { runOwner() }
+    private val ownerJob = scope.launch { runOwner() }.also { job ->
+        job.invokeOnCompletion { failure ->
+            closeAdmission(failure ?: SpeechSessionClosedException())
+            sessionJob.cancel()
+        }
+    }
 
     suspend fun start(source: SpeechContentSource, options: SpeechOptions) =
         submit(SpeechSessionCommand.Start(source, options))
@@ -85,7 +100,7 @@ class SpeechSession(
 
     suspend fun closeAndJoin() {
         requestClose()
-        ownerJob.join()
+        withContext(NonCancellable) { ownerJob.join() }
     }
 
     override fun close() {
@@ -106,9 +121,25 @@ class SpeechSession(
     }
 
     private fun requestClose() {
+        val failure = SpeechSessionClosedException()
+        closeAdmission(failure)
+        ownerJob.cancel(failure)
+    }
+
+    private fun closeAdmission(failure: Throwable) {
         admissionLock.withLock {
             if (closing.compareAndSet(false, true)) {
-                messages.trySend(Message.Close)
+                messages.close(failure)
+            }
+            drainAcknowledgements(failure)
+        }
+    }
+
+    private fun drainAcknowledgements(failure: Throwable) {
+        while (true) {
+            val message = messages.tryReceive().getOrNull() ?: return
+            if (message is Message.Command) {
+                message.acknowledged.completeExceptionally(failure)
             }
         }
     }
@@ -123,26 +154,29 @@ class SpeechSession(
                             message.acknowledged.complete(Unit)
                         } catch (failure: Throwable) {
                             message.acknowledged.completeExceptionally(failure)
+                            if (failure is CancellationException) throw failure
                         }
                     }
 
                     is Message.PlaybackFinished -> handlePlaybackFinished(message)
                     is Message.TimerExpired -> handleTimerExpired(message.version)
-                    Message.Close -> break
                 }
             }
+        } catch (_: Throwable) {
+            // The actor owns asynchronous callback failures. Its completion callback closes
+            // admission and fails all outstanding acknowledgements with the stable closed contract.
         } finally {
-            generation++
-            playbackJob?.cancel()
-            timerJob?.cancel()
-            runCatching { engine.stop() }
-            source?.close()
-            source = null
-            runCatching { highlightSink.clear() }
-            _sleepTimerDeadline.value = null
-            _state.value = SpeechPlaybackState.Idle
-            messages.close()
-            sessionJob.cancel()
+            withContext(NonCancellable) {
+                generation++
+                playbackJob?.cancel()
+                timerJob?.cancel()
+                runCatching { engine.stop() }
+                runCatching { source?.close() }
+                source = null
+                runCatching { highlightSink.clear() }
+                _sleepTimerDeadline.value = null
+                _state.value = SpeechPlaybackState.Idle
+            }
         }
     }
 
@@ -185,14 +219,17 @@ class SpeechSession(
 
     private suspend fun moveOnOwner(forward: Boolean) {
         val activeSource = source ?: return
+        val target = if (forward) activeSource.next() else activeSource.previous()
+        if (target == null) return
         invalidatePlayback()
-        beginOrComplete(if (forward) activeSource.next() else activeSource.previous())
+        beginPlayback(target)
     }
 
     private suspend fun seekOnOwner(position: SpeechPosition) {
         val activeSource = source ?: return
+        val target = activeSource.seek(position) ?: return
         invalidatePlayback()
-        beginOrComplete(activeSource.seek(position))
+        beginPlayback(target)
     }
 
     private fun setTimerOnOwner(deadlineElapsedMillis: Long?) {
@@ -261,7 +298,9 @@ class SpeechSession(
         )
         playbackJob = scope.launch {
             val result = engine.speak(request)
-            messages.send(Message.PlaybackFinished(activeGeneration, segment, result))
+            withContext(NonCancellable) {
+                messages.trySend(Message.PlaybackFinished(activeGeneration, segment, result))
+            }
         }
     }
 
@@ -298,6 +337,7 @@ class SpeechSession(
         ) : Message
 
         data class TimerExpired(val version: Long) : Message
-        data object Close : Message
     }
+
+    private class SpeechSessionClosedException : CancellationException("Speech session is closed")
 }

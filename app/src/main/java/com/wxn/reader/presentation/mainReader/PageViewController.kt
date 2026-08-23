@@ -363,6 +363,15 @@ open class PageViewController @Inject constructor(
     override fun setPageIndex(index: Int) {
         durPageIndex = index
         saveRead()
+        notifyPageChanged()
+    }
+
+    private fun setSpeechPageIndex(index: Int) {
+        durPageIndex = index
+        notifyPageChanged()
+    }
+
+    private fun notifyPageChanged() {
         callBack?.pageChanged() // 通知界面刷新进度
         clickListener?.onPageChange()
     }
@@ -1059,7 +1068,7 @@ open class PageViewController @Inject constructor(
         val nextChapterIndex = withContext(Dispatchers.Main.immediate) {
             val chapter = curTextChapter ?: return@withContext null
             if (durPageIndex < chapter.lastIndex) {
-                setPageIndex(durPageIndex + 1)
+                setSpeechPageIndex(durPageIndex + 1)
                 return@withContext Int.MIN_VALUE
             }
             (durChapterIndex + 1).takeIf { it < chapterSize }
@@ -1079,7 +1088,7 @@ open class PageViewController @Inject constructor(
         val previousChapterIndex = withContext(Dispatchers.Main.immediate) {
             val chapter = curTextChapter ?: return@withContext null
             if (durPageIndex > 0) {
-                setPageIndex(durPageIndex - 1)
+                setSpeechPageIndex(durPageIndex - 1)
                 return@withContext Int.MIN_VALUE
             }
             (durChapterIndex - 1).takeIf { it >= 0 }
@@ -1141,7 +1150,7 @@ open class PageViewController @Inject constructor(
         }
         durChapterIndex = chapter.position
         curTextChapter = chapter
-        setPageIndex(pageIndex)
+        setSpeechPageIndex(pageIndex)
         callBack?.upContent(resetPageOffset = false)
         callBack?.upView()
         return speechPageSnapshot()

@@ -14,10 +14,14 @@ import com.air5005.pagenest.speech.model.currentSegment
 import com.air5005.pagenest.speech.progress.SpeechProgressCommitter
 import com.wxn.base.bean.Locator
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -275,23 +279,145 @@ class SpeechSessionTest {
         assertTrue(runCatching { fixture.session.next() }.isFailure)
     }
 
+    @Test
+    fun `a session whose owner is already cancelled rejects commands without hanging`() = runTest {
+        val owner = Job().apply { cancel() }
+        val fixture = fixture(
+            segment("never-started"),
+            ownerScope = CoroutineScope(owner + StandardTestDispatcher(testScheduler)),
+        )
+
+        val command = backgroundScope.async {
+            runCatching { fixture.session.start(fixture.source, options()) }
+        }
+        runCurrent()
+
+        assertTrue("pre-cancelled owner left an admitted acknowledgement pending", command.isCompleted)
+        assertTrue(command.await().isFailure)
+        fixture.session.closeAndJoin()
+    }
+
+    @Test
+    fun `owner cancellation drains a blocked command and every queued acknowledgement`() = runTest {
+        val owner = Job()
+        val gate = CompletableDeferred<Unit>()
+        val fixture = fixture(
+            segment("a"),
+            segment("b"),
+            nextGate = gate,
+            ownerScope = CoroutineScope(owner + StandardTestDispatcher(testScheduler)),
+        )
+        fixture.session.start(fixture.source, options())
+        runCurrent()
+        val blocked = backgroundScope.async { runCatching { fixture.session.next() } }
+        val queued = backgroundScope.async { runCatching { fixture.session.previous() } }
+        runCurrent()
+
+        owner.cancel()
+        runCurrent()
+
+        assertTrue("blocked command acknowledgement was not terminated", blocked.isCompleted)
+        assertTrue("queued command acknowledgement was not drained", queued.isCompleted)
+        assertTrue(blocked.await().isFailure)
+        assertTrue(queued.await().isFailure)
+        fixture.session.closeAndJoin()
+        assertEquals(SpeechPlaybackState.Idle, fixture.session.state.value)
+        assertEquals("clear", fixture.highlight.events.last())
+        assertEquals(1, fixture.source.closeCalls)
+    }
+
+    @Test
+    fun `close cancels a gated next and terminates its admitted acknowledgement`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val fixture = fixture(segment("a"), segment("b"), nextGate = gate)
+        fixture.session.start(fixture.source, options())
+        runCurrent()
+        val command = backgroundScope.async { runCatching { fixture.session.next() } }
+        runCurrent()
+
+        val closing = backgroundScope.async { fixture.session.closeAndJoin() }
+        runCurrent()
+
+        assertTrue("closeAndJoin remained queued behind next", closing.isCompleted)
+        assertTrue("gated next acknowledgement remained pending", command.isCompleted)
+        assertTrue(command.await().isFailure)
+        assertEquals(1, fixture.source.closeCalls)
+        assertEquals("clear", fixture.highlight.events.last())
+    }
+
+    @Test
+    fun `close cancels a gated seek and terminates its admitted acknowledgement`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val fixture = fixture(segment("a"), segment("target"), seekGate = gate)
+        fixture.session.start(fixture.source, options())
+        runCurrent()
+        val command = backgroundScope.async {
+            runCatching { fixture.session.seek(segment("target").position) }
+        }
+        runCurrent()
+
+        val closing = backgroundScope.async { fixture.session.closeAndJoin() }
+        runCurrent()
+
+        assertTrue("closeAndJoin remained queued behind seek", closing.isCompleted)
+        assertTrue("gated seek acknowledgement remained pending", command.isCompleted)
+        assertTrue(command.await().isFailure)
+    }
+
+    @Test
+    fun `a progress exception closes the session and later commands fail instead of hanging`() = runTest {
+        val fixture = fixture(segment("a"), progressFailure = IllegalStateException("disk failed"))
+        fixture.session.start(fixture.source, options())
+        runCurrent()
+
+        fixture.engine.completeLatest(SpeechEngineResult.Completed)
+        runCurrent()
+        val later = backgroundScope.async { runCatching { fixture.session.stop() } }
+        runCurrent()
+
+        assertTrue("actor failure left admission open", later.isCompleted)
+        assertTrue(later.await().isFailure)
+        fixture.session.closeAndJoin()
+        assertEquals(SpeechPlaybackState.Idle, fixture.session.state.value)
+        assertEquals(1, fixture.source.closeCalls)
+        assertEquals("clear", fixture.highlight.events.last())
+    }
+
+    @Test
+    fun `a synchronous source exception fails only that command and actor remains usable`() = runTest {
+        val fixture = fixture(segment("a"), nextFailure = IllegalStateException("parse failed"))
+        fixture.session.start(fixture.source, options())
+        runCurrent()
+
+        assertTrue(runCatching { fixture.session.next() }.isFailure)
+        fixture.session.pause()
+        fixture.session.stop()
+
+        assertEquals(SpeechPlaybackState.Idle, fixture.session.state.value)
+        fixture.session.closeAndJoin()
+    }
+
     private fun fixture(
         vararg segments: SpeechSegment,
         completeOnStop: Boolean = true,
         clock: FakeSpeechClock = FakeSpeechClock(),
         events: MutableList<String> = mutableListOf(),
         nextGate: CompletableDeferred<Unit>? = null,
+        seekGate: CompletableDeferred<Unit>? = null,
+        nextFailure: Throwable? = null,
+        progressFailure: Throwable? = null,
+        ownerScope: CoroutineScope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined),
     ): Fixture {
-        val source = FakeSource(segments.toList(), nextGate)
+        val source = FakeSource(segments.toList(), nextGate, seekGate, nextFailure)
         val engine = FakeEngine(completeOnStop, events)
-        val progress = RecordingProgress(events)
+        val progress = RecordingProgress(events, progressFailure)
         val highlight = RecordingHighlight(events)
         val session = SpeechSession(
             engine = engine,
             progressCommitter = progress,
             highlightSink = highlight,
             clock = clock,
-            ownerScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined),
+            ownerScope = ownerScope,
         )
         return Fixture(session, source, engine, progress, highlight)
     }
@@ -307,6 +433,8 @@ class SpeechSessionTest {
     private class FakeSource(
         private val segments: List<SpeechSegment>,
         private val nextGate: CompletableDeferred<Unit>?,
+        private val seekGate: CompletableDeferred<Unit>?,
+        private val nextFailure: Throwable?,
     ) : SpeechContentSource {
         private var index = 0
         var closeCalls = 0
@@ -314,6 +442,7 @@ class SpeechSessionTest {
         override suspend fun current(): SpeechSegment? = segments.getOrNull(index)
         override suspend fun next(): SpeechSegment? {
             nextGate?.await()
+            nextFailure?.let { throw it }
             return segments.getOrNull(++index)
         }
         override suspend fun previous(): SpeechSegment? = segments.getOrNull((index - 1).coerceAtLeast(0)).also {
@@ -321,6 +450,7 @@ class SpeechSessionTest {
         }
 
         override suspend fun seek(position: SpeechPosition): SpeechSegment? {
+            seekGate?.await()
             val target = segments.indexOfFirst { it.position == position }
             if (target < 0) return null
             index = target
@@ -374,9 +504,13 @@ class SpeechSessionTest {
         }
     }
 
-    private class RecordingProgress(private val events: MutableList<String>) : SpeechProgressCommitter {
+    private class RecordingProgress(
+        private val events: MutableList<String>,
+        private val failure: Throwable?,
+    ) : SpeechProgressCommitter {
         val committed = mutableListOf<SpeechSegment>()
         override suspend fun commitCompleted(segment: SpeechSegment) {
+            failure?.let { throw it }
             committed += segment
             events += "commit:${segment.id}"
         }

@@ -162,8 +162,23 @@ interface BookDao : BookImportDataSource {
     @Query("SELECT locator FROM books WHERE id = :bookId")
     fun getReadingProgress(bookId: Long): String
 
-    @Query("UPDATE books SET locator = :locator, progression = :progression WHERE id = :bookId")
-    fun setReadingProgress(bookId: Long, locator: String, progression: Float)
+    @Query(
+        """
+        UPDATE books
+        SET locator = :locator,
+            progression = :progression,
+            scrollIndex = COALESCE(:scrollIndex, scrollIndex),
+            scrollOffset = COALESCE(:scrollOffset, scrollOffset)
+        WHERE id = :bookId
+        """,
+    )
+    fun setReadingProgress(
+        bookId: Long,
+        locator: String,
+        progression: Float,
+        scrollIndex: Int?,
+        scrollOffset: Int?,
+    )
 
     @Query("UPDATE books SET readingStatus = :status WHERE id = :bookId")
     suspend fun setReadingStatus(bookId: Long, status: ReadingStatus)

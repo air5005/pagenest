@@ -16,6 +16,7 @@ data class SpeechSegment(
     val partIndex: Int,
     val text: String,
     val locator: Locator,
+    val completesPage: Boolean = true,
 )
 
 enum class SpeechMode { OFFLINE, ONLINE, AUTO }

@@ -14,6 +14,7 @@ class RoomSpeechProgressCommitter @Inject constructor(
     override suspend fun commitCompleted(segment: SpeechSegment) {
         val book = getBookByIdUseCase(segment.position.bookId) ?: return
         if (book.fileType.equals(PDF_FILE_TYPE, ignoreCase = true)) {
+            if (!segment.completesPage) return
             val completedPage = segment.position.pageIndex ?: return
             updateBookUseCase(
                 book.copy(
@@ -22,7 +23,12 @@ class RoomSpeechProgressCommitter @Inject constructor(
                 ),
             )
         } else {
-            setReadingProgressUseCase(segment.position.bookId, segment.locator.toJsonString())
+            setReadingProgressUseCase(
+                bookId = segment.position.bookId,
+                locator = segment.locator.toJsonString(),
+                scrollIndex = segment.position.chapterIndex,
+                scrollOffset = segment.position.pageIndex,
+            )
         }
     }
 

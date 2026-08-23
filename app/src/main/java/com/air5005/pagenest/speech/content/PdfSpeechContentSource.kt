@@ -84,7 +84,7 @@ class PdfSpeechContentSource(
                 repeat(document.pageCount) { pageIndex ->
                     val text = document.pageText(pageIndex)
                     if (text.isNotEmpty()) {
-                        extractedSegments += segmenter.fromParagraph(
+                        val pageSegments = segmenter.fromParagraph(
                             position = SpeechPosition(
                                 bookId = bookId,
                                 chapterIndex = PDF_CHAPTER_INDEX,
@@ -95,6 +95,9 @@ class PdfSpeechContentSource(
                             text = text,
                             progression = pageIndex.toDouble() / document.pageCount.coerceAtLeast(1),
                         )
+                        extractedSegments += pageSegments.mapIndexed { index, segment ->
+                            segment.copy(completesPage = index == pageSegments.lastIndex)
+                        }
                     }
                 }
                 segments = extractedSegments
