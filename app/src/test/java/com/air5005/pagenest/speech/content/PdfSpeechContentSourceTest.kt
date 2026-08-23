@@ -1,7 +1,12 @@
 package com.air5005.pagenest.speech.content
 
+import android.content.ContentProvider
+import android.content.ContentValues
 import android.content.Context
+import android.content.pm.ProviderInfo
+import android.database.Cursor
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import androidx.test.core.app.ApplicationProvider
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
@@ -10,6 +15,8 @@ import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import java.io.Closeable
 import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -21,6 +28,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -29,6 +37,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowContentResolver
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -137,6 +146,62 @@ class PdfSpeechContentSourceTest {
     }
 
     @Test
+    fun `resolver descriptor remains owned until normal document close`() = runTest {
+        val (uri, provider) = resolverUri(createPdf("Resolver text"))
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        val speechDocument = PdfSpeechDocument.open(context, uri)
+
+        assertTrue(provider.lastDescriptor!!.fileDescriptor.valid())
+        assertEquals("Resolver text", speechDocument.pageText(0))
+        speechDocument.close()
+        assertFalse(provider.lastDescriptor!!.fileDescriptor.valid())
+    }
+
+    @Test
+    fun `resolver descriptor closes when PDF loading fails`() {
+        val invalid = temporaryFolder.newFile("invalid.pdf").apply { writeText("not a PDF") }
+        val (uri, provider) = resolverUri(invalid)
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        assertThrows(IOException::class.java) {
+            PdfSpeechDocument.open(context, uri)
+        }
+
+        assertFalse(provider.lastDescriptor!!.fileDescriptor.valid())
+    }
+
+    @Test
+    fun `resolver descriptor closes when real URI extraction is cancelled`() = runTest {
+        val (uri, provider) = resolverUri(createPdf("Resolver cancellation"))
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val speechDocument = PdfSpeechDocument.open(
+            context = context,
+            uri = uri,
+            dispatcher = Dispatchers.IO,
+            extractor = PdfPageTextExtractor { _, _ ->
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+                "late text"
+            },
+        )
+        val source = PdfSpeechContentSource(17, speechDocument, SpeechSegmenter())
+        val extraction = async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+            source.availability()
+        }
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+
+        extraction.cancel()
+        release.countDown()
+        extraction.cancelAndJoin()
+
+        assertTrue(speechDocument.isClosed)
+        assertFalse(provider.lastDescriptor!!.fileDescriptor.valid())
+    }
+
+    @Test
     fun `seek and previous use PDF page locations`() = runTest {
         val source = PdfSpeechContentSource(
             18,
@@ -187,6 +252,17 @@ class PdfSpeechContentSourceTest {
         return file
     }
 
+    private fun resolverUri(file: File): Pair<Uri, TrackingPdfProvider> {
+        val authority = "com.air5005.pagenest.speech.${System.nanoTime()}"
+        val provider = TrackingPdfProvider().apply { servedFile = file }
+        provider.attachInfo(
+            ApplicationProvider.getApplicationContext(),
+            ProviderInfo().apply { this.authority = authority },
+        )
+        ShadowContentResolver.registerProviderInternal(authority, provider)
+        return Uri.parse("content://$authority/book.pdf") to provider
+    }
+
     private class RecordingCloseable : Closeable {
         val closed = AtomicBoolean(false)
         override fun close() {
@@ -194,4 +270,36 @@ class PdfSpeechContentSourceTest {
         }
     }
 
+}
+
+class TrackingPdfProvider : ContentProvider() {
+    lateinit var servedFile: File
+    var lastDescriptor: ParcelFileDescriptor? = null
+
+    override fun onCreate(): Boolean = true
+
+    override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+        if (!::servedFile.isInitialized) throw FileNotFoundException(uri.toString())
+        return ParcelFileDescriptor.open(servedFile, ParcelFileDescriptor.MODE_READ_ONLY).also {
+            lastDescriptor = it
+        }
+    }
+
+    override fun query(
+        uri: Uri,
+        projection: Array<out String>?,
+        selection: String?,
+        selectionArgs: Array<out String>?,
+        sortOrder: String?,
+    ): Cursor? = null
+
+    override fun getType(uri: Uri): String = "application/pdf"
+    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
+    override fun update(
+        uri: Uri,
+        values: ContentValues?,
+        selection: String?,
+        selectionArgs: Array<out String>?,
+    ): Int = 0
 }

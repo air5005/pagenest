@@ -565,10 +565,15 @@ open class PageViewController @Inject constructor(
         return targetMark
     }
 
-    private suspend fun loadContent(chapterIndex: Int, upContent: Boolean = true, resetPageOffset: Boolean) {
+    private suspend fun loadContent(
+        chapterIndex: Int,
+        upContent: Boolean = true,
+        resetPageOffset: Boolean,
+        applyToReaderState: Boolean = true,
+    ): TextChapter? {
 //        Logger.i("PageViewController::loadContent:index=$index,upContent=$upContent,resetPageOffset=$resetPageOffset,bookid=${book?.id},bookname=${book?.title}")
-        if (chapterIndex < 0) return
-        val curBook = book ?: return
+        if (chapterIndex < 0) return null
+        val curBook = book ?: return null
         val bookId = curBook.id
         Logger.i("PageViewController::loadContent:index=$chapterIndex,bookId=$bookId")
 
@@ -576,11 +581,11 @@ open class PageViewController @Inject constructor(
             getChapterByIdUserCase(bookId, chapterIndex).first()
         } catch (ex: NoSuchElementException) {
             Logger.e("PageViewController::${ex.message}, failed")
-            if (isInitFinish) {
+            if (applyToReaderState && isInitFinish) {
                 onInitChapterLoadListener?.invoke(false)
                 onInitChapterLoadListener = null
             }
-            return
+            return null
         }
         BookHelper.loadChapterContent(context, curBook, chapter, textParser).let { contents ->
             Logger.i("PageViewController::loadContent:index=$chapterIndex,chapter.index=${chapter.chapterIndex} contents.size=${contents.size}")
@@ -653,6 +658,8 @@ open class PageViewController @Inject constructor(
                 page.bookmarkId = getPageBookmark(page, textChapter, chapterBookmarks)?.id ?: -1
             }
 
+            if (!applyToReaderState) return textChapter
+
             var needOnPageChange = (targetProgress < 0.0)
 
             when (chapter.chapterIndex) {
@@ -704,6 +711,7 @@ open class PageViewController @Inject constructor(
                 Logger.e("PageViewController::loadContent success onPageChange::${durChapterIndex}")
                 clickListener?.onPageChange()
             }
+            return textChapter
         }
     }
 
@@ -1032,29 +1040,110 @@ open class PageViewController @Inject constructor(
         )
     }
 
-    override suspend fun currentSpeechPage(): SpeechPageSnapshot? =
-        withContext(Dispatchers.Main.immediate) { speechPageSnapshot() }
-
-    override suspend fun nextSpeechPage(): SpeechPageSnapshot? =
-        withContext(Dispatchers.Main.immediate) {
-            val moved = pageFactory?.moveToNext(upContent = false) ?: false
-            if (moved) speechPageSnapshot() else null
+    override suspend fun currentSpeechPage(): SpeechPageSnapshot? {
+        val current = withContext(Dispatchers.Main.immediate) {
+            curTextChapter?.let { speechPageSnapshot() }
         }
+        if (current != null) return current
 
-    override suspend fun previousSpeechPage(): SpeechPageSnapshot? =
-        withContext(Dispatchers.Main.immediate) {
-            val moved = pageFactory?.moveToPrev(upContent = false) ?: false
-            if (moved) speechPageSnapshot() else null
+        val chapter = loadSpeechChapter(durChapterIndex) ?: return null
+        if (chapter.pages.isEmpty()) return null
+        return withContext(Dispatchers.Main.immediate) {
+            activateSpeechChapter(chapter, durPageIndex.coerceIn(chapter.pages.indices))
         }
+    }
 
-    override suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? =
-        withContext(Dispatchers.Main.immediate) {
-            if (chapterIndex != durChapterIndex) return@withContext null
+    override suspend fun nextSpeechPage(): SpeechPageSnapshot? {
+        val nextChapterIndex = withContext(Dispatchers.Main.immediate) {
             val chapter = curTextChapter ?: return@withContext null
-            if (pageIndex !in chapter.pages.indices) return@withContext null
-            setPageIndex(pageIndex)
-            speechPageSnapshot()
+            if (durPageIndex < chapter.lastIndex) {
+                setPageIndex(durPageIndex + 1)
+                return@withContext Int.MIN_VALUE
+            }
+            (durChapterIndex + 1).takeIf { it < chapterSize }
+        } ?: return null
+        if (nextChapterIndex == Int.MIN_VALUE) {
+            return withContext(Dispatchers.Main.immediate) { speechPageSnapshot() }
         }
+
+        val chapter = loadSpeechChapter(nextChapterIndex) ?: return null
+        if (chapter.pages.isEmpty()) return null
+        return withContext(Dispatchers.Main.immediate) {
+            activateSpeechChapter(chapter, 0)
+        }
+    }
+
+    override suspend fun previousSpeechPage(): SpeechPageSnapshot? {
+        val previousChapterIndex = withContext(Dispatchers.Main.immediate) {
+            val chapter = curTextChapter ?: return@withContext null
+            if (durPageIndex > 0) {
+                setPageIndex(durPageIndex - 1)
+                return@withContext Int.MIN_VALUE
+            }
+            (durChapterIndex - 1).takeIf { it >= 0 }
+        } ?: return null
+        if (previousChapterIndex == Int.MIN_VALUE) {
+            return withContext(Dispatchers.Main.immediate) { speechPageSnapshot() }
+        }
+
+        val chapter = loadSpeechChapter(previousChapterIndex) ?: return null
+        if (chapter.pages.isEmpty()) return null
+        return withContext(Dispatchers.Main.immediate) {
+            activateSpeechChapter(chapter, chapter.lastIndex)
+        }
+    }
+
+    override suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? {
+        if (chapterIndex !in 0 until chapterSize || pageIndex < 0) return null
+        val chapter = loadSpeechChapter(chapterIndex) ?: return null
+        if (pageIndex !in chapter.pages.indices) return null
+        return withContext(Dispatchers.Main.immediate) {
+            activateSpeechChapter(chapter, pageIndex)
+        }
+    }
+
+    private suspend fun loadSpeechChapter(chapterIndex: Int): TextChapter? {
+        val cached = withContext(Dispatchers.Main.immediate) {
+            listOf(curTextChapter, prevTextChapter, nextTextChapter)
+                .firstOrNull { it?.position == chapterIndex }
+        }
+        if (cached != null) return cached
+        return withContext(Dispatchers.IO) {
+            loadContent(
+                chapterIndex = chapterIndex,
+                upContent = false,
+                resetPageOffset = false,
+                applyToReaderState = false,
+            )
+        }
+    }
+
+    @MainThread
+    private fun activateSpeechChapter(chapter: TextChapter, pageIndex: Int): SpeechPageSnapshot {
+        val oldChapter = curTextChapter
+        when {
+            chapter.position == durChapterIndex + 1 -> {
+                prevTextChapter = oldChapter
+                nextTextChapter = null
+            }
+
+            chapter.position == durChapterIndex - 1 -> {
+                nextTextChapter = oldChapter
+                prevTextChapter = null
+            }
+
+            chapter.position != durChapterIndex -> {
+                prevTextChapter = null
+                nextTextChapter = null
+            }
+        }
+        durChapterIndex = chapter.position
+        curTextChapter = chapter
+        setPageIndex(pageIndex)
+        callBack?.upContent(resetPageOffset = false)
+        callBack?.upView()
+        return speechPageSnapshot()
+    }
 
     override fun close() = Unit
 

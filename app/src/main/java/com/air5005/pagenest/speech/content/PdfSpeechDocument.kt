@@ -25,12 +25,7 @@ class PdfSpeechDocument internal constructor(
     private val document: PDDocument,
     private val ownedResource: Closeable? = null,
     private val dispatcher: CoroutineContext = Dispatchers.IO,
-    private val extractor: PdfPageTextExtractor = PdfPageTextExtractor { value, pageIndex ->
-        PDFTextStripper().apply {
-            startPage = pageIndex + 1
-            endPage = pageIndex + 1
-        }.getText(value)
-    },
+    private val extractor: PdfPageTextExtractor = DEFAULT_EXTRACTOR,
 ) : Closeable {
     constructor(document: PDDocument) : this(document, null)
 
@@ -89,18 +84,40 @@ class PdfSpeechDocument internal constructor(
 
     companion object {
         private val WHITESPACE = Regex("\\s+")
+        private val DEFAULT_EXTRACTOR = PdfPageTextExtractor { value, pageIndex ->
+            PDFTextStripper().apply {
+                startPage = pageIndex + 1
+                endPage = pageIndex + 1
+            }.getText(value)
+        }
 
-        fun open(context: Context, uri: Uri): PdfSpeechDocument {
+        fun open(context: Context, uri: Uri): PdfSpeechDocument = open(
+            context = context,
+            uri = uri,
+            dispatcher = Dispatchers.IO,
+            extractor = DEFAULT_EXTRACTOR,
+        )
+
+        internal fun open(
+            context: Context,
+            uri: Uri,
+            dispatcher: CoroutineContext,
+            extractor: PdfPageTextExtractor,
+        ): PdfSpeechDocument {
             PDFBoxResourceLoader.init(context.applicationContext)
             if (uri.scheme == null || uri.scheme.equals("file", ignoreCase = true)) {
-                return PdfSpeechDocument(PDDocument.load(File(URI(uri.toString()))))
+                return PdfSpeechDocument(
+                    document = PDDocument.load(File(URI(uri.toString()))),
+                    dispatcher = dispatcher,
+                    extractor = extractor,
+                )
             }
 
             val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
                 ?: throw IOException("Unable to open PDF URI: $uri")
             val input = ParcelFileDescriptor.AutoCloseInputStream(descriptor)
             return try {
-                PdfSpeechDocument(PDDocument.load(input), input)
+                PdfSpeechDocument(PDDocument.load(input), input, dispatcher, extractor)
             } catch (failure: Throwable) {
                 try {
                     input.close()

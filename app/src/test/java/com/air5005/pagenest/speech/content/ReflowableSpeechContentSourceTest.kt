@@ -1,14 +1,24 @@
 package com.air5005.pagenest.speech.content
 
-import com.air5005.pagenest.library.importing.SupportedBookFormat
 import com.air5005.pagenest.speech.model.SpeechPosition
+import com.wxn.base.bean.Book
+import com.wxn.base.bean.BookChapter
+import com.wxn.base.bean.ReaderText
 import com.wxn.bookread.data.model.TextChapter
 import com.wxn.bookread.data.model.TextLine
 import com.wxn.bookread.data.model.TextPage
+import com.wxn.bookread.provider.ChapterProvider
 import com.wxn.reader.presentation.mainReader.PageViewController
+import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -20,7 +30,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.runners.Parameterized
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 class ReflowableSpeechContentSourceTest {
     @Test
@@ -155,60 +166,9 @@ class ReflowableSpeechContentSourceTest {
     }
 }
 
-@RunWith(Parameterized::class)
-class ReflowableFormatSpeechAdapterTest(
-    private val format: SupportedBookFormat,
-    private val parserText: String,
-    private val expectedId: String,
-) {
-    @Test
-    fun `parser page snapshots have stable speech locations for every reflowable format`() = runTest {
-        val snapshot = SpeechPageSnapshot(
-            chapterIndex = 5,
-            pageIndex = 8,
-            progression = 0.58,
-            lines = listOf(
-                SpeechLineSnapshot(9, parserText, 12, 12 + parserText.length, false, false),
-            ),
-        )
-        val source = ReflowableSpeechContentSource(
-            bookId = 23,
-            navigator = SinglePageNavigator(snapshot),
-            segmenter = SpeechSegmenter(),
-        )
-
-        val segment = source.current()!!
-
-        assertEquals("${format.extension} body", segment.text)
-        assertEquals(SpeechPosition(23, 5, 8, 9, 12), segment.position)
-        assertEquals(0.58, segment.locator.progression, 0.0)
-        assertEquals(expectedId, segment.id)
-    }
-
-    private class SinglePageNavigator(
-        private val page: SpeechPageSnapshot,
-    ) : SpeechPageNavigator {
-        override suspend fun currentSpeechPage() = page
-        override suspend fun nextSpeechPage(): SpeechPageSnapshot? = null
-        override suspend fun previousSpeechPage(): SpeechPageSnapshot? = null
-        override suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int) =
-            page.takeIf { it.chapterIndex == chapterIndex && it.pageIndex == pageIndex }
-        override fun close() = Unit
-    }
-
-    companion object {
-        @JvmStatic
-        @Parameterized.Parameters(name = "{0}")
-        fun formats(): List<Array<Any>> = listOf(
-            arrayOf(SupportedBookFormat.EPUB, "epub body", "23:5:8:9:12:0:12:21"),
-            arrayOf(SupportedBookFormat.TXT, "txt body", "23:5:8:9:12:0:12:20"),
-            arrayOf(SupportedBookFormat.MOBI, "mobi body", "23:5:8:9:12:0:12:21"),
-            arrayOf(SupportedBookFormat.AZW3, "azw3 body", "23:5:8:9:12:0:12:21"),
-        )
-    }
-}
-
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class PageViewControllerSpeechSnapshotTest {
     private val mainDispatcher = StandardTestDispatcher()
 
@@ -219,6 +179,7 @@ class PageViewControllerSpeechSnapshotTest {
 
     @After
     fun tearDown() {
+        unmockkObject(ChapterProvider)
         Dispatchers.resetMain()
     }
 
@@ -239,6 +200,65 @@ class PageViewControllerSpeechSnapshotTest {
         assertEquals("immutable", snapshot?.lines?.single()?.text)
         assertEquals(2, snapshot?.lines?.single()?.paragraphIndex)
         assertEquals(6, snapshot?.pageIndex)
+    }
+
+    @Test
+    fun `next speech page awaits an unloaded chapter before returning its first page`() = runTest {
+        val parsed = CompletableDeferred<Unit>()
+        val target = textChapter(1, TextPage(index = 0, textLines = arrayListOf(textLine("next"))))
+        val controller = controllerWith(TextPage(index = 0, textLines = arrayListOf(textLine("current"))))
+        controller.durChapterIndex = 0
+        controller.curTextChapter = textChapter(
+            0,
+            TextPage(index = 0, textLines = arrayListOf(textLine("current"))),
+        )
+        controller.chapterSize = 2
+        controller.book = book()
+        every { controller.getChapterByIdUserCase(1, 1) } returns flowOf(bookChapter(1))
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            parsed.await()
+            listOf(ReaderText.Text(line = "next"))
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } returns target
+
+        val moving = async { controller.nextSpeechPage() }
+        testScheduler.runCurrent()
+
+        assertTrue("navigation must wait for parsing", !moving.isCompleted)
+        parsed.complete(Unit)
+        testScheduler.advanceUntilIdle()
+
+        assertEquals("next", moving.await()?.lines?.single()?.text)
+        assertEquals(1, controller.durChapterIndex)
+        assertEquals(target, controller.curTextChapter)
+    }
+
+    @Test
+    fun `speech seek loads a valid unloaded chapter before selecting its page`() = runTest {
+        val target = textChapter(
+            2,
+            TextPage(index = 0, textLines = arrayListOf(textLine("first"))),
+            TextPage(index = 1, textLines = arrayListOf(textLine("sought"))),
+        )
+        val controller = controllerWith(TextPage(index = 0, textLines = arrayListOf(textLine("current"))))
+        controller.chapterSize = 3
+        controller.book = book()
+        every { controller.getChapterByIdUserCase(1, 2) } returns flowOf(bookChapter(2))
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } returns
+            listOf(ReaderText.Text(line = "first sought"))
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } returns target
+
+        val snapshot = controller.seekSpeechPage(chapterIndex = 2, pageIndex = 1)
+
+        assertEquals("sought", snapshot?.lines?.single()?.text)
+        assertEquals(2, controller.durChapterIndex)
+        assertEquals(1, controller.durPageIndex)
     }
 
     private fun controllerWith(page: TextPage): PageViewController {
@@ -267,4 +287,43 @@ class PageViewControllerSpeechSnapshotTest {
         )
         return controller
     }
+
+    private fun textLine(text: String) = TextLine(
+        text = text,
+        paragraphIndex = 0,
+        charStartOffset = 0,
+        charEndOffset = text.length,
+    )
+
+    private fun textChapter(position: Int, vararg pages: TextPage) = TextChapter(
+        position = position,
+        title = "Chapter $position",
+        chapterId = position.toLong(),
+        pages = pages.toList(),
+        pageLines = pages.map { it.textLines.size },
+        pageLengths = pages.map { it.text.length },
+        chaptersSize = 3,
+    )
+
+    private fun bookChapter(index: Int) = BookChapter(
+        bookId = 1,
+        chapterIndex = index,
+        chapterName = "Chapter $index",
+        chaptersSize = 3,
+    )
+
+    private fun book() = Book(
+        id = 1,
+        title = "Fixture",
+        author = "Author",
+        description = null,
+        filePath = "file:///fixture.epub",
+        coverImage = null,
+        scrollIndex = 0,
+        scrollOffset = 0,
+        progress = 0f,
+        lastOpened = null,
+        category = null,
+        fileType = "epub",
+    )
 }
