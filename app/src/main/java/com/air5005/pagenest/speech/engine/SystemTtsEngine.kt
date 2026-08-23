@@ -11,19 +11,28 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
 import kotlin.coroutines.resume
+import kotlin.concurrent.withLock
 
 class SystemTtsEngine internal constructor(
     factory: PlatformTextToSpeechFactory,
     ownerScope: CoroutineScope,
+    private val admissionLock: ReentrantLock = ReentrantLock(true),
 ) : SpeechEngine {
     override val id: String = "system"
 
     private val commands = Channel<Command>(Channel.UNLIMITED)
     private val closeRequested = AtomicBoolean(false)
+    private val closeFinished = CountDownLatch(1)
     private val invocationNonce = AtomicLong(0)
+    private val ownerState = OwnerState()
+
+    @Volatile
+    private var ownerThread: Thread? = null
     private val initializationJob: Job = ownerScope.launch {
         val platform = try {
             factory.create()
@@ -32,23 +41,24 @@ class SystemTtsEngine internal constructor(
         } catch (_: Throwable) {
             null
         }
-        commands.send(Command.Initialized(platform))
+        if (!commands.trySend(Command.Initialized(platform)).isSuccess && platform != null) {
+            releaseOrphanPlatform(platform)
+        }
     }
     private val ownerJob: Job = ownerScope.launch {
         runOwnerLoop()
     }
 
     override suspend fun voices(localeTag: String): List<SpeechVoice> {
-        if (closeRequested.get()) return emptyList()
         val reply = CompletableDeferred<List<SpeechVoice>>()
-        if (!commands.trySend(Command.Voices(localeTag, reply)).isSuccess) return emptyList()
+        val admitted = admissionLock.withLock {
+            !closeRequested.get() && commands.trySend(Command.Voices(localeTag, reply)).isSuccess
+        }
+        if (!admitted) return emptyList()
         return reply.await()
     }
 
     override suspend fun speak(request: SpeechRequest): SpeechEngineResult {
-        if (closeRequested.get()) {
-            return SpeechEngineResult.Failed(SpeechError.SystemTtsUnavailable)
-        }
         return suspendCancellableCoroutine { continuation ->
             val call = SpeechCall(
                 request = request,
@@ -65,63 +75,61 @@ class SystemTtsEngine internal constructor(
                 call.cancelByCaller()
                 commands.trySend(Command.CancelCaller(call))
             }
-            if (!commands.trySend(Command.Speak(call)).isSuccess) {
-                call.complete(initializationFailure())
+            val admitted = admissionLock.withLock {
+                !closeRequested.get() && commands.trySend(Command.Speak(call)).isSuccess
+            }
+            if (!admitted) {
+                call.complete(
+                    if (closeRequested.get()) {
+                        SpeechEngineResult.Failed(SpeechError.SystemTtsUnavailable)
+                    } else {
+                        initializationFailure()
+                    },
+                )
             }
         }
     }
 
     override suspend fun stop() {
-        if (closeRequested.get()) return
         val reply = CompletableDeferred<Unit>()
-        if (commands.trySend(Command.Stop(reply)).isSuccess) reply.await()
+        val admitted = admissionLock.withLock {
+            !closeRequested.get() && commands.trySend(Command.Stop(reply)).isSuccess
+        }
+        if (admitted) reply.await()
     }
 
     override fun close() {
-        if (!closeRequested.compareAndSet(false, true)) return
-        commands.trySend(Command.Close)
+        admissionLock.withLock {
+            if (closeFinished.count > 0L && Thread.currentThread() === ownerThread) {
+                closeRequested.set(true)
+                finishCloseOnOwner()
+            } else if (closeRequested.compareAndSet(false, true)) {
+                commands.trySend(Command.Close)
+            }
+        }
+        if (closeFinished.count > 0L && Thread.currentThread() !== ownerThread) {
+            closeFinished.await()
+        }
     }
 
     private suspend fun runOwnerLoop() {
-        var platform: PlatformTextToSpeech? = null
-        var initializationFinished = false
-        var pendingSpeech: SpeechCall? = null
-        var activeSpeech: SpeechCall? = null
-        val pendingVoiceQueries = mutableListOf<Command.Voices>()
-        var closed = false
+        ownerThread = Thread.currentThread()
 
         try {
-            while (!closed) {
-                when (val command = commands.receive()) {
+            while (!ownerState.closed) {
+                val command = commands.receiveCatching().getOrNull() ?: break
+                when (command) {
                     is Command.Initialized -> {
-                        initializationFinished = true
-                        platform = command.platform
-                        val initialized = platform
-                        if (initialized == null) {
-                            pendingSpeech?.complete(initializationFailure())
-                            pendingSpeech = null
-                            pendingVoiceQueries.forEach { it.reply.complete(emptyList()) }
-                            pendingVoiceQueries.clear()
-                        } else {
-                            initialized.setProgressListener(progressListener)
-                            pendingVoiceQueries.forEach { query ->
-                                query.reply.complete(offlineVoices(initialized, query.localeTag))
-                            }
-                            pendingVoiceQueries.clear()
-                            pendingSpeech?.let { call ->
-                                pendingSpeech = null
-                                activeSpeech = start(call, initialized)
-                            }
-                        }
+                        initializeOnOwner(command.platform)
                     }
 
                     is Command.Voices -> {
-                        val initialized = platform
+                        val initialized = ownerState.platform
                         when {
                             initialized != null ->
-                                command.reply.complete(offlineVoices(initialized, command.localeTag))
-                            initializationFinished -> command.reply.complete(emptyList())
-                            else -> pendingVoiceQueries += command
+                                command.reply.complete(safeOfflineVoices(initialized, command.localeTag))
+                            ownerState.initializationFinished -> command.reply.complete(emptyList())
+                            else -> ownerState.pendingVoiceQueries += command
                         }
                     }
 
@@ -130,71 +138,122 @@ class SystemTtsEngine internal constructor(
                             command.call.markTerminal()
                             continue
                         }
-                        pendingSpeech?.complete(SpeechEngineResult.Cancelled)
-                        pendingSpeech = null
-                        activeSpeech?.let { active ->
+                        ownerState.pendingSpeech?.complete(SpeechEngineResult.Cancelled)
+                        ownerState.pendingSpeech = null
+                        ownerState.activeSpeech?.let { active ->
                             active.complete(SpeechEngineResult.Cancelled)
-                            platform?.stop()
+                            safeStop(ownerState.platform)
                         }
-                        activeSpeech = null
+                        ownerState.activeSpeech = null
 
-                        val initialized = platform
+                        val initialized = ownerState.platform
                         when {
-                            initialized != null -> activeSpeech = start(command.call, initialized)
-                            initializationFinished -> command.call.complete(initializationFailure())
-                            else -> pendingSpeech = command.call
+                            initialized != null -> ownerState.activeSpeech = start(command.call, initialized)
+                            ownerState.initializationFinished -> command.call.complete(initializationFailure())
+                            else -> ownerState.pendingSpeech = command.call
                         }
                     }
 
                     is Command.CancelCaller -> {
-                        if (pendingSpeech === command.call) {
-                            pendingSpeech = null
+                        if (ownerState.pendingSpeech === command.call) {
+                            ownerState.pendingSpeech = null
                             command.call.markTerminal()
                         }
-                        if (activeSpeech === command.call) {
-                            activeSpeech = null
+                        if (ownerState.activeSpeech === command.call) {
+                            ownerState.activeSpeech = null
                             command.call.markTerminal()
-                            platform?.stop()
+                            safeStop(ownerState.platform)
                         }
                     }
 
                     is Command.Progress -> {
-                        val active = activeSpeech
+                        val active = ownerState.activeSpeech
                         if (active != null && active.utteranceId == command.utteranceId) {
-                            activeSpeech = null
+                            ownerState.activeSpeech = null
                             active.complete(command.result)
                         }
                     }
 
                     is Command.Stop -> {
-                        pendingSpeech?.complete(SpeechEngineResult.Cancelled)
-                        pendingSpeech = null
-                        activeSpeech?.complete(SpeechEngineResult.Cancelled)
-                        activeSpeech = null
-                        platform?.stop()
+                        ownerState.pendingSpeech?.complete(SpeechEngineResult.Cancelled)
+                        ownerState.pendingSpeech = null
+                        ownerState.activeSpeech?.complete(SpeechEngineResult.Cancelled)
+                        ownerState.activeSpeech = null
+                        safeStop(ownerState.platform)
                         command.reply.complete(Unit)
                     }
 
                     Command.Close -> {
-                        closed = true
-                        pendingSpeech?.complete(SpeechEngineResult.Cancelled)
-                        pendingSpeech = null
-                        activeSpeech?.complete(SpeechEngineResult.Cancelled)
-                        activeSpeech = null
-                        pendingVoiceQueries.forEach { it.reply.complete(emptyList()) }
-                        pendingVoiceQueries.clear()
-                        initializationJob.cancel()
+                        admissionLock.withLock { finishCloseOnOwner() }
                     }
                 }
             }
         } finally {
-            initializationJob.cancel()
-            pendingSpeech?.complete(SpeechEngineResult.Cancelled)
-            activeSpeech?.complete(SpeechEngineResult.Cancelled)
-            pendingVoiceQueries.forEach { it.reply.complete(emptyList()) }
-            platform?.let { initialized ->
-                initialized.stop()
-                initialized.shutdown()
+            admissionLock.withLock {
+                closeRequested.set(true)
+                finishCloseOnOwner()
+            }
+        }
+    }
+
+    private fun initializeOnOwner(initialized: PlatformTextToSpeech?) {
+        ownerState.initializationFinished = true
+        ownerState.platform = initialized
+        if (initialized == null) {
+            failPendingInitialization()
+            return
+        }
+        try {
+            initialized.setProgressListener(progressListener)
+            ownerState.pendingVoiceQueries.forEach { query ->
+                query.reply.complete(safeOfflineVoices(initialized, query.localeTag))
+            }
+            ownerState.pendingVoiceQueries.clear()
+            ownerState.pendingSpeech?.let { call ->
+                ownerState.pendingSpeech = null
+                ownerState.activeSpeech = start(call, initialized)
+            }
+        } catch (_: Throwable) {
+            failPendingInitialization()
+            releasePlatform()
+        }
+    }
+
+    private fun failPendingInitialization() {
+        ownerState.pendingSpeech?.complete(initializationFailure())
+        ownerState.pendingSpeech = null
+        ownerState.pendingVoiceQueries.forEach { it.reply.complete(emptyList()) }
+        ownerState.pendingVoiceQueries.clear()
+    }
+
+    private fun finishCloseOnOwner() {
+        if (ownerState.closed) return
+        ownerState.closed = true
+        initializationJob.cancel()
+        ownerState.pendingSpeech?.complete(SpeechEngineResult.Cancelled)
+        ownerState.pendingSpeech = null
+        ownerState.activeSpeech?.complete(SpeechEngineResult.Cancelled)
+        ownerState.activeSpeech = null
+        ownerState.pendingVoiceQueries.forEach { it.reply.complete(emptyList()) }
+        ownerState.pendingVoiceQueries.clear()
+        commands.close()
+        drainClosedCommands()
+        releasePlatform()
+        closeFinished.countDown()
+    }
+
+    private fun drainClosedCommands() {
+        while (true) {
+            when (val command = commands.tryReceive().getOrNull() ?: return) {
+                is Command.Initialized -> {
+                    if (ownerState.platform == null) ownerState.platform = command.platform
+                }
+                is Command.Voices -> command.reply.complete(emptyList())
+                is Command.Speak -> command.call.complete(SpeechEngineResult.Cancelled)
+                is Command.CancelCaller -> command.call.markTerminal()
+                is Command.Progress -> Unit
+                is Command.Stop -> command.reply.complete(Unit)
+                Command.Close -> Unit
             }
         }
     }
@@ -207,45 +266,50 @@ class SystemTtsEngine internal constructor(
             call.markTerminal()
             return null
         }
-        when (platform.setLanguage(Locale.forLanguageTag(call.request.localeTag))) {
-            TextToSpeech.LANG_MISSING_DATA -> {
-                call.complete(SpeechEngineResult.Failed(SpeechError.MissingLanguageData))
+        try {
+            when (platform.setLanguage(Locale.forLanguageTag(call.request.localeTag))) {
+                TextToSpeech.LANG_MISSING_DATA -> {
+                    call.complete(SpeechEngineResult.Failed(SpeechError.MissingLanguageData))
+                    return null
+                }
+                TextToSpeech.LANG_NOT_SUPPORTED -> {
+                    call.complete(SpeechEngineResult.Failed(SpeechError.UnsupportedLocale))
+                    return null
+                }
+            }
+
+            val localeTag = Locale.forLanguageTag(call.request.localeTag).toLanguageTag()
+            val offlineVoice = platform.voices().firstOrNull { voice ->
+                !voice.networkConnectionRequired &&
+                    voice.localeTag.equals(localeTag, ignoreCase = true) &&
+                    (call.request.voiceId == null || voice.id == call.request.voiceId)
+            }
+            if (offlineVoice == null || !platform.selectVoice(offlineVoice.id)) {
+                call.complete(SpeechEngineResult.Failed(SpeechError.NoOfflineVoiceAvailable))
                 return null
             }
-            TextToSpeech.LANG_NOT_SUPPORTED -> {
-                call.complete(SpeechEngineResult.Failed(SpeechError.UnsupportedLocale))
+
+            platform.setRate(call.request.rate.coerceIn(MIN_RATE_OR_PITCH, MAX_RATE_OR_PITCH))
+            platform.setPitch(call.request.pitch.coerceIn(MIN_RATE_OR_PITCH, MAX_RATE_OR_PITCH))
+            val startResult = call.startIfLive {
+                platform.speak(
+                    call.request.segment.text,
+                    TextToSpeech.QUEUE_FLUSH,
+                    call.utteranceId,
+                )
+            } ?: run {
+                call.markTerminal()
                 return null
             }
-        }
-
-        val localeTag = Locale.forLanguageTag(call.request.localeTag).toLanguageTag()
-        val offlineVoice = platform.voices().firstOrNull { voice ->
-            !voice.networkConnectionRequired &&
-                voice.localeTag.equals(localeTag, ignoreCase = true) &&
-                (call.request.voiceId == null || voice.id == call.request.voiceId)
-        }
-        if (offlineVoice == null || !platform.selectVoice(offlineVoice.id)) {
-            call.complete(SpeechEngineResult.Failed(SpeechError.NoOfflineVoiceAvailable))
-            return null
-        }
-
-        platform.setRate(call.request.rate.coerceIn(MIN_RATE_OR_PITCH, MAX_RATE_OR_PITCH))
-        platform.setPitch(call.request.pitch.coerceIn(MIN_RATE_OR_PITCH, MAX_RATE_OR_PITCH))
-        val startResult = call.startIfLive {
-            platform.speak(
-                call.request.segment.text,
-                TextToSpeech.QUEUE_FLUSH,
-                call.utteranceId,
-            )
-        } ?: run {
-            call.markTerminal()
-            return null
-        }
-        if (startResult == TextToSpeech.ERROR) {
+            if (startResult == TextToSpeech.ERROR) {
+                call.complete(SpeechEngineResult.Failed(SpeechError.SystemTtsStartFailed))
+                return null
+            }
+            return call
+        } catch (_: Throwable) {
             call.complete(SpeechEngineResult.Failed(SpeechError.SystemTtsStartFailed))
             return null
         }
-        return call
     }
 
     private fun offlineVoices(
@@ -259,6 +323,45 @@ class SystemTtsEngine internal constructor(
                     voice.localeTag.equals(requestedTag, ignoreCase = true)
             }
             .map { voice -> SpeechVoice(voice.id, voice.displayName, voice.localeTag) }
+    }
+
+    private fun safeOfflineVoices(
+        platform: PlatformTextToSpeech,
+        localeTag: String,
+    ): List<SpeechVoice> = try {
+        offlineVoices(platform, localeTag)
+    } catch (_: Throwable) {
+        emptyList()
+    }
+
+    private fun safeStop(platform: PlatformTextToSpeech?) {
+        try {
+            platform?.stop()
+        } catch (_: Throwable) {
+            // Caller state is terminal before platform stop is attempted.
+        }
+    }
+
+    private fun releasePlatform() {
+        if (ownerState.platformReleased) return
+        val platform = ownerState.platform ?: return
+        ownerState.platformReleased = true
+        safeStop(platform)
+        try {
+            platform.shutdown()
+        } catch (_: Throwable) {
+            // Shutdown is best-effort after all engine callers are terminal.
+        }
+        ownerState.platform = null
+    }
+
+    private fun releaseOrphanPlatform(platform: PlatformTextToSpeech) {
+        safeStop(platform)
+        try {
+            platform.shutdown()
+        } catch (_: Throwable) {
+            // The channel is already closed; no caller can depend on this platform.
+        }
     }
 
     private val progressListener = object : PlatformUtteranceProgressListener {
@@ -326,6 +429,16 @@ class SystemTtsEngine internal constructor(
         ) : Command
         data class Stop(val reply: CompletableDeferred<Unit>) : Command
         data object Close : Command
+    }
+
+    private class OwnerState {
+        var platform: PlatformTextToSpeech? = null
+        var initializationFinished = false
+        var pendingSpeech: SpeechCall? = null
+        var activeSpeech: SpeechCall? = null
+        val pendingVoiceQueries = mutableListOf<Command.Voices>()
+        var platformReleased = false
+        var closed = false
     }
 
     private companion object {

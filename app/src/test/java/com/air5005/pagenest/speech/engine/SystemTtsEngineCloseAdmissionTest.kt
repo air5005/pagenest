@@ -1,0 +1,247 @@
+package com.air5005.pagenest.speech.engine
+
+import android.speech.tts.TextToSpeech
+import com.air5005.pagenest.speech.model.SpeechError
+import com.air5005.pagenest.speech.model.SpeechPosition
+import com.air5005.pagenest.speech.model.SpeechSegment
+import com.wxn.base.bean.Locator
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.util.Locale
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
+
+class SystemTtsEngineCloseAdmissionTest {
+    @Test
+    fun `close races terminate admitted speak voices and stop callers`() {
+        listOf("speak", "voices", "stop").forEach { operation ->
+            withOwner("admission-$operation") { ownerScope, platform ->
+                val admissionLock = ReentrantLock(true)
+                val engine = SystemTtsEngine(
+                    PlatformTextToSpeechFactory { platform },
+                    ownerScope,
+                    admissionLock,
+                )
+                assertTrue(platform.listenerInstalled.await(5, TimeUnit.SECONDS))
+                val callers = Executors.newFixedThreadPool(2)
+                try {
+                    admissionLock.lock()
+                    val operationStarted = CountDownLatch(1)
+                    val operationFuture = callers.submit<Any?> {
+                        operationStarted.countDown()
+                        runBlocking {
+                            when (operation) {
+                                "speak" -> engine.speak(request(operation))
+                                "voices" -> engine.voices("zh-CN")
+                                else -> {
+                                    engine.stop()
+                                    Unit
+                                }
+                            }
+                        }
+                    }
+                    assertTrue(operationStarted.await(5, TimeUnit.SECONDS))
+                    awaitQueueLength(admissionLock, 1)
+
+                    val closeReturned = CountDownLatch(1)
+                    val closeFuture = callers.submit {
+                        engine.close()
+                        closeReturned.countDown()
+                    }
+                    awaitQueueLength(admissionLock, 2)
+                    admissionLock.unlock()
+
+                    operationFuture.get(5, TimeUnit.SECONDS)
+                    closeFuture.get(5, TimeUnit.SECONDS)
+                    assertTrue(closeReturned.await(0, TimeUnit.SECONDS))
+                    assertEquals(if (operation == "stop") 2 else 1, platform.stopCalls.get())
+                    assertEquals(1, platform.shutdownCalls.get())
+                } finally {
+                    if (admissionLock.isHeldByCurrentThread) admissionLock.unlock()
+                    callers.shutdownNow()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `off owner concurrent close waits for exact once release before returning`() {
+        withOwner("off-owner-close") { ownerScope, platform ->
+            val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, ownerScope)
+            assertTrue(platform.listenerInstalled.await(5, TimeUnit.SECONDS))
+            val ownerBlocked = CountDownLatch(1)
+            val releaseOwner = CountDownLatch(1)
+            ownerScope.launch {
+                ownerBlocked.countDown()
+                check(releaseOwner.await(5, TimeUnit.SECONDS))
+            }
+            assertTrue(ownerBlocked.await(5, TimeUnit.SECONDS))
+
+            val closers = Executors.newFixedThreadPool(3)
+            val closeReturned = CountDownLatch(3)
+            try {
+                repeat(3) {
+                    closers.submit {
+                        engine.close()
+                        closeReturned.countDown()
+                    }
+                }
+                assertFalse(closeReturned.await(200, TimeUnit.MILLISECONDS))
+                assertEquals(0, platform.shutdownCalls.get())
+
+                releaseOwner.countDown()
+                assertTrue(closeReturned.await(5, TimeUnit.SECONDS))
+                assertEquals(1, platform.stopCalls.get())
+                assertEquals(1, platform.shutdownCalls.get())
+                assertEquals(setOf("off-owner-close"), platform.callThreadNames.toSet())
+            } finally {
+                releaseOwner.countDown()
+                closers.shutdownNow()
+            }
+        }
+    }
+
+    @Test
+    fun `owner thread close releases synchronously and remains idempotent`() {
+        withOwner("owner-close") { ownerScope, platform ->
+            val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, ownerScope)
+            assertTrue(platform.listenerInstalled.await(5, TimeUnit.SECONDS))
+
+            val releasedAtReturn = Executors.newSingleThreadExecutor().useExecutor { observer ->
+                observer.submit<Pair<Int, Int>> {
+                    runBlocking(ownerScope.coroutineContext) {
+                        engine.close()
+                        engine.close()
+                        platform.stopCalls.get() to platform.shutdownCalls.get()
+                    }
+                }.get(5, TimeUnit.SECONDS)
+            }
+
+            assertEquals(1 to 1, releasedAtReturn)
+            assertEquals(setOf("owner-close"), platform.callThreadNames.toSet())
+            assertEquals(
+                SpeechEngineResult.Failed(SpeechError.SystemTtsUnavailable),
+                runBlocking { engine.speak(request("after-close")) },
+            )
+            assertEquals(emptyList<SpeechVoice>(), runBlocking { engine.voices("zh-CN") })
+            runBlocking { engine.stop() }
+        }
+    }
+
+    private fun withOwner(
+        threadName: String,
+        block: (CoroutineScope, CloseRecordingPlatform) -> Unit,
+    ) {
+        val executor = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, threadName) }
+        val dispatcher = executor.asCoroutineDispatcher()
+        val ownerScope = CoroutineScope(SupervisorJob() + dispatcher)
+        try {
+            block(ownerScope, CloseRecordingPlatform())
+        } finally {
+            ownerScope.cancel()
+            dispatcher.close()
+            executor.shutdownNow()
+        }
+    }
+
+    private fun awaitQueueLength(lock: ReentrantLock, expected: Int) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (lock.queueLength < expected && System.nanoTime() < deadline) Thread.yield()
+        assertTrue("expected $expected queued lock waiters", lock.queueLength >= expected)
+    }
+
+    private fun request(text: String) = SpeechRequest(
+        generationId = 51,
+        segment = SpeechSegment(
+            id = "segment-$text",
+            position = SpeechPosition(1, 1, null, 1, 0),
+            partIndex = 0,
+            text = text,
+            locator = Locator(text = text, progression = 0.25),
+        ),
+        localeTag = "zh-CN",
+        voiceId = null,
+        rate = 1f,
+        pitch = 1f,
+    )
+}
+
+private inline fun <T> java.util.concurrent.ExecutorService.useExecutor(
+    block: (java.util.concurrent.ExecutorService) -> T,
+): T = try {
+    block(this)
+} finally {
+    shutdownNow()
+}
+
+private class CloseRecordingPlatform : PlatformTextToSpeech {
+    val listenerInstalled = CountDownLatch(1)
+    val stopCalls = AtomicInteger(0)
+    val shutdownCalls = AtomicInteger(0)
+    val callThreadNames = CopyOnWriteArrayList<String>()
+
+    override fun setProgressListener(listener: PlatformUtteranceProgressListener) {
+        recordThread()
+        listenerInstalled.countDown()
+    }
+
+    override fun languageStatus(locale: Locale): Int = TextToSpeech.LANG_AVAILABLE
+
+    override fun voices(): List<PlatformSpeechVoice> {
+        recordThread()
+        return listOf(PlatformSpeechVoice("offline", "Offline", "zh-CN", false))
+    }
+
+    override fun selectVoice(id: String): Boolean {
+        recordThread()
+        return true
+    }
+
+    override fun setLanguage(locale: Locale): Int {
+        recordThread()
+        return TextToSpeech.LANG_AVAILABLE
+    }
+
+    override fun setRate(rate: Float): Int {
+        recordThread()
+        return TextToSpeech.SUCCESS
+    }
+
+    override fun setPitch(pitch: Float): Int {
+        recordThread()
+        return TextToSpeech.SUCCESS
+    }
+
+    override fun speak(text: String, queueMode: Int, utteranceId: String): Int {
+        recordThread()
+        return TextToSpeech.SUCCESS
+    }
+
+    override fun stop(): Int {
+        recordThread()
+        stopCalls.incrementAndGet()
+        return TextToSpeech.SUCCESS
+    }
+
+    override fun shutdown() {
+        recordThread()
+        shutdownCalls.incrementAndGet()
+    }
+
+    private fun recordThread() {
+        callThreadNames += Thread.currentThread().name.substringBefore(" @coroutine#")
+    }
+}
