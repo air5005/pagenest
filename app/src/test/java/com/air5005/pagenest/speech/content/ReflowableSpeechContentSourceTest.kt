@@ -125,6 +125,9 @@ class ReflowableSpeechContentSourceTest {
             return values[index]
         }
 
+        override suspend fun previewSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? =
+            values.firstOrNull { it.chapterIndex == chapterIndex && it.pageIndex == pageIndex }
+
         override suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? {
             val target = values.indexOfFirst {
                 it.chapterIndex == chapterIndex && it.pageIndex == pageIndex
@@ -261,7 +264,45 @@ class PageViewControllerSpeechSnapshotTest {
         assertEquals(1, controller.durPageIndex)
     }
 
-    private fun controllerWith(page: TextPage): PageViewController {
+    @Test
+    fun `invalid locator on an existing page leaves real controller and source position unchanged`() = runTest {
+        val controller = controllerWith(
+            TextPage(index = 0, textLines = arrayListOf(textLine("current"))),
+            TextPage(index = 1, textLines = arrayListOf(textLine("next"))),
+        )
+        val source = ReflowableSpeechContentSource(1, controller, SpeechSegmenter())
+        val current = requireNotNull(source.current())
+        val before = requireNotNull(controller.currentSpeechPage())
+
+        val result = source.seek(SpeechPosition(1, 3, 1, paragraphIndex = 99, textOffset = 50))
+
+        assertNull(result)
+        assertEquals(3, controller.durChapterIndex)
+        assertEquals(0, controller.durPageIndex)
+        assertEquals(before, controller.currentSpeechPage())
+        assertEquals(current, source.current())
+        assertEquals("next", source.next()?.text)
+        assertNull(source.next())
+    }
+
+    @Test
+    fun `valid locator on an existing page commits controller and source position once`() = runTest {
+        val controller = controllerWith(
+            TextPage(index = 0, textLines = arrayListOf(textLine("current"))),
+            TextPage(index = 1, textLines = arrayListOf(textLine("target"))),
+        )
+        val source = ReflowableSpeechContentSource(1, controller, SpeechSegmenter())
+        requireNotNull(source.current())
+
+        val result = source.seek(SpeechPosition(1, 3, 1, paragraphIndex = 0, textOffset = 0))
+
+        assertEquals("target", result?.text)
+        assertEquals(3, controller.durChapterIndex)
+        assertEquals(1, controller.durPageIndex)
+        assertEquals(result, source.current())
+    }
+
+    private fun controllerWith(vararg pages: TextPage): PageViewController {
         val controller = PageViewController(
             context = mockk(relaxed = true),
             getChapterByIdUserCase = mockk(relaxed = true),
@@ -276,13 +317,14 @@ class PageViewControllerSpeechSnapshotTest {
         )
         controller.durChapterIndex = 3
         controller.durPageIndex = 0
+        controller.chapterSize = 4
         controller.curTextChapter = TextChapter(
             position = 3,
             title = "Chapter",
             chapterId = 1,
-            pages = listOf(page),
-            pageLines = listOf(1),
-            pageLengths = listOf(page.text.length),
+            pages = pages.toList(),
+            pageLines = pages.map { it.textLines.size },
+            pageLengths = pages.map { it.text.length },
             chaptersSize = 1,
         )
         return controller

@@ -277,3 +277,103 @@ Result: `BUILD SUCCESSFUL` in 4 minutes 26 seconds (335 tasks: 41 executed,
 ### Remaining boundary
 
 - Device/HyperOS verification remains outside Task 4 and was not run. No Task 5 work was started.
+
+## Fix Round 2/5 — admission shutdown and transactional reflowable seek
+
+Base: `d307f39075b74343af2c18fd5f0cd0ce35e23656`
+
+### Behavioral TDD evidence
+
+1. Admission closes before slow cleanup
+
+   Added deterministic, no-sleep cleanup gates to the external engine fake and these tests:
+
+   - `owner cancellation closes admission and drains acknowledgements before slow cleanup`
+   - `actor failure closes admission before slow cleanup`
+
+   RED command:
+
+   ```powershell
+   ./gradlew.bat :app:testDebugUnitTest --tests '*SpeechSessionTest'
+   ```
+
+   Result: `BUILD FAILED` in 58 seconds: 22 tests, 2 failures. While `engine.stop()` was gated,
+   queued acknowledgements and commands racing cleanup were not terminal because admission was only
+   closed by the owner's completion callback after cleanup.
+
+   GREEN command:
+
+   ```powershell
+   ./gradlew.bat :app:testDebugUnitTest --tests '*SpeechSessionTest'
+   ```
+
+   Result: `BUILD SUCCESSFUL` in 57 seconds: 22 tests passed. The actor now captures its terminal
+   failure and atomically closes/drains admission at the start of `finally`, before entering
+   `NonCancellable` cleanup. The owner completion callback remains an exact-once fallback.
+
+2. Reflowable seek validates before controller mutation
+
+   Added real `PageViewController` plus real `ReflowableSpeechContentSource` tests:
+
+   - `invalid locator on an existing page leaves real controller and source position unchanged`
+   - `valid locator on an existing page commits controller and source position once`
+
+   RED command:
+
+   ```powershell
+   ./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest'
+   ```
+
+   Result: `BUILD FAILED` in 59 seconds: 5 tests, 1 failure. The invalid locator returned `null`,
+   but `seekSpeechPage` had already moved the real controller from page 0 to page 1.
+
+   GREEN regression command:
+
+   ```powershell
+   ./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest' --tests '*ReflowableSpeechContentSourceTest' --tests '*SpeechSessionTest' --tests '*SpeechSessionNavigationTest'
+   ```
+
+   Result: `BUILD SUCCESSFUL` in 1 minute 17 seconds: 34 tests passed. `previewSpeechPage` loads an
+   immutable target snapshot through the existing async-safe controller path without activating it;
+   the source resolves the exact segment against that snapshot and mutates the controller/source only
+   after successful validation. Valid seeks and the existing unloaded-page async controller case remain
+   covered.
+
+### Mutation self-review
+
+- Moving `closeAdmission` back below gated cleanup is killed by both new lifecycle tests: all three
+  cancellation acknowledgements and the actor-failure race remain pending while the gate is held.
+- Removing the preview validation or calling mutating `seekSpeechPage` first is killed by the real
+  invalid-locator test's controller page/snapshot assertions. Its later `next()` assertions also detect
+  replay or misadvance after a failed seek.
+- The valid-locator control prevents an implementation that merely rejects every seek.
+- Review confirmed admission closure and drain share one lock/CAS winner, while Android-facing snapshot
+  construction and activation remain on `Dispatchers.Main.immediate`; chapter loading remains on IO.
+
+### Round 2 gates
+
+The broad speech-package command was run twice:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests 'com.air5005.pagenest.speech.*'
+```
+
+Each broad run reported the same unrelated 5-second fixture timeout in
+`SystemTtsEngineCloseAdmissionTest > off owner concurrent close waits for exact once release before returning`.
+The exact isolated command passed 1/1 (`BUILD SUCCESSFUL` in 52 seconds), and no TTS production code was
+changed in this round. The required relevant regression command above passed 34/34.
+
+Fresh complete command:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL` in 4 minutes 12 seconds (335 tasks: 41 executed,
+294 up-to-date). XML totals: 22 suites, 249 tests, 0 failures, 0 errors, 0 skipped.
+`assembleDebug` and `lintDebug` both completed.
+
+### Remaining boundary
+
+- Device/HyperOS verification remains outside Task 4 and was not run. Per user direction, Task 4 is
+  archived after this fix round and no Task 5 work was started.

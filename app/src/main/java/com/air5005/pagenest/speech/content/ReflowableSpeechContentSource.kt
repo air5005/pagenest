@@ -23,6 +23,7 @@ interface SpeechPageNavigator : AutoCloseable {
     suspend fun currentSpeechPage(): SpeechPageSnapshot?
     suspend fun nextSpeechPage(): SpeechPageSnapshot?
     suspend fun previousSpeechPage(): SpeechPageSnapshot?
+    suspend fun previewSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot?
     suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot?
     override fun close()
 }
@@ -66,20 +67,11 @@ class ReflowableSpeechContentSource(
     override suspend fun seek(position: SpeechPosition): SpeechSegment? {
         ensureOpen()
         if (position.bookId != bookId || position.pageIndex == null) return null
+        val preview = navigator.previewSpeechPage(position.chapterIndex, position.pageIndex) ?: return null
+        if (findSegmentIndex(segmentsForPage(preview), position) < 0) return null
         val targetPage = navigator.seekSpeechPage(position.chapterIndex, position.pageIndex) ?: return null
         setPage(targetPage)
-        val exactPosition = segments.indexOfFirst { it.position == position }
-        segmentIndex = if (exactPosition >= 0) {
-            exactPosition
-        } else {
-            segments.indexOfFirst { segment ->
-                segment.position.chapterIndex == position.chapterIndex &&
-                    segment.position.pageIndex == position.pageIndex &&
-                    segment.position.paragraphIndex == position.paragraphIndex &&
-                    position.textOffset >= segment.locator.startTextOffset &&
-                    position.textOffset < segment.locator.endTextOffset
-            }
-        }
+        segmentIndex = findSegmentIndex(segments, position)
         return segments.getOrNull(segmentIndex)
     }
 
@@ -113,28 +105,45 @@ class ReflowableSpeechContentSource(
 
     private fun setPage(snapshot: SpeechPageSnapshot) {
         page = snapshot
-        segments = snapshot.lines
-            .asSequence()
-            .filterNot { it.isImage || it.isLine || it.text.isBlank() }
-            .groupBy { it.paragraphIndex }
-            .values
-            .flatMap { paragraphLines ->
-                val orderedLines = paragraphLines.sortedBy { it.charStartOffset }
-                val first = orderedLines.first()
-                val paragraphText = orderedLines.joinToString(separator = "") { it.text }
-                segmenter.fromParagraph(
-                    position = SpeechPosition(
-                        bookId = bookId,
-                        chapterIndex = snapshot.chapterIndex,
-                        pageIndex = snapshot.pageIndex,
-                        paragraphIndex = first.paragraphIndex,
-                        textOffset = first.charStartOffset,
-                    ),
-                    text = paragraphText,
-                    progression = snapshot.progression,
-                )
-            }
+        segments = segmentsForPage(snapshot)
         segmentIndex = -1
+    }
+
+    private fun segmentsForPage(snapshot: SpeechPageSnapshot): List<SpeechSegment> = snapshot.lines
+        .asSequence()
+        .filterNot { it.isImage || it.isLine || it.text.isBlank() }
+        .groupBy { it.paragraphIndex }
+        .values
+        .flatMap { paragraphLines ->
+            val orderedLines = paragraphLines.sortedBy { it.charStartOffset }
+            val first = orderedLines.first()
+            val paragraphText = orderedLines.joinToString(separator = "") { it.text }
+            segmenter.fromParagraph(
+                position = SpeechPosition(
+                    bookId = bookId,
+                    chapterIndex = snapshot.chapterIndex,
+                    pageIndex = snapshot.pageIndex,
+                    paragraphIndex = first.paragraphIndex,
+                    textOffset = first.charStartOffset,
+                ),
+                text = paragraphText,
+                progression = snapshot.progression,
+            )
+        }
+
+    private fun findSegmentIndex(
+        candidates: List<SpeechSegment>,
+        position: SpeechPosition,
+    ): Int {
+        val exactPosition = candidates.indexOfFirst { it.position == position }
+        if (exactPosition >= 0) return exactPosition
+        return candidates.indexOfFirst { segment ->
+            segment.position.chapterIndex == position.chapterIndex &&
+                segment.position.pageIndex == position.pageIndex &&
+                segment.position.paragraphIndex == position.paragraphIndex &&
+                position.textOffset >= segment.locator.startTextOffset &&
+                position.textOffset < segment.locator.endTextOffset
+        }
     }
 
     private fun ensureOpen() {

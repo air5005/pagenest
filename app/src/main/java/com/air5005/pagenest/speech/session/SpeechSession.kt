@@ -130,8 +130,8 @@ class SpeechSession(
         admissionLock.withLock {
             if (closing.compareAndSet(false, true)) {
                 messages.close(failure)
+                drainAcknowledgements(failure)
             }
-            drainAcknowledgements(failure)
         }
     }
 
@@ -145,6 +145,7 @@ class SpeechSession(
     }
 
     private suspend fun runOwner() {
+        var terminalFailure: Throwable? = null
         try {
             for (message in messages) {
                 when (message) {
@@ -162,10 +163,12 @@ class SpeechSession(
                     is Message.TimerExpired -> handleTimerExpired(message.version)
                 }
             }
-        } catch (_: Throwable) {
-            // The actor owns asynchronous callback failures. Its completion callback closes
-            // admission and fails all outstanding acknowledgements with the stable closed contract.
+        } catch (failure: Throwable) {
+            // The actor owns asynchronous callback failures. The finally boundary closes
+            // admission before cleanup and fails outstanding acknowledgements.
+            terminalFailure = failure
         } finally {
+            closeAdmission(terminalFailure ?: SpeechSessionClosedException())
             withContext(NonCancellable) {
                 generation++
                 playbackJob?.cancel()

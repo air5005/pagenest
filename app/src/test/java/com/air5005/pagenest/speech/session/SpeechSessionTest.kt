@@ -397,6 +397,76 @@ class SpeechSessionTest {
         fixture.session.closeAndJoin()
     }
 
+    @Test
+    fun `owner cancellation closes admission and drains acknowledgements before slow cleanup`() = runTest {
+        val owner = Job()
+        val navigationGate = CompletableDeferred<Unit>()
+        val cleanupGate = CompletableDeferred<Unit>()
+        val cleanupEntered = CompletableDeferred<Unit>()
+        val fixture = fixture(
+            segment("a"),
+            segment("b"),
+            nextGate = navigationGate,
+            stopGate = cleanupGate,
+            stopEntered = cleanupEntered,
+            ownerScope = CoroutineScope(owner + StandardTestDispatcher(testScheduler)),
+        )
+        fixture.session.start(fixture.source, options())
+        runCurrent()
+        val active = backgroundScope.async { runCatching { fixture.session.next() } }
+        val queued = backgroundScope.async { runCatching { fixture.session.previous() } }
+        runCurrent()
+
+        owner.cancel()
+        runCurrent()
+        assertTrue(cleanupEntered.isCompleted)
+        val activeTerminatedBeforeCleanup = active.isCompleted
+        val queuedTerminatedBeforeCleanup = queued.isCompleted
+        val raced = backgroundScope.async { runCatching { fixture.session.stop() } }
+        runCurrent()
+        val raceRejectedBeforeCleanup = raced.isCompleted
+
+        cleanupGate.complete(Unit)
+        runCurrent()
+        fixture.session.closeAndJoin()
+
+        assertTrue("active acknowledgement waited for cleanup", activeTerminatedBeforeCleanup)
+        assertTrue("queued acknowledgement waited for cleanup", queuedTerminatedBeforeCleanup)
+        assertTrue("command entered the dead actor channel during cleanup", raceRejectedBeforeCleanup)
+        assertTrue(active.await().isFailure)
+        assertTrue(queued.await().isFailure)
+        assertTrue(raced.await().isFailure)
+    }
+
+    @Test
+    fun `actor failure closes admission before slow cleanup`() = runTest {
+        val cleanupGate = CompletableDeferred<Unit>()
+        val cleanupEntered = CompletableDeferred<Unit>()
+        val fixture = fixture(
+            segment("a"),
+            progressFailure = IllegalStateException("disk failed"),
+            stopGate = cleanupGate,
+            stopEntered = cleanupEntered,
+            ownerScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler)),
+        )
+        fixture.session.start(fixture.source, options())
+        runCurrent()
+
+        fixture.engine.completeLatest(SpeechEngineResult.Completed)
+        runCurrent()
+        assertTrue(cleanupEntered.isCompleted)
+        val raced = backgroundScope.async { runCatching { fixture.session.stop() } }
+        runCurrent()
+        val rejectedBeforeCleanup = raced.isCompleted
+
+        cleanupGate.complete(Unit)
+        runCurrent()
+        fixture.session.closeAndJoin()
+
+        assertTrue("actor failure left admission open during cleanup", rejectedBeforeCleanup)
+        assertTrue(raced.await().isFailure)
+    }
+
     private fun fixture(
         vararg segments: SpeechSegment,
         completeOnStop: Boolean = true,
@@ -406,10 +476,12 @@ class SpeechSessionTest {
         seekGate: CompletableDeferred<Unit>? = null,
         nextFailure: Throwable? = null,
         progressFailure: Throwable? = null,
+        stopGate: CompletableDeferred<Unit>? = null,
+        stopEntered: CompletableDeferred<Unit>? = null,
         ownerScope: CoroutineScope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined),
     ): Fixture {
         val source = FakeSource(segments.toList(), nextGate, seekGate, nextFailure)
-        val engine = FakeEngine(completeOnStop, events)
+        val engine = FakeEngine(completeOnStop, events, stopGate, stopEntered)
         val progress = RecordingProgress(events, progressFailure)
         val highlight = RecordingHighlight(events)
         val session = SpeechSession(
@@ -465,6 +537,8 @@ class SpeechSessionTest {
     private class FakeEngine(
         private val completeOnStop: Boolean,
         private val events: MutableList<String>,
+        private val stopGate: CompletableDeferred<Unit>?,
+        private val stopEntered: CompletableDeferred<Unit>?,
     ) : SpeechEngine {
         data class Pending(val request: SpeechRequest, val result: CompletableDeferred<SpeechEngineResult>)
 
@@ -495,6 +569,8 @@ class SpeechSessionTest {
             stopCalls++
             if (completeOnStop) pending.lastOrNull { !it.result.isCompleted }
                 ?.result?.complete(SpeechEngineResult.Cancelled)
+            stopEntered?.complete(Unit)
+            stopGate?.await()
         }
 
         override fun close() = Unit

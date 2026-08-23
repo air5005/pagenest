@@ -110,6 +110,8 @@ class SpeechSessionNavigationTest {
         override suspend fun currentSpeechPage(): SpeechPageSnapshot = page
         override suspend fun nextSpeechPage(): SpeechPageSnapshot? = null
         override suspend fun previousSpeechPage(): SpeechPageSnapshot? = null
+        override suspend fun previewSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? =
+            page.takeIf { chapterIndex == 0 && pageIndex == 0 }
         override suspend fun seekSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? =
             page.takeIf { chapterIndex == 0 && pageIndex == 0 }
 

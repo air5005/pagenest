@@ -1034,10 +1034,26 @@ open class PageViewController @Inject constructor(
     @MainThread
     fun speechPageSnapshot(): SpeechPageSnapshot {
         val page = currentPage() ?: TextPage(index = durPageIndex)
-        return SpeechPageSnapshot(
-            chapterIndex = curTextChapter?.position ?: durChapterIndex,
+        val chapter = curTextChapter
+        return speechPageSnapshot(
+            chapter = chapter,
+            page = page,
+            chapterIndex = chapter?.position ?: durChapterIndex,
             pageIndex = page.index,
-            progression = progression,
+        )
+    }
+
+    @MainThread
+    private fun speechPageSnapshot(
+        chapter: TextChapter?,
+        page: TextPage,
+        chapterIndex: Int,
+        pageIndex: Int,
+    ): SpeechPageSnapshot {
+        return SpeechPageSnapshot(
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+            progression = speechProgression(chapter, pageIndex),
             lines = page.textLines.map { line ->
                 SpeechLineSnapshot(
                     paragraphIndex = line.paragraphIndex,
@@ -1049,6 +1065,17 @@ open class PageViewController @Inject constructor(
                 )
             },
         )
+    }
+
+    private fun speechProgression(chapter: TextChapter?, pageIndex: Int): Double {
+        if (chapter == null) return 0.0
+        val chapterPercent = if (chapter.totalWordCount > 0) {
+            chapter.wordCount.toDouble() / chapter.totalWordCount.toDouble()
+        } else {
+            0.0
+        }
+        return chapter.chapterProgress.toDouble() +
+            if (chapter.pageSize > 0) chapterPercent * (pageIndex.toDouble() / chapter.pageSize) else 0.0
     }
 
     override suspend fun currentSpeechPage(): SpeechPageSnapshot? {
@@ -1110,6 +1137,15 @@ open class PageViewController @Inject constructor(
         if (pageIndex !in chapter.pages.indices) return null
         return withContext(Dispatchers.Main.immediate) {
             activateSpeechChapter(chapter, pageIndex)
+        }
+    }
+
+    override suspend fun previewSpeechPage(chapterIndex: Int, pageIndex: Int): SpeechPageSnapshot? {
+        if (chapterIndex !in 0 until chapterSize || pageIndex < 0) return null
+        val chapter = loadSpeechChapter(chapterIndex) ?: return null
+        val page = chapter.pages.getOrNull(pageIndex) ?: return null
+        return withContext(Dispatchers.Main.immediate) {
+            speechPageSnapshot(chapter, page, chapter.position, page.index)
         }
     }
 
