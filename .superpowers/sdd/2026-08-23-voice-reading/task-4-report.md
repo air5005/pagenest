@@ -378,6 +378,8 @@ Result: `BUILD SUCCESSFUL` in 4 minutes 12 seconds (335 tasks: 41 executed,
 - Device/HyperOS verification remains outside Task 4 and was not run. Per user direction, Task 4 is
   archived after this fix round and no Task 5 work was started.
 
+
+
 ## Fix Round 3/5 — single-load transactional seek candidate
 
 Base: `19b85b8e3b71c4f95b9b0e242dd85980f2e47cd9`
@@ -474,6 +476,113 @@ Fresh successful complete command:
 
 Result: `BUILD SUCCESSFUL` in 4 minutes 2 seconds (335 tasks: 41 executed,
 294 up-to-date). XML totals: 22 suites, 252 tests, 0 failures, 0 errors, 0 skipped.
+`assembleDebug` and `lintDebug` both completed.
+
+### Remaining boundary
+
+- Device/HyperOS verification remains outside Task 4 and was not run. Per user direction, Task 4 is
+  archived after this fix round and no Task 5 work was started.
+
+## Fix Round 4/5 — fence speech candidates across asynchronous layout reloads
+
+Base: `9140f3373cb6c459ae3cb6aca17099a1b64c1327`
+
+### Root cause and correction
+
+`PageViewController.loadContent` advanced the speech layout generation before launching its
+asynchronous three-chapter reload, but retained the old current/previous/next chapter caches until
+each replacement was parsed. A speech seek in that window therefore captured an old cached chapter
+under the new generation. Because reload completion did not publish another generation, that old
+candidate could still activate and leave the controller and source on different layouts.
+
+The controller now atomically publishes a layout state containing both the generation and the active
+reload generation. Candidate creation and activation reject the entire reload window. Parsed reader
+state is installed on `Dispatchers.Main.immediate` only while its reload generation is still the
+latest; an older overlapping reload may finish parsing but cannot overwrite a newer layout. Matching
+reload completion is published from `NonCancellable` `finally`, so success, parser failure, and
+cancellation all release the fence without blocking Main. The documented failure policy retains the
+previous valid caches and makes them available again under the completed generation.
+
+Manual navigation is unchanged. The reload still makes the same single current/next/previous load
+attempts, and reflowable seek still validates and activates one exact loaded candidate; no second
+coordinate load or parser/resource owner was added.
+
+### Behavioral RED / GREEN evidence
+
+All commands used JDK 17 and the Android SDK environment recorded in the original report.
+
+Initial RED command, before production edits:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest'
+```
+
+Result: `BUILD FAILED`. The reload-window test observed the exact stale `old` `SpeechSegment` where it
+expected rejection. The first overlap fixture also exposed an unsynchronized test counter; after
+correcting that fixture only, the exact overlap RED was rerun against unchanged production code:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest.older overlapping reload*'
+```
+
+Result: `BUILD FAILED` in 1 minute: 1 test, 1 expected `ComparisonFailure`; the delayed older reload
+overwrote `latest` with `older`.
+
+Focused GREEN, including failure and cancellation policy controls:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest'
+```
+
+Result: `BUILD SUCCESSFUL` in 1 minute 2 seconds: 12 tests, 0 failures, 0 errors, 0 skipped.
+
+Relevant regression command:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests '*PageViewControllerSpeechSnapshotTest' --tests '*ReflowableSpeechContentSourceTest' --tests '*SpeechSessionNavigationTest' --tests '*SpeechSessionTest'
+```
+
+Result: `BUILD SUCCESSFUL` in 1 minute: 4 suites, 41 tests, 0 failures, 0 errors, 0 skipped.
+
+### Added named tests
+
+1. `source seek during layout reload never activates old cache and recovers on new layout`
+2. `older overlapping reload cannot overwrite the latest layout`
+3. `failed reload clears its fence and keeps the current valid layout available`
+4. `cancelled reload clears its fence and keeps the current valid layout available`
+
+The tests use `CompletableDeferred` parser and reload-tail gates and contain no real sleep. The primary
+test checks both halves of the vulnerable window: before the current replacement is installed and
+after it is installed while the overall reload remains active. It then proves a fresh source seek
+activates the new layout after reload completion.
+
+### Mutation and self-review
+
+- Actual temporary mutation: removed the three reload-in-flight checks from candidate creation and
+  activation. The exact primary test failed 1/1 with the old cached segment (`BUILD FAILED` in
+  1 minute 14 seconds). After restoring the fence, the same exact test passed 1/1 (`BUILD SUCCESSFUL`
+  in 1 minute 14 seconds).
+- Removing the install-time latest-generation check is killed by the overlapping reload test: the
+  delayed older parser result replaces `latest` with `older`.
+- Omitting matching completion from `finally` is killed by both failure/cancellation recovery tests;
+  the old valid source can never seek again.
+- Removing either creation-time check permits a candidate from the new generation to carry an old
+  cache; removing activation-time validation permits a candidate created before reload to mutate the
+  controller afterward.
+- Review confirmed controller cache mutation and callbacks now occur on Main, parsing remains off
+  Main, stale completion cannot clear a newer fence, speech/manual page persistence behavior is
+  unchanged, and no chapter/parser lifecycle was added.
+
+### Round 4 full gates
+
+Fresh complete command:
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL` in 4 minutes 29 seconds (335 tasks: 42 executed,
+293 up-to-date). Unit XML totals: 22 suites, 256 tests, 0 failures, 0 errors, 0 skipped.
 `assembleDebug` and `lintDebug` both completed.
 
 ### Remaining boundary

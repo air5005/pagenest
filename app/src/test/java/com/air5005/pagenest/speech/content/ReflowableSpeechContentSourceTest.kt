@@ -15,14 +15,18 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,6 +38,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.concurrent.atomic.AtomicInteger
 
 class ReflowableSpeechContentSourceTest {
     @Test
@@ -354,6 +359,175 @@ class PageViewControllerSpeechSnapshotTest {
     }
 
     @Test
+    fun `source seek during layout reload never activates old cache and recovers on new layout`() = runTest {
+        val controller = reloadableController()
+        controller.scope = this
+        val source = ReflowableSpeechContentSource(1, controller, SpeechSegmenter())
+        val oldSegment = requireNotNull(source.current())
+        val reloadEntered = CompletableDeferred<Unit>()
+        val allowCurrentReload = CompletableDeferred<Unit>()
+        val reloadTailEntered = CompletableDeferred<Unit>()
+        val allowReloadTail = CompletableDeferred<Unit>()
+        val refreshed = textChapter(
+            0,
+            TextPage(index = 0, textLines = arrayListOf(textLine("fresh", paragraphIndex = 1))),
+        )
+        every { controller.getChapterByIdUserCase(1, 0) } returns flowOf(bookChapter(0))
+        every { controller.getChapterByIdUserCase(1, 1) } returns flow {
+            reloadTailEntered.complete(Unit)
+            allowReloadTail.await()
+            throw NoSuchElementException("end of fixture")
+        }
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            reloadEntered.complete(Unit)
+            allowCurrentReload.await()
+            listOf(ReaderText.Text(line = "fresh"))
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } returns refreshed
+
+        controller.loadContent(resetPageOffset = true)
+        reloadEntered.await()
+        val duringReload = source.seek(oldSegment.position)
+        allowCurrentReload.complete(Unit)
+        reloadTailEntered.await()
+        val afterCurrentInstallButBeforeReloadCompletion =
+            controller.loadSpeechPage(chapterIndex = 0, pageIndex = 0)
+        allowReloadTail.complete(Unit)
+        val refreshedPosition = SpeechPosition(1, 0, 0, paragraphIndex = 1, textOffset = 0)
+        val recovered = awaitSeek(source, refreshedPosition)
+
+        assertNull(duringReload)
+        assertNull(afterCurrentInstallButBeforeReloadCompletion)
+        assertEquals("fresh", recovered.text)
+        assertSame(refreshed, controller.curTextChapter)
+        assertEquals(recovered, source.current())
+    }
+
+    @Test
+    fun `older overlapping reload cannot overwrite the latest layout`() = runTest {
+        val controller = reloadableController()
+        controller.scope = this
+        val firstReloadEntered = CompletableDeferred<Unit>()
+        val allowFirstReload = CompletableDeferred<Unit>()
+        val secondReloadEntered = CompletableDeferred<Unit>()
+        val allowSecondReload = CompletableDeferred<Unit>()
+        val bothReloadsAdvancedPastCurrent = CompletableDeferred<Unit>()
+        var parserCalls = 0
+        val reloadTailCalls = AtomicInteger()
+        every { controller.getChapterByIdUserCase(1, 0) } returns flowOf(bookChapter(0))
+        every { controller.getChapterByIdUserCase(1, 1) } answers {
+            flow {
+                if (reloadTailCalls.incrementAndGet() == 2) {
+                    bothReloadsAdvancedPastCurrent.complete(Unit)
+                }
+                throw NoSuchElementException("end of fixture")
+            }
+        }
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            parserCalls++
+            when (parserCalls) {
+                1 -> {
+                    firstReloadEntered.complete(Unit)
+                    allowFirstReload.await()
+                    listOf(ReaderText.Text(line = "older"))
+                }
+
+                2 -> {
+                    secondReloadEntered.complete(Unit)
+                    allowSecondReload.await()
+                    listOf(ReaderText.Text(line = "latest"))
+                }
+
+                else -> error("unexpected parser call $parserCalls")
+            }
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            val text = secondArg<List<ReaderText>>()
+                .filterIsInstance<ReaderText.Text>()
+                .single()
+                .line
+            textChapter(
+                0,
+                TextPage(index = 0, textLines = arrayListOf(textLine(text))),
+            )
+        }
+
+        controller.loadContent(resetPageOffset = true)
+        firstReloadEntered.await()
+        controller.loadContent(resetPageOffset = true)
+        secondReloadEntered.await()
+        allowSecondReload.complete(Unit)
+        while (controller.curTextChapter?.pages?.single()?.textLines?.single()?.text != "latest") {
+            yield()
+        }
+        allowFirstReload.complete(Unit)
+        bothReloadsAdvancedPastCurrent.await()
+
+        assertEquals(
+            "latest",
+            controller.curTextChapter?.pages?.single()?.textLines?.single()?.text,
+        )
+    }
+
+    @Test
+    fun `failed reload clears its fence and keeps the current valid layout available`() = runTest {
+        val controller = reloadableController()
+        controller.scope = this
+        val originalChapter = requireNotNull(controller.curTextChapter)
+        val source = ReflowableSpeechContentSource(1, controller, SpeechSegmenter())
+        val original = requireNotNull(source.current())
+        val failureEntered = CompletableDeferred<Unit>()
+        val allowFailure = CompletableDeferred<Unit>()
+        every { controller.getChapterByIdUserCase(1, 0) } returns flowOf(bookChapter(0))
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            failureEntered.complete(Unit)
+            allowFailure.await()
+            throw IllegalStateException("fixture reload failure")
+        }
+
+        controller.loadContent(resetPageOffset = true)
+        failureEntered.await()
+        assertNull(source.seek(original.position))
+        allowFailure.complete(Unit)
+        val recovered = awaitSeek(source, original.position)
+
+        assertEquals(original, recovered)
+        assertSame(originalChapter, controller.curTextChapter)
+    }
+
+    @Test
+    fun `cancelled reload clears its fence and keeps the current valid layout available`() = runTest {
+        val controller = reloadableController()
+        controller.scope = this
+        val originalChapter = requireNotNull(controller.curTextChapter)
+        val source = ReflowableSpeechContentSource(1, controller, SpeechSegmenter())
+        val original = requireNotNull(source.current())
+        val cancellationEntered = CompletableDeferred<Unit>()
+        val allowCancellation = CompletableDeferred<Unit>()
+        every { controller.getChapterByIdUserCase(1, 0) } returns flowOf(bookChapter(0))
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            cancellationEntered.complete(Unit)
+            allowCancellation.await()
+            throw CancellationException("fixture reload cancellation")
+        }
+
+        controller.loadContent(resetPageOffset = true)
+        cancellationEntered.await()
+        assertNull(source.seek(original.position))
+        allowCancellation.complete(Unit)
+        val recovered = awaitSeek(source, original.position)
+
+        assertEquals(original, recovered)
+        assertSame(originalChapter, controller.curTextChapter)
+    }
+
+    @Test
     fun `invalid locator on an existing page leaves real controller and source position unchanged`() = runTest {
         val controller = controllerWith(
             TextPage(index = 0, textLines = arrayListOf(textLine("current"))),
@@ -436,6 +610,32 @@ class PageViewControllerSpeechSnapshotTest {
         coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
         coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
         return controller
+    }
+
+    private fun reloadableController(): PageViewController {
+        val controller = controllerWith(
+            TextPage(index = 0, textLines = arrayListOf(textLine("old"))),
+        )
+        controller.durChapterIndex = 0
+        controller.curTextChapter = textChapter(
+            0,
+            TextPage(index = 0, textLines = arrayListOf(textLine("old"))),
+        )
+        controller.chapterSize = 1
+        controller.book = book()
+        controller.isInitFinish = true
+        return controller
+    }
+
+    private suspend fun awaitSeek(
+        source: ReflowableSpeechContentSource,
+        position: SpeechPosition,
+    ) = withTimeout(5_000) {
+        while (true) {
+            source.seek(position)?.let { return@withTimeout it }
+            yield()
+        }
+        error("unreachable")
     }
 
     private fun textLine(text: String, paragraphIndex: Int = 0) = TextLine(
