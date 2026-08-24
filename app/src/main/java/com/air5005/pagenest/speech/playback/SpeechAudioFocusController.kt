@@ -9,6 +9,7 @@ import android.media.AudioManager
 class SpeechAudioFocusController(
     context: Context,
     private val controller: SpeechController,
+    private val onInterruption: () -> Unit = controller::pause,
 ) : AudioManager.OnAudioFocusChangeListener {
     private val audioManager = context.getSystemService(AudioManager::class.java)
     private val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -33,7 +34,7 @@ class SpeechAudioFocusController(
             AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
-            -> controller.pause()
+            -> onInterruption()
 
             AudioManager.AUDIOFOCUS_GAIN -> Unit
         }

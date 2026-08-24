@@ -37,6 +37,22 @@ class SpeechAudioFocusControllerTest {
         assertEquals(listOf("pause"), commands.values)
     }
 
+    @Test
+    fun `focus loss delegates interruption cleanup to the media bridge`() {
+        val commands = RecordingSpeechController()
+        val cleanup = mutableListOf<String>()
+        val focus = SpeechAudioFocusController(
+            context = ApplicationProvider.getApplicationContext(),
+            controller = commands,
+            onInterruption = { cleanup += "media bridge" },
+        )
+
+        focus.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+
+        assertEquals(listOf("media bridge"), cleanup)
+        assertEquals(emptyList<String>(), commands.values)
+    }
+
     private class RecordingSpeechController : SpeechController {
         val values = mutableListOf<String>()
         override fun resume() { values += "resume" }

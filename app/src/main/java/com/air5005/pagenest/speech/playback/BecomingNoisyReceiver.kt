@@ -6,8 +6,10 @@ import android.content.Intent
 import android.media.AudioManager
 
 /** Pauses speech before its output is redirected to the device speaker. */
-class BecomingNoisyReceiver(private val controller: SpeechController) : BroadcastReceiver() {
+class BecomingNoisyReceiver(private val onNoisy: () -> Unit) : BroadcastReceiver() {
+    constructor(controller: SpeechController) : this(controller::pause)
+
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) controller.pause()
+        if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) onNoisy()
     }
 }

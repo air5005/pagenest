@@ -16,7 +16,16 @@ class SpeechMediaPlayer(
     looper: Looper,
     private val controller: SpeechController,
     private val onPlaybackActiveChanged: (Boolean) -> Unit = {},
+    private val canStartPlayback: () -> Boolean = { true },
 ) : SimpleBasePlayer(looper) {
+    private val placeholderMetadata = MediaMetadata.Builder()
+        .setTitle(DEFAULT_TITLE)
+        .build()
+    private val placeholderItem = MediaItem.Builder()
+        .setMediaId(MEDIA_ID)
+        .setMediaMetadata(placeholderMetadata)
+        .build()
+
     private var state = State.Builder()
         .setAvailableCommands(
             Player.Commands.Builder()
@@ -24,7 +33,17 @@ class SpeechMediaPlayer(
                 .add(Player.COMMAND_STOP)
                 .build(),
         )
-        .setPlaybackState(Player.STATE_IDLE)
+        .setPlaylist(
+            listOf(
+                MediaItemData.Builder(MEDIA_ID)
+                    .setMediaItem(placeholderItem)
+                    .setMediaMetadata(placeholderMetadata)
+                    .build(),
+            ),
+        )
+        .setCurrentMediaItemIndex(0)
+        .setPlaylistMetadata(placeholderMetadata)
+        .setPlaybackState(Player.STATE_READY)
         .setPlayWhenReady(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
         .build()
 
@@ -55,6 +74,27 @@ class SpeechMediaPlayer(
         invalidateState()
     }
 
+    /** Mirrors the process-wide session without reconstructing or auto-starting speech. */
+    fun updateFromSnapshot(snapshot: SpeechControllerSnapshot) {
+        val playing = snapshot.playbackState is com.air5005.pagenest.speech.model.SpeechPlaybackState.Playing
+        updateNowPlaying(
+            bookTitle = snapshot.nowPlaying.bookTitle,
+            chapterTitle = snapshot.nowPlaying.chapterTitle,
+            paused = !playing,
+        )
+        onPlaybackActiveChanged(playing)
+    }
+
+    /** Applies an Android interruption to both the session and Media3 foreground state. */
+    fun pauseForInterruption() {
+        controller.pause()
+        state = state.buildUpon()
+            .setPlayWhenReady(false, Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS)
+            .build()
+        onPlaybackActiveChanged(false)
+        invalidateState()
+    }
+
     fun handleCustomCommand(action: String): Boolean = when (action) {
         ACTION_NEXT -> {
             controller.next()
@@ -66,13 +106,25 @@ class SpeechMediaPlayer(
         }
         ACTION_STOP -> {
             controller.stop()
+            state = state.buildUpon()
+                .setPlayWhenReady(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+                .build()
             onPlaybackActiveChanged(false)
+            invalidateState()
             true
         }
         else -> false
     }
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
+        if (playWhenReady && !canStartPlayback()) {
+            state = state.buildUpon()
+                .setPlayWhenReady(false, Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS)
+                .build()
+            onPlaybackActiveChanged(false)
+            invalidateState()
+            return Futures.immediateVoidFuture()
+        }
         if (playWhenReady) controller.resume() else controller.pause()
         state = state.buildUpon()
             .setPlayWhenReady(playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
@@ -93,5 +145,6 @@ class SpeechMediaPlayer(
         const val ACTION_PREVIOUS = "com.air5005.pagenest.speech.PREVIOUS"
         const val ACTION_STOP = "com.air5005.pagenest.speech.STOP"
         private const val MEDIA_ID = "active-speech-session"
+        private const val DEFAULT_TITLE = "Speech playback"
     }
 }

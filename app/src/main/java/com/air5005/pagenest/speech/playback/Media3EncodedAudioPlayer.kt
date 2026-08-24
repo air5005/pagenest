@@ -15,9 +15,16 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.air5005.pagenest.speech.engine.SpeechEngineResult
 import com.air5005.pagenest.speech.model.SpeechError
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
+import kotlinx.coroutines.CancellableContinuation
 
 internal interface EncodedAudioBackend {
     suspend fun play(bytes: ByteArray): SpeechEngineResult
@@ -32,6 +39,7 @@ internal interface EncodedAudioBackend {
 class Media3EncodedAudioPlayer internal constructor(
     private val maxAudioBytes: Int,
     private val backend: EncodedAudioBackend,
+    private val playbackScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) : EncodedAudioPlayer {
     constructor(context: Context, maxAudioBytes: Int = DEFAULT_MAX_AUDIO_BYTES) : this(
         maxAudioBytes = maxAudioBytes,
@@ -39,36 +47,101 @@ class Media3EncodedAudioPlayer internal constructor(
     )
 
     private val closed = AtomicBoolean(false)
+    private val released = AtomicBoolean(false)
+    private val activePlaybackLock = Any()
+    private var activePlayback: ActivePlayback? = null
 
     override suspend fun playMp3(bytes: ByteArray): SpeechEngineResult {
-        if (closed.get() || bytes.isEmpty() || bytes.size > maxAudioBytes) {
+        if (closed.get() || bytes.isEmpty() || bytes.size > maxAudioBytes || hasActivePlayback()) {
             return SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure)
         }
-        return try {
-            backend.play(bytes.copyOf())
-        } catch (cancelled: CancellationException) {
-            backend.stop()
-            releaseOnce()
-            throw cancelled
+        val copiedBytes = bytes.copyOf()
+        return suspendCancellableCoroutine { continuation ->
+            val playback = ActivePlayback(continuation)
+            synchronized(activePlaybackLock) {
+                if (closed.get() || activePlayback != null) {
+                    continuation.resume(SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure))
+                    return@suspendCancellableCoroutine
+                }
+                activePlayback = playback
+            }
+            playback.worker = playbackScope.launch {
+                try {
+                    finishPlayback(playback, backend.play(copiedBytes))
+                } catch (cancelled: CancellationException) {
+                    // A caller cancellation or stop has already completed the public result.
+                } catch (_: Throwable) {
+                    finishPlayback(
+                        playback,
+                        SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure),
+                    )
+                }
+            }
+            continuation.invokeOnCancellation {
+                cancelPlayback(playback, completeAsCancelled = false)
+            }
         }
     }
 
     override suspend fun stop() {
-        backend.stop()
+        closed.set(true)
+        val playback = synchronized(activePlaybackLock) { activePlayback }
+        if (playback != null) {
+            cancelPlayback(playback, completeAsCancelled = true)
+        } else {
+            backend.stop()
+            releaseOnce()
+        }
     }
 
     override fun close() {
+        closed.set(true)
+        val playback = synchronized(activePlaybackLock) { activePlayback }
+        if (playback != null) {
+            cancelPlayback(playback, completeAsCancelled = true)
+        } else {
+            backend.stop()
+            releaseOnce()
+        }
+        playbackScope.cancel()
+    }
+
+    private fun hasActivePlayback(): Boolean = synchronized(activePlaybackLock) { activePlayback != null }
+
+    private fun finishPlayback(playback: ActivePlayback, result: SpeechEngineResult) {
+        synchronized(activePlaybackLock) {
+            if (activePlayback !== playback) return
+            activePlayback = null
+            if (playback.continuation.isActive) playback.continuation.resume(result)
+        }
+    }
+
+    private fun cancelPlayback(playback: ActivePlayback, completeAsCancelled: Boolean) {
+        synchronized(activePlaybackLock) {
+            if (activePlayback !== playback) return
+            activePlayback = null
+        }
         backend.stop()
+        playback.worker?.cancel()
+        if (completeAsCancelled && playback.continuation.isActive) {
+            playback.continuation.resume(SpeechEngineResult.Cancelled)
+        }
+        closed.set(true)
         releaseOnce()
     }
 
     private fun releaseOnce() {
-        if (closed.compareAndSet(false, true)) backend.release()
+        if (released.compareAndSet(false, true)) backend.release()
     }
 
     companion object {
         const val DEFAULT_MAX_AUDIO_BYTES = 5 * 1024 * 1024
     }
+
+    private class ActivePlayback(
+        val continuation: CancellableContinuation<SpeechEngineResult>,
+        var worker: Job? = null,
+    )
 }
 
 @AndroidxOptIn(markerClass = [UnstableApi::class])

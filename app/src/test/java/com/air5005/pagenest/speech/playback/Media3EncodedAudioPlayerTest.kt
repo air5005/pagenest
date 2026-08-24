@@ -6,6 +6,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -52,6 +53,22 @@ class Media3EncodedAudioPlayerTest {
         runCurrent()
 
         assertTrue(playback.isCancelled)
+        assertEquals(1, backend.stopCalls)
+        assertEquals(1, backend.releaseCalls)
+        player.close()
+        assertEquals(1, backend.releaseCalls)
+    }
+
+    @Test
+    fun `public stop completes active playback as cancelled and releases once`() = runTest {
+        val backend = FakeBackend(waitForStop = true)
+        val player = Media3EncodedAudioPlayer(maxAudioBytes = 16, backend = backend)
+        val playback = async { player.playMp3(byteArrayOf(1)) }
+        runCurrent()
+
+        player.stop()
+
+        assertEquals(SpeechEngineResult.Cancelled, withTimeout(1) { playback.await() })
         assertEquals(1, backend.stopCalls)
         assertEquals(1, backend.releaseCalls)
         player.close()
