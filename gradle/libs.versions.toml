@@ -6,6 +6,7 @@ jsoup = "1.21.1"
 kotlinxSerializationCore = "1.8.1"
 kotlinxSerializationJson = "1.8.0"
 ktorClientOkhttp = "3.0.0"
+ktorClientMock = "3.0.0"
 materialVersion = "1.8.3"
 media3Exoplayer = "1.5.1"
 multiplatformMarkdownRenderer = "0.25.0"
@@ -57,6 +58,7 @@ jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "kotlinxSerializationCore" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktorClientOkhttp" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktorClientMock" }
 multiplatform-markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "multiplatformMarkdownRenderer" }
 pdfbox-android = { module = "com.tom-roush:pdfbox-android", version.ref = "pdfboxAndroid" }
 storage = { module = "com.anggrayudi:storage", version.ref = "storage" }

@@ -5,15 +5,13 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="file" path="speech-secrets/" />
+        <exclude domain="file" path="speech-cache/" />
+        <exclude domain="file" path="datastore/speech_preferences.preferences_pb" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="file" path="speech-secrets/" />
+        <exclude domain="file" path="speech-cache/" />
+        <exclude domain="file" path="datastore/speech_preferences.preferences_pb" />
     </device-transfer>
-    -->
 </data-extraction-rules>

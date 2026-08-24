@@ -4,8 +4,15 @@ import android.app.Application
 import android.content.Context
 import androidx.room.Room
 import com.air5005.pagenest.speech.engine.AndroidTextToSpeechFactory
+import com.air5005.pagenest.speech.engine.AzureSpeechEngine
 import com.air5005.pagenest.speech.engine.SpeechEngine
 import com.air5005.pagenest.speech.engine.SystemTtsEngine
+import com.air5005.pagenest.speech.cloud.AzureSpeechClient
+import com.air5005.pagenest.speech.cloud.AzureSpeechService
+import com.air5005.pagenest.speech.playback.EncodedAudioPlayer
+import com.air5005.pagenest.speech.playback.Media3EncodedAudioPlayer
+import com.air5005.pagenest.speech.security.KeystoreSpeechCredentialStore
+import com.air5005.pagenest.speech.security.SpeechCredentialStore
 import com.air5005.pagenest.library.importing.AndroidImportRequestFactory
 import com.air5005.pagenest.library.importing.BookImportCatalog
 import com.air5005.pagenest.library.importing.BookImportCoordinator
@@ -103,6 +110,30 @@ object AppModule {
     @Provides
     @Singleton
     fun provideSpeechEngine(systemTtsEngine: SystemTtsEngine): SpeechEngine = systemTtsEngine
+
+    @Provides
+    @Singleton
+    fun provideSpeechCredentialStore(
+        @ApplicationContext context: Context,
+    ): SpeechCredentialStore = KeystoreSpeechCredentialStore(context.filesDir)
+
+    @Provides
+    @Singleton
+    fun provideAzureSpeechService(): AzureSpeechService = AzureSpeechClient.production()
+
+    @Provides
+    @Singleton
+    fun provideEncodedAudioPlayer(
+        @ApplicationContext context: Context,
+    ): EncodedAudioPlayer = Media3EncodedAudioPlayer(context)
+
+    @Provides
+    @Singleton
+    fun provideAzureSpeechEngine(
+        credentialStore: SpeechCredentialStore,
+        client: AzureSpeechService,
+        encodedAudioPlayer: EncodedAudioPlayer,
+    ): AzureSpeechEngine = AzureSpeechEngine(credentialStore, client, encodedAudioPlayer)
 
     @Provides
     @Singleton
