@@ -635,6 +635,7 @@ class PageViewControllerSpeechSnapshotTest {
         firstAdjacentEntered.await()
         assertTrue(controller.moveToNextChapter(upContent = true))
         awaitCurrentChapterText(controller, "latest-2")
+        awaitNextChapterText(controller, "latest-3")
 
         allowFirstCurrent.complete(Unit)
         allowFirstAdjacent.complete(Unit)
