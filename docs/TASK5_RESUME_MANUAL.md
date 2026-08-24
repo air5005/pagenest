@@ -1,7 +1,7 @@
-# Task8 续接手册（重启/换机后继续开发）
+# Task9 续接手册（重启/换机后继续开发）
 
-本仓库已完成 Task1~Task7，并按你要求全部提交到 `master`。
-每次系统重启或在新电脑克隆后，按以下步骤可直接从 Task8 继续。
+本仓库已完成 Task1~Task8，并按你要求全部提交到 `master`。
+每次系统重启或在新电脑克隆后，按以下步骤可直接从 Task9 继续。
 
 ## 1. 拉取最新版仓库
 
@@ -15,28 +15,28 @@ git status
 要求：
 
 - `git status` 应显示 `nothing to commit, working tree clean`
-- `git log --oneline -n 1` 最近提交应是 Task7 的归档提交
+- `git log --oneline -n 1` 最近提交应是 Task8 的归档提交
 
-## 2. Task8 继续入口
+## 2. Task9 继续入口
 
 - 设计/任务源文件：
   - `D:\pagenest\docs\superpowers\plans\2026-08-23-voice-reading.md`
   - `D:\pagenest\docs\superpowers\specs\2026-08-23-voice-reading-design.md`
 
 - 本次要继续的是：
-  - Task 8：接入阅读器语音控制和 Azure 设置，支持 PDF 朗读界面，并移除非官方 Edge TTS
+  - Task 9：完成 Android 生命周期自动化验证，并在目标 HyperOS 3 手机上执行安装、后台朗读和 60 分钟测试矩阵
 
 ## 3. 开始开发前的最短检查
 
 ```powershell
-Get-Content .\docs\superpowers\plans\2026-08-23-voice-reading.md | Select-String "Task 8" -Context 0,60
+Get-Content .\docs\superpowers\plans\2026-08-23-voice-reading.md | Select-String "Task 9" -Context 0,80
 ```
 
 确认：
 
-- Task 8 仍是未勾选状态。
-- Task 7 的有界缓存、在线重试、自动离线回退和并发作用域保护已经提交。
-- 计划里 Task 8 涉及到的设置、阅读器控制、PDF 界面和旧 Edge TTS 清理与你要改的代码一致。
+- Task 9 仍是未勾选状态。
+- Task 8 的两个阅读器语音控制、Azure 设置、首次联网同意、PDF 提示和旧 Edge TTS 清理已经提交。
+- 计划里 Task 9 涉及到的 Android 自动化、HyperOS 3 真机和 60 分钟验收矩阵与你要执行的测试一致。
 
 ## 4. 开发执行原则（必须遵守）
 
@@ -52,7 +52,7 @@ Get-Content .\docs\superpowers\plans\2026-08-23-voice-reading.md | Select-String
 
 ## 6. 建议日常命令
 
-### 开始 Task8 之前
+### 开始 Task9 之前
 
 ```powershell
 git clean -fd
@@ -63,7 +63,7 @@ git status
 
 ```powershell
 git add .
-git commit -m "feat: integrate speech reader controls"
+git commit -m "test: add HyperOS speech release gates"
 git push origin master
 git status
 ```
@@ -87,4 +87,4 @@ git rev-parse origin/master
 git pull origin master
 ```
 
-然后从计划中的 `Task 8` 开始即可。
+然后从计划中的 `Task 9` 开始即可。若 `adb devices -l` 没有列出目标手机，可先完成桌面门禁和测试文档，再连接手机继续真机矩阵。
