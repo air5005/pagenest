@@ -35,14 +35,39 @@ class SpeechEngineRouter(
 ) {
     private val requestSequence = AtomicLong()
 
-    suspend fun speak(request: SpeechRequest, mode: SpeechMode): RoutedSpeechResult {
+    suspend fun speak(
+        request: SpeechRequest,
+        mode: SpeechMode,
+        onRoute: (SpeechRouteIndicator) -> Unit = {},
+    ): RoutedSpeechResult {
         val requestGeneration = requestSequence.incrementAndGet()
         val cacheScope = retainCacheScope(requestGeneration, request)
+        onRoute(
+            SpeechRouteIndicator(
+                engineId = if (mode == SpeechMode.OFFLINE) systemEngine.id else onlineEngine.id,
+                fellBack = false,
+            ),
+        )
         return when (mode) {
             SpeechMode.OFFLINE -> routeOffline(request, fellBack = false)
             SpeechMode.ONLINE -> routeOnlineOnly(cacheScope, request)
-            SpeechMode.AUTO -> routeAutomatically(cacheScope, request)
+            SpeechMode.AUTO -> routeAutomatically(cacheScope, request, onRoute)
         }
+    }
+
+    suspend fun stop() {
+        var failure: Throwable? = null
+        try {
+            systemEngine.stop()
+        } catch (error: Throwable) {
+            failure = error
+        }
+        try {
+            onlineEngine.stop()
+        } catch (error: Throwable) {
+            failure?.addSuppressed(error) ?: throw error
+        }
+        failure?.let { throw it }
     }
 
     private suspend fun routeOffline(request: SpeechRequest, fellBack: Boolean): RoutedSpeechResult =
@@ -79,6 +104,7 @@ class SpeechEngineRouter(
     private suspend fun routeAutomatically(
         cacheScope: SpeechCacheScopeToken?,
         request: SpeechRequest,
+        onRoute: (SpeechRouteIndicator) -> Unit,
     ): RoutedSpeechResult {
         cachedAudio(cacheScope, request)?.let { audio ->
             val result = playAndWipe(audio)
@@ -93,7 +119,10 @@ class SpeechEngineRouter(
             when (val synthesis = onlineEngine.synthesize(request)) {
                 is OnlineSynthesisResult.Audio -> {
                     val result = playCacheAndWipe(cacheScope, request, synthesis.bytes)
-                    return if (result is SpeechEngineResult.Failed) routeOffline(request, fellBack = true)
+                    return if (result is SpeechEngineResult.Failed) {
+                        onRoute(SpeechRouteIndicator(systemEngine.id, true, result.error))
+                        routeOffline(request, fellBack = true)
+                    }
                     else RoutedSpeechResult(result, onlineEngine.id)
                 }
                 OnlineSynthesisResult.Cancelled ->
@@ -104,6 +133,7 @@ class SpeechEngineRouter(
                         retryIndex++
                         delayMillis(delay)
                     } else {
+                        onRoute(SpeechRouteIndicator(systemEngine.id, true, synthesis.error))
                         return routeOffline(request, fellBack = true)
                     }
                 }

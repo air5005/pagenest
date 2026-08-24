@@ -96,6 +96,7 @@ class SpeechSession(
     suspend fun seek(position: SpeechPosition) = submit(SpeechSessionCommand.Seek(position))
     suspend fun setSleepTimer(deadlineElapsedMillis: Long?) =
         submit(SpeechSessionCommand.SetSleepTimer(deadlineElapsedMillis))
+    suspend fun updateOptions(options: SpeechOptions) = submit(SpeechSessionCommand.UpdateOptions(options))
     suspend fun stop() = submit(SpeechSessionCommand.Stop)
 
     suspend fun closeAndJoin() {
@@ -192,6 +193,7 @@ class SpeechSession(
             SpeechSessionCommand.Previous -> moveOnOwner(forward = false)
             is SpeechSessionCommand.Seek -> seekOnOwner(command.position)
             is SpeechSessionCommand.SetSleepTimer -> setTimerOnOwner(command.deadlineElapsedMillis)
+            is SpeechSessionCommand.UpdateOptions -> updateOptionsOnOwner(command.options)
             SpeechSessionCommand.Stop -> stopOnOwner()
         }
     }
@@ -246,6 +248,13 @@ class SpeechSession(
             clock.awaitUntil(deadlineElapsedMillis)
             messages.send(Message.TimerExpired(version))
         }
+    }
+
+    private suspend fun updateOptionsOnOwner(newOptions: SpeechOptions) {
+        options = newOptions
+        val segment = _state.value.currentSegment() ?: return
+        invalidatePlayback()
+        beginPlayback(segment)
     }
 
     private suspend fun handleTimerExpired(version: Long) {

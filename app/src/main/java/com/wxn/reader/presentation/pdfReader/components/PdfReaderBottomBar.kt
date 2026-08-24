@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.sharp.ArrowBack
 import androidx.compose.material.icons.automirrored.sharp.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -27,12 +28,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.wxn.reader.R
 
 @Composable
 fun PdfReaderBottomBar(
     pageCount: Int,
     currentPage: Int,
     onPageChange: (Int) -> Unit,
+    onSpeech: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -46,6 +50,9 @@ fun PdfReaderBottomBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            IconButton(onClick = onSpeech) {
+                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = stringResource(R.string.speech_play))
+            }
             IconButton(
                 onClick = {
                     if (currentPage > 1) {

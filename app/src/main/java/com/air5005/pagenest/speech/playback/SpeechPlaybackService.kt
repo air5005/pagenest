@@ -38,6 +38,7 @@ class SpeechPlaybackService : MediaSessionService() {
     private var noisyRegistered = false
     private var playbackActive = false
     private var snapshotObserver: Job? = null
+    private val stopPolicy = SpeechPlaybackServiceStopPolicy()
 
     override fun onCreate() {
         super.onCreate()
@@ -73,7 +74,10 @@ class SpeechPlaybackService : MediaSessionService() {
         mediaSession.setCustomLayout(customLayout())
         player.updateFromSnapshot(AppSpeechController.snapshot.value)
         snapshotObserver = serviceScope.launch {
-            AppSpeechController.snapshot.collect(player::updateFromSnapshot)
+            AppSpeechController.snapshot.collect { snapshot ->
+                player.updateFromSnapshot(snapshot)
+                if (stopPolicy.onPlaybackState(snapshot.playbackState)) stopSelf()
+            }
         }
     }
 

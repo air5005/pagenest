@@ -77,7 +77,6 @@ import com.wxn.reader.domain.use_case.chapters.UpdateChapterWordCountUserCase
 import com.wxn.reader.domain.use_case.notes.GetNotesForBookUseCase
 import com.wxn.reader.presentation.mainReader.PageViewController
 import com.wxn.reader.util.PdfBitmapConverter
-import com.wxn.reader.util.tts.TtsNavigator
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -345,7 +344,6 @@ object AppModule {
     }
 
     @Provides
-    @Singleton
     fun providePageViewController(
         @ApplicationContext context: Context,
         getChapterByIdUserCase: GetChapterByIdUserCase,
@@ -481,12 +479,6 @@ object AppModule {
     @Singleton
     fun providePermissionRepository(application: Application): PermissionRepository =
         PermissionRepositoryImpl(application)
-
-    @Provides
-    @Singleton
-    fun provideTtsNavigator(application: Application,
-                            ttsPreferencesUtil: TtsPreferencesUtil) : TtsNavigator =
-        TtsNavigator(application, ttsPreferencesUtil)
 
     @Provides
     @Singleton

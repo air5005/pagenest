@@ -59,6 +59,11 @@ import com.wxn.reader.presentation.bookReader.BookReaderUiState.LOAD_CHAPTER_SUC
 import com.wxn.reader.ui.theme.stringResource
 import com.wxn.reader.util.LanguageInfo
 import com.wxn.reader.util.LanguageUtil
+import com.air5005.pagenest.speech.content.ReflowableSpeechContentSource
+import com.air5005.pagenest.speech.content.SpeechSegmenter
+import com.air5005.pagenest.speech.playback.SpeechNowPlaying
+import com.air5005.pagenest.speech.settings.ReaderSpeechManager
+import com.air5005.pagenest.speech.model.SpeechPlaybackState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,7 +75,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import javax.inject.Inject
-import com.wxn.reader.util.tts.TtsNavigator
 import kotlinx.coroutines.Dispatchers
 
 @HiltViewModel
@@ -107,7 +111,7 @@ class MainReadViewModel @Inject constructor(
 
     private val addOrUpdateReadingActivityUseCase: AddReadingActivityUseCase,
     private val getReadingActivityByDateUseCase: GetReadingActivityByDateUseCase,
-    private val ttsNavigator: TtsNavigator,
+    private val readerSpeechManager: ReaderSpeechManager,
 
     private val textParser: TextParser,
     val pageController: PageViewController,
@@ -242,17 +246,6 @@ class MainReadViewModel @Inject constructor(
     private val _enableTts = MutableStateFlow(false)
     val enableTts: StateFlow<Boolean> = _enableTts.asStateFlow()
 
-    private val _isTtsPlaying = MutableStateFlow(false)
-    val isTtsPlaying: StateFlow<Boolean> = _isTtsPlaying.asStateFlow()
-    private val _ttsSpeed = MutableStateFlow(1.0)
-    val ttsSpeed: StateFlow<Double> = _ttsSpeed.asStateFlow()
-
-    private val _ttsPitch = MutableStateFlow(1.0)
-    val ttsPitch: StateFlow<Double> = _ttsPitch.asStateFlow()
-
-    private val _ttsLanguage = MutableStateFlow(LanguageUtil.languageMaps[1])
-    val ttsLanguage: StateFlow<LanguageInfo?> = _ttsLanguage.asStateFlow()
-
     private suspend fun fetchBook(bookId: Long): Boolean {
         try {
             val theBook = getBookByIdUseCase(bookId)
@@ -300,6 +293,12 @@ class MainReadViewModel @Inject constructor(
             appPrefsUtil.appPrefsFlow.stateIn(viewModelScope).collect { pref ->
                 _appPreferences.value = pref
                 Logger.d("MainReadViewModel::init appPreferences[$pref]")
+            }
+        }
+
+        viewModelScope.launch {
+            readerSpeechManager.playbackSnapshot.collect { snapshot ->
+                _isTtsOn.value = snapshot.playbackState !is SpeechPlaybackState.Idle
             }
         }
 
@@ -368,7 +367,7 @@ class MainReadViewModel @Inject constructor(
     }
 
     override fun onCleared() {
-        pageController.clear()
+        if (readerSpeechManager.isActive) pageController.detachReaderView() else pageController.clear()
         currentDayStartTime = 0
 //        _initialLocator.value = null
         _currentBookId.value = null
@@ -376,8 +375,6 @@ class MainReadViewModel @Inject constructor(
         _book.value = null
         isReadingSessionActive = false
         lastLocatorChangeTime = 0L
-        ttsNavigator.onDestroy()
-
         super.onCleared()
         Logger.i("MainReadViewModel::onCleared")
     }
@@ -466,6 +463,21 @@ class MainReadViewModel @Inject constructor(
 
         _isBookmarked.value = (pageController.textChapter(0)?.pages?.getOrNull(pageController.durPageIndex)?.bookmarkId ?: -1) > 0
         _enableTts.value = !pageController.currentPage()?.text.isNullOrEmpty()
+
+        if (readerSpeechManager.isActive) {
+            val snapshot = pageController.speechPageSnapshot()
+            snapshot.lines.firstOrNull { !it.isImage && !it.isLine && it.text.isNotBlank() }?.let { line ->
+                readerSpeechManager.seek(
+                    com.air5005.pagenest.speech.model.SpeechPosition(
+                        bookId = currentBookId.value ?: return@let,
+                        chapterIndex = snapshot.chapterIndex,
+                        pageIndex = snapshot.pageIndex,
+                        paragraphIndex = line.paragraphIndex,
+                        textOffset = line.charStartOffset,
+                    ),
+                )
+            }
+        }
 
         viewModelScope.launch {
             if (isReadingSessionActive) {
@@ -1154,53 +1166,17 @@ class MainReadViewModel @Inject constructor(
         }
     }
 
-//    fun setTtsPlaying(isPlaying: Boolean) {
-//        _isTtsPlaying.value = isPlaying
-//        Logger.i("MainReadViewModel::setTtsPlaying:isPlaying=$isPlaying")
-//            if (isPlaying) {
-//                ttsPlay()
-//            } else {
-//                ttsNavigator.stop()
-//                pageController.stopReadPage()
-//                _isTtsOn.value = false
-//                _isTtsPlaying.value = false
-//            }
-//    }
-
-    private fun ttsPlay() {
-        Logger.i("MainReadViewModel::ttsPlay")
-        _isTtsOn.value = true
-        _isTtsPlaying.value = true
-
-        val lang = book.value?.language
-        Logger.d("MainReadViewModel::ttsPlay::lang[$lang]")
-        val langInfo = LanguageInfo.fromCode(lang ?: "en")
-        if (ttsNavigator.setLanguage(langInfo)) {
-            pageController.readPage(ttsNavigator) {
-                _isTtsOn.value = false
-                _isTtsPlaying.value = false
-                pageController.stopReadPage()
-            }
-        } else {
-            ToastUtil.show("Language not supported")
-            _isTtsOn.value = false
-            _isTtsPlaying.value = false
-        }
-    }
-
-    fun toggleTts() {
-        if (!pageController.currentPage()?.text.isNullOrEmpty()) {
-            val isPlayging = _isTtsPlaying.value
-            Logger.i("MainReadViewModel:toggleTts:isPlayging=$isPlayging")
-            if (!isPlayging) {
-                ttsPlay()
-            } else {
-                ttsNavigator.stop()
-                pageController.stopReadPage()
-                _isTtsOn.value = false
-                _isTtsPlaying.value = false
-            }
-        }
+    fun prepareSpeech() {
+        val bookId = currentBookId.value ?: return
+        if (pageController.currentPage()?.text.isNullOrBlank()) return
+        readerSpeechManager.prepare(
+            source = ReflowableSpeechContentSource(bookId, pageController, SpeechSegmenter()),
+            highlightSink = pageController.speechHighlightSink(),
+            nowPlaying = SpeechNowPlaying(
+                bookTitle = book.value?.title.orEmpty(),
+                chapterTitle = curChapterName.value,
+            ),
+        )
     }
 
     fun hideOutHrefDialog() {
@@ -1209,30 +1185,4 @@ class MainReadViewModel @Inject constructor(
     }
 
 
-//    fun setTtsSpeed(speed: Double) {
-//        _ttsSpeed.value = speed
-//        ttsNavigator.setSpeed(speed.toFloat())
-//    }
-//
-//    fun setTtsPitch(pitch: Double) {
-//        _ttsPitch.value = pitch
-//        ttsNavigator.setPitch(pitch.toFloat())
-//    }
-//
-//    fun setTtsLanguage(language: AppLanguage) {
-//        _ttsLanguage.value = language
-//        ttsNavigator.setLanguage(language)
-//    }
-//
-//    fun skipToNextUtterance() {
-//        viewModelScope.launch {
-////            ttsNavigator.value?.skipToNextUtterance()
-//        }
-//    }
-//
-//    fun skipToPreviousUtterance() {
-//        viewModelScope.launch {
-////            ttsNavigator.value?.skipToPreviousUtterance()
-//        }
-//    }
 }

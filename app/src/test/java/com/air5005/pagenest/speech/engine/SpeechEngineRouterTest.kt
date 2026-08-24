@@ -282,12 +282,14 @@ class SpeechEngineRouterTest {
         val delays = mutableListOf<Long>()
         val router = router(system, azure, RecordingCache(), delays)
 
-        val routed = router.speak(request("auth"), SpeechMode.AUTO)
+        val indicators = mutableListOf<SpeechRouteIndicator>()
+        val routed = router.speak(request("auth"), SpeechMode.AUTO, indicators::add)
 
         assertEquals(1, azure.synthesisRequests.size)
         assertTrue(delays.isEmpty())
         assertEquals(1, system.requests.size)
         assertTrue(routed.fellBack)
+        assertEquals(SpeechError.InvalidCredentials, indicators.last().fallbackError)
     }
 
     @Test

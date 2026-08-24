@@ -287,4 +287,33 @@
     <string name="import_result_unreadable" translatable="false">无法读取所选文件</string>
     <string name="import_result_parse_failed" translatable="false">无法解析这本书</string>
     <string name="import_result_storage_failed" translatable="false">存储空间不足或复制失败</string>
+    <string name="speech_settings">Voice reading</string>
+    <string name="speech_back">Back</string>
+    <string name="speech_mode">Reading mode</string>
+    <string name="speech_mode_offline">Offline</string>
+    <string name="speech_mode_online">Online</string>
+    <string name="speech_mode_auto">Automatic</string>
+    <string name="speech_key">Azure Speech Key</string>
+    <string name="speech_key_replace">Replace Azure Speech Key</string>
+    <string name="speech_region">Azure Region</string>
+    <string name="speech_locale">Language locale</string>
+    <string name="speech_save">Save</string>
+    <string name="speech_test_connection">Test connection</string>
+    <string name="speech_delete_key">Delete key</string>
+    <string name="speech_previous">Previous paragraph</string>
+    <string name="speech_pause">Pause</string>
+    <string name="speech_play">Play</string>
+    <string name="speech_next">Next paragraph</string>
+    <string name="speech_stop">Stop</string>
+    <string name="speech_rate">Speed: %1$.2f</string>
+    <string name="speech_pitch">Pitch: %1$.2f</string>
+    <string name="speech_timer_off">Timer off</string>
+    <string name="speech_timer_minutes">%1$d min</string>
+    <string name="speech_pdf_scanned" translatable="false">此 PDF 为扫描版，暂不支持语音朗读</string>
+    <string name="speech_online_consent" translatable="false">在线朗读会将当前段落文本发送给 Azure 生成语音，是否继续？</string>
+    <string name="speech_error_timeout" translatable="false">网络连接超时，请检查网络后重试</string>
+    <string name="speech_error_auth" translatable="false">Azure Speech Key 无效，请检查后重试</string>
+    <string name="speech_error_region" translatable="false">Azure Region 无效或与 Key 不匹配</string>
+    <string name="speech_error_rate" translatable="false">请求过于频繁，请稍后再试</string>
+    <string name="speech_error_quota" translatable="false">Azure 余额不足，请充值后重试</string>
 </resources>

@@ -9,7 +9,14 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.air5005.pagenest.speech.content.PdfSpeechContentSource
 import com.air5005.pagenest.speech.content.PdfSpeechDocument
+import com.air5005.pagenest.speech.content.PdfSpeechAvailability
 import com.air5005.pagenest.speech.content.SpeechSegmenter
+import com.air5005.pagenest.speech.model.SpeechPosition
+import com.air5005.pagenest.speech.model.SpeechSegment
+import com.air5005.pagenest.speech.playback.SpeechNowPlaying
+import com.air5005.pagenest.speech.session.SpeechHighlightSink
+import com.air5005.pagenest.speech.settings.ReaderSpeechManager
+import com.air5005.pagenest.speech.ui.SpeechControlPolicy
 import com.wxn.base.bean.Book
 import com.wxn.base.util.Logger
 import com.wxn.reader.domain.model.ReadingActive
@@ -41,6 +48,7 @@ class PdfReaderViewModel @Inject constructor(
     private val getReadingProgressUseCase: GetReadingProgressUseCase,
     private val addOrUpdateReadingActivityUseCase: AddReadingActivityUseCase,
     private val getReadingActivityByDateUseCase: GetReadingActivityByDateUseCase,
+    private val readerSpeechManager: ReaderSpeechManager,
     savedStateHandle: SavedStateHandle,
     context: Application,
 ) : AndroidViewModel(context) {
@@ -65,6 +73,9 @@ class PdfReaderViewModel @Inject constructor(
 
     private val _initialPage = MutableStateFlow(0)
     val initialPage = _initialPage.asStateFlow()
+
+    private val _speechPage = MutableStateFlow<Int?>(null)
+    val speechPage = _speechPage.asStateFlow()
 
     private val _pdfId = MutableStateFlow<Long>(-1)
 //    val pdfId = _pdfId.asStateFlow()
@@ -163,6 +174,53 @@ class PdfReaderViewModel @Inject constructor(
             bookId = _pdfId.value,
             document = PdfSpeechDocument.open(getApplication(), contentUri),
             segmenter = segmenter,
+        )
+    }
+
+    suspend fun prepareSpeech(currentPage: Int): Boolean {
+        val source = openSpeechContentSource()
+        if (source.availability() == PdfSpeechAvailability.SCANNED) {
+            source.close()
+            _errorMessage.value = SpeechControlPolicy.messageFor(com.air5005.pagenest.speech.model.SpeechError.NoExtractableText)
+            return false
+        }
+        _errorMessage.value = null
+        readerSpeechManager.prepare(
+            source = source,
+            highlightSink = object : SpeechHighlightSink {
+                override suspend fun show(segment: SpeechSegment) {
+                    _speechPage.value = segment.position.pageIndex
+                }
+
+                override suspend fun clear() {
+                    _speechPage.value = null
+                }
+            },
+            nowPlaying = SpeechNowPlaying(
+                bookTitle = book.value?.title.orEmpty(),
+                chapterTitle = "PDF ${currentPage + 1}",
+            ),
+            initialPosition = SpeechPosition(
+                bookId = _pdfId.value,
+                chapterIndex = 0,
+                pageIndex = currentPage,
+                paragraphIndex = 0,
+                textOffset = 0,
+            ),
+        )
+        return true
+    }
+
+    fun seekSpeechToPage(page: Int) {
+        if (!readerSpeechManager.isActive || _speechPage.value == page) return
+        readerSpeechManager.seek(
+            SpeechPosition(
+                bookId = _pdfId.value,
+                chapterIndex = 0,
+                pageIndex = page,
+                paragraphIndex = 0,
+                textOffset = 0,
+            ),
         )
     }
 

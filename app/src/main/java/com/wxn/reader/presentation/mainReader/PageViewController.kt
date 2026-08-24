@@ -42,7 +42,6 @@ import com.wxn.reader.domain.use_case.chapters.GetChapterByIdUserCase
 import com.wxn.reader.domain.use_case.chapters.GetChapterCountByBookIdUserCase
 import com.wxn.reader.domain.use_case.chapters.UpdateChapterWordCountUserCase
 import com.wxn.reader.domain.use_case.notes.GetNotesForBookUseCase
-import com.wxn.reader.util.tts.TtsNavigator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -1398,67 +1397,6 @@ open class PageViewController @Inject constructor(
         if (refresh) callBack?.upContent(resetPageOffset = false)
     }
 
-    fun stopReadPage() {
-        scope?.launchIO {
-            val chapter = textChapter(0) ?: return@launchIO
-            for(page in chapter.pages) {
-                val currentTextLines = page.textLines
-                if (currentTextLines.isNotEmpty()) {
-                    for (textLine in currentTextLines) {
-                        textLine.isReadAloud = false
-                    }
-                }
-            }
-            with(Dispatchers.Main) {
-                callBack?.upContent()
-            }
-        }
-    }
-
-    fun readPage(ttsNavigator: TtsNavigator, onFinish:()->Unit) {
-        Logger.i("PageViewController::readPage::durChapterIndex=${durChapterIndex},durPageIndex=$durPageIndex")
-        var status = 1
-        scope?.launchIO {
-            do {
-                var textLines : List<TextLine>? = currentPage()?.textLines
-                status = ttsNavigator.play(textLines) { targetLines, status ->
-                    val currentTextLines = currentPage()?.textLines ?: return@play
-                    if (currentTextLines.isNotEmpty()) {
-                        for (textLine in currentTextLines) {
-                            textLine.isReadAloud = false
-                            if (targetLines.contains(textLine)) {
-                                textLine.isReadAloud = status
-                                Logger.d("PageViewController::readPage::line[${textLine.text}]::set readAloud::status[$status]")
-                            }
-                        }
-                    }
-                    callBack?.upContent()
-                }
-                if (status == 1) {
-                    Logger.d("MainReadViewModel::ttsPlay::then moveToNextPage or moveToNextChapter")
-                    with(Dispatchers.Main) {
-                        moveToNextPage()
-                        val curChapter = textChapter(0)
-                        if (curChapter != null) {
-                            if (durPageIndex >= curChapter.pageSize) {
-                                moveToNextChapter(true)
-                            }
-                        } else {
-                            status = 0
-                        }
-                        delay(200)
-                    }
-//                } else if (status < 0) {
-//                    ToastUtil.show("Language not suppport.")
-                } else {
-                    Logger.d("MainReadViewModel::ttsPlay::status=$status")
-
-                }
-            } while(status == 1)
-            onFinish()
-        }
-    }
-
     /***
      * update view after modify preference
      */
@@ -1497,5 +1435,11 @@ open class PageViewController @Inject constructor(
         pageFactory = null
         isScroll = false
         Logger.i("PageViewController:clear()")
+    }
+
+    /** Detaches the visual reader while leaving speech-owned chapter snapshots available. */
+    fun detachReaderView() {
+        callBack = null
+        clickListener = null
     }
 }

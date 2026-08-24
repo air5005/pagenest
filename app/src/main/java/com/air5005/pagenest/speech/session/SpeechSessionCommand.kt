@@ -12,6 +12,7 @@ sealed interface SpeechSessionCommand {
     data object Previous : SpeechSessionCommand
     data class Seek(val position: SpeechPosition) : SpeechSessionCommand
     data class SetSleepTimer(val deadlineElapsedMillis: Long?) : SpeechSessionCommand
+    data class UpdateOptions(val options: SpeechOptions) : SpeechSessionCommand
     data object Stop : SpeechSessionCommand
 }
 

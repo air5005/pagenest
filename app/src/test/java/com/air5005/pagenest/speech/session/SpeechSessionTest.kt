@@ -467,6 +467,24 @@ class SpeechSessionTest {
         assertTrue(raced.await().isFailure)
     }
 
+    @Test
+    fun `updating speech options cancels generation and restarts unfinished segment`() = runTest {
+        val segment = segment("A")
+        val fixture = fixture(segment)
+        fixture.session.start(fixture.source, options())
+        runCurrent()
+
+        fixture.session.updateOptions(options().copy(rate = 1.75f, pitch = 0.5f))
+        runCurrent()
+
+        assertEquals(2, fixture.engine.requests.size)
+        assertEquals(segment, fixture.engine.requests.last().segment)
+        assertEquals(1.75f, fixture.engine.requests.last().rate)
+        assertEquals(0.5f, fixture.engine.requests.last().pitch)
+        assertEquals(1, fixture.engine.stopCalls)
+        fixture.session.closeAndJoin()
+    }
+
     private fun fixture(
         vararg segments: SpeechSegment,
         completeOnStop: Boolean = true,

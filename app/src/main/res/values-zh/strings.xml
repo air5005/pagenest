@@ -279,4 +279,6 @@
     <string name="dialog_content_to_out_href">确定要跳转到外部链接(%1$s)吗？</string>
     <string name="auto_open_last_read_file">自动打开上次阅读文件</string>
 
+    <string name="speech_settings">语音朗读</string><string name="speech_back">返回</string><string name="speech_mode">朗读模式</string><string name="speech_mode_offline">离线</string><string name="speech_mode_online">在线</string><string name="speech_mode_auto">自动</string><string name="speech_key">Azure Speech Key</string><string name="speech_key_replace">覆盖 Azure Speech Key</string><string name="speech_region">Azure Region</string><string name="speech_save">保存</string><string name="speech_test_connection">测试连接</string><string name="speech_delete_key">删除密钥</string><string name="speech_previous">上一段</string><string name="speech_pause">暂停</string><string name="speech_play">播放</string><string name="speech_next">下一段</string><string name="speech_stop">停止</string><string name="speech_rate">语速：%1$.2f</string><string name="speech_pitch">音调：%1$.2f</string><string name="speech_timer_off">关闭定时</string><string name="speech_timer_minutes">%1$d 分钟</string>
+    <string name="speech_locale">语言区域</string>
 </resources>

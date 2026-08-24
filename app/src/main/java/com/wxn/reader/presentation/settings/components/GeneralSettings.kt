@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderCopy
 import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,6 +51,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.wxn.reader.R
 import com.wxn.reader.navigation.LocalNavController
+import com.wxn.reader.navigation.Screens
 import com.wxn.reader.presentation.settings.SettingsViewModel
 import com.wxn.reader.util.LanguageInfo
 import com.wxn.reader.util.LanguageUtil
@@ -235,15 +237,13 @@ fun GeneralSettings(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-    //            ListItem(
-    //                headlineContent = { Text(stringResource(R.string.tts_set))},
-    //                leadingContent = { Icon(Icons.Outlined.SmartToy, contentDescription = "tts") },
-    //                trailingContent = {},
-    //                modifier = Modifier.clickable {
-    //                    navController.navigate(Screens.TtsSetScreen.route)
-    //                }
-    //            )
-                //TODO 采用Edge TTS
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.speech_settings)) },
+                    leadingContent = { Icon(Icons.Outlined.SmartToy, contentDescription = null) },
+                    modifier = Modifier.clickable {
+                        navController.navigate(Screens.TtsSetScreen.route)
+                    },
+                )
             }
         }
 

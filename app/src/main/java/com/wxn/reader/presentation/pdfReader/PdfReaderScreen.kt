@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,6 +40,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import android.widget.Toast
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -51,14 +55,34 @@ import com.wxn.reader.util.KeepScreenOn
 import com.wxn.reader.util.SetFullScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.air5005.pagenest.speech.model.SpeechPlaybackState
+import com.air5005.pagenest.speech.settings.SpeechSettingsViewModel
+import com.air5005.pagenest.speech.settings.SpeechUiEvent
+import com.air5005.pagenest.speech.ui.SpeechControlPolicy
+import com.air5005.pagenest.speech.ui.SpeechControlSheet
+import com.air5005.pagenest.speech.ui.SpeechControlUiState
 
 @Composable
 fun PdfReaderScreen(
     viewModel: PdfReaderViewModel = hiltViewModel()
 ) {
+    val speechSettings: SpeechSettingsViewModel = hiltViewModel()
+    val speechState by speechSettings.state.collectAsStateWithLifecycle()
+    val speechSnapshot by speechSettings.playbackSnapshot.collectAsStateWithLifecycle()
+    val routeIndicator by speechSettings.routeIndicator.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var speechEvent by remember { mutableStateOf<SpeechUiEvent?>(null) }
+    LaunchedEffect(speechSettings) {
+        speechSettings.events.collect { event ->
+            if (event is SpeechUiEvent.ShowFallbackMessage) {
+                Toast.makeText(context, event.message, Toast.LENGTH_LONG).show()
+            } else {
+                speechEvent = event
+            }
+        }
+    }
     val navController: NavHostController = LocalNavController.current
     KeepScreenOn(true)
-    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var areToolbarsVisible by remember { mutableStateOf(false) }
     SetFullScreen(context, showSystemBars = areToolbarsVisible)
@@ -71,6 +95,7 @@ fun PdfReaderScreen(
     val backgroundColor by viewModel.backgroundColor.collectAsStateWithLifecycle()
     val pageCount by viewModel.pageCount.collectAsStateWithLifecycle()
     val initialPage by viewModel.initialPage.collectAsStateWithLifecycle()
+    val speechPage by viewModel.speechPage.collectAsStateWithLifecycle()
 
     var currentPage by remember { mutableIntStateOf(initialPage) }
 
@@ -96,6 +121,12 @@ fun PdfReaderScreen(
         }
         animate(0f, 1f, animationSpec = tween(durationMillis = 500)) { value, _ ->
             readerAlpha = value
+        }
+    }
+
+    LaunchedEffect(speechPage) {
+        speechPage?.let { page ->
+            if (page in 0 until pageCount) pagerState.scrollToPage(page)
         }
     }
 
@@ -178,6 +209,7 @@ fun PdfReaderScreen(
                     LaunchedEffect(pagerState) {
                         snapshotFlow { pagerState.currentPage }.collect { page ->
                             currentPage = page
+                            viewModel.seekSpeechToPage(page)
                         }
                     }
 
@@ -272,7 +304,57 @@ fun PdfReaderScreen(
                         pagerState.animateScrollToPage(newPage - 1)
                     }
                 },
+                onSpeech = {
+                    coroutineScope.launch {
+                        if (viewModel.prepareSpeech(currentPage)) speechSettings.start()
+                    }
+                },
             )
+        }
+
+        if (speechSnapshot.playbackState !is SpeechPlaybackState.Idle) {
+            SpeechControlSheet(
+                state = SpeechControlUiState(
+                    playback = speechSnapshot.playbackState,
+                    mode = speechState.preferences.mode,
+                    activeEngineLabel = SpeechControlPolicy.engineLabel(routeIndicator.engineId, routeIndicator.fellBack),
+                    rate = speechState.preferences.rate,
+                    pitch = speechState.preferences.pitch,
+                    voiceId = speechState.preferences.voiceId,
+                    sleepTimerMinutes = null,
+                ),
+                onPlay = {
+                    coroutineScope.launch {
+                        if (!SpeechControlPolicy.requiresPreparation(speechSnapshot.playbackState) || viewModel.prepareSpeech(currentPage)) {
+                            speechSettings.start()
+                        }
+                    }
+                },
+                onPause = speechSettings::pause,
+                onStop = speechSettings::stop,
+                onPrevious = speechSettings::previous,
+                onNext = speechSettings::next,
+                onRateChange = speechSettings::setRate,
+                onPitchChange = speechSettings::setPitch,
+                onTimerChange = speechSettings::setSleepTimer,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+
+        when (val event = speechEvent) {
+            SpeechUiEvent.RequestOnlineConsent -> AlertDialog(
+                onDismissRequest = { speechEvent = null },
+                text = { Text(stringResource(com.wxn.reader.R.string.speech_online_consent)) },
+                confirmButton = { Button(onClick = { speechEvent = null; speechSettings.confirmOnlineConsent() }) { Text(stringResource(com.wxn.reader.R.string.confirm)) } },
+                dismissButton = { Button(onClick = { speechEvent = null }) { Text(stringResource(com.wxn.reader.R.string.cancel)) } },
+            )
+            is SpeechUiEvent.ShowMessage -> AlertDialog(
+                onDismissRequest = { speechEvent = null },
+                text = { Text(event.message) },
+                confirmButton = { Button(onClick = { speechEvent = null }) { Text(stringResource(com.wxn.reader.R.string.ok)) } },
+            )
+            is SpeechUiEvent.ShowFallbackMessage -> Unit
+            null -> Unit
         }
 
 

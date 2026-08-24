@@ -3,6 +3,7 @@ package com.wxn.reader.presentation.mainReader
 import android.content.Intent
 import android.net.Uri
 import android.widget.FrameLayout
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -28,6 +29,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,6 +45,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.air5005.pagenest.speech.model.SpeechPlaybackState
+import com.air5005.pagenest.speech.settings.SpeechSettingsViewModel
+import com.air5005.pagenest.speech.settings.SpeechUiEvent
+import com.air5005.pagenest.speech.ui.SpeechControlPolicy
+import com.air5005.pagenest.speech.ui.SpeechControlSheet
+import com.air5005.pagenest.speech.ui.SpeechControlUiState
 import androidx.lifecycle.viewModelScope
 import com.wxn.base.ext.toAndroidColor
 import com.wxn.base.ext.toCompatibleArgb
@@ -76,6 +86,21 @@ fun ReaderView(
     readerPreferences: ReaderPreferences,
     viewModel: MainReadViewModel,
 ) {
+    val speechSettings: SpeechSettingsViewModel = hiltViewModel()
+    val speechState by speechSettings.state.collectAsStateWithLifecycle()
+    val speechSnapshot by speechSettings.playbackSnapshot.collectAsStateWithLifecycle()
+    val routeIndicator by speechSettings.routeIndicator.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var speechEvent by remember { mutableStateOf<SpeechUiEvent?>(null) }
+    LaunchedEffect(speechSettings) {
+        speechSettings.events.collect { event ->
+            if (event is SpeechUiEvent.ShowFallbackMessage) {
+                Toast.makeText(context, event.message, Toast.LENGTH_LONG).show()
+            } else {
+                speechEvent = event
+            }
+        }
+    }
     LogCompositions("Composition:ReaderView")
     val navController = LocalNavController.current
     val book by viewModel.book.collectAsStateWithLifecycle()
@@ -120,7 +145,6 @@ fun ReaderView(
     val outHref by viewModel.outHref.collectAsStateWithLifecycle()
     val showOutHrefDialog by viewModel.showOutHrefDialog.collectAsStateWithLifecycle()
 
-    val context = LocalContext.current
 
     fun navigateToHref(href: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(href))
@@ -180,7 +204,8 @@ fun ReaderView(
                         }
                     },
                     textToSpeech = {
-                        viewModel.toggleTts()
+                        viewModel.prepareSpeech()
+                        speechSettings.start()
                     },
                     enableTts = enableTts,
                     isTtsOn = isTtsOn,
@@ -191,6 +216,32 @@ fun ReaderView(
                 if (isTtsOn) {
                     viewModel.onToolbarsVisibilityChanged()
                 }
+            }
+
+            if (isTtsOn) {
+                SpeechControlSheet(
+                    state = SpeechControlUiState(
+                        playback = speechSnapshot.playbackState,
+                        mode = speechState.preferences.mode,
+                        activeEngineLabel = SpeechControlPolicy.engineLabel(routeIndicator.engineId, routeIndicator.fellBack),
+                        rate = speechState.preferences.rate,
+                        pitch = speechState.preferences.pitch,
+                        voiceId = speechState.preferences.voiceId,
+                        sleepTimerMinutes = null,
+                    ),
+                    onPlay = {
+                        if (SpeechControlPolicy.requiresPreparation(speechSnapshot.playbackState)) viewModel.prepareSpeech()
+                        speechSettings.start()
+                    },
+                    onPause = speechSettings::pause,
+                    onStop = speechSettings::stop,
+                    onPrevious = speechSettings::previous,
+                    onNext = speechSettings::next,
+                    onRateChange = speechSettings::setRate,
+                    onPitchChange = speechSettings::setPitch,
+                    onTimerChange = speechSettings::setSleepTimer,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
             }
 
     //        TtsPlayer(
@@ -521,6 +572,22 @@ fun ReaderView(
                     }
                 },
             )
+        }
+
+        when (val event = speechEvent) {
+            SpeechUiEvent.RequestOnlineConsent -> AlertDialog(
+                onDismissRequest = { speechEvent = null },
+                text = { Text(stringResource(R.string.speech_online_consent)) },
+                confirmButton = { Button(onClick = { speechEvent = null; speechSettings.confirmOnlineConsent() }) { Text(stringResource(R.string.confirm)) } },
+                dismissButton = { Button(onClick = { speechEvent = null }) { Text(stringResource(R.string.cancel)) } },
+            )
+            is SpeechUiEvent.ShowMessage -> AlertDialog(
+                onDismissRequest = { speechEvent = null },
+                text = { Text(event.message) },
+                confirmButton = { Button(onClick = { speechEvent = null }) { Text(stringResource(R.string.ok)) } },
+            )
+            is SpeechUiEvent.ShowFallbackMessage -> Unit
+            null -> Unit
         }
     }
 }
