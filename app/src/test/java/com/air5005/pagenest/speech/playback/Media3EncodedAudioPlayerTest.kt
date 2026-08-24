@@ -2,6 +2,7 @@ package com.air5005.pagenest.speech.playback
 
 import com.air5005.pagenest.speech.engine.SpeechEngineResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class Media3EncodedAudioPlayerTest {
@@ -165,6 +169,75 @@ class Media3EncodedAudioPlayerTest {
         assertEquals(1, backend.releaseCalls)
     }
 
+    @Test
+    fun `replacement playback cannot start until active backend stop finishes`() = runTest {
+        val backend = OverlappingStopBackend()
+        val player = Media3EncodedAudioPlayer(maxAudioBytes = 16, backend = backend)
+        val first = async { player.playMp3(byteArrayOf(1)) }
+        runCurrent()
+        backend.firstStarted.await()
+        val replacement = CompletableDeferred<SpeechEngineResult>()
+        backend.startOverlap = {
+            thread(name = "replacement-playback") {
+                replacement.complete(runBlocking { player.playMp3(byteArrayOf(2)) })
+            }
+        }
+
+        player.stop()
+
+        assertEquals(SpeechEngineResult.Cancelled, first.await())
+        assertEquals(SpeechEngineResult.Completed, replacement.await())
+        player.close()
+    }
+
+    @Test
+    fun `idle stop cannot stop a playback admitted concurrently`() = runTest {
+        val backend = OverlappingStopBackend()
+        val player = Media3EncodedAudioPlayer(maxAudioBytes = 16, backend = backend)
+        val replacement = CompletableDeferred<SpeechEngineResult>()
+        backend.startOverlap = {
+            thread(name = "idle-stop-replacement") {
+                replacement.complete(runBlocking { player.playMp3(byteArrayOf(2)) })
+            }
+        }
+
+        player.stop()
+
+        assertEquals(SpeechEngineResult.Completed, replacement.await())
+        player.close()
+    }
+
+    @Test
+    fun `stop after terminal close never touches released backend`() = runTest {
+        val backend = FakeBackend()
+        val player = Media3EncodedAudioPlayer(maxAudioBytes = 16, backend = backend)
+
+        player.close()
+        player.stop()
+
+        assertEquals(1, backend.stopCalls)
+        assertEquals(1, backend.releaseCalls)
+    }
+
+    @Test
+    fun `terminal close cannot release backend while reusable stop is in progress`() = runTest {
+        val backend = StopCloseOverlapBackend()
+        val player = Media3EncodedAudioPlayer(maxAudioBytes = 16, backend = backend)
+        val closeFinished = CompletableDeferred<Unit>()
+        backend.startClose = {
+            thread(name = "terminal-close") {
+                player.close()
+                closeFinished.complete(Unit)
+            }
+        }
+
+        player.stop()
+        closeFinished.await()
+
+        assertFalse(backend.releasedDuringFirstStop.get())
+        assertEquals(1, backend.releaseCalls)
+    }
+
     private class FirstPlaybackWaitsBackend : EncodedAudioBackend {
         var playCalls = 0
         var stopCalls = 0
@@ -233,6 +306,68 @@ class Media3EncodedAudioPlayerTest {
         override fun release() {
             releaseCalls++
             throw IllegalStateException("backend release failed")
+        }
+    }
+
+    private class OverlappingStopBackend : EncodedAudioBackend {
+        val firstStarted = CompletableDeferred<Unit>()
+        private val overlapStarted = AtomicBoolean(false)
+        lateinit var startOverlap: () -> Thread
+        private val current = AtomicReference<CompletableDeferred<SpeechEngineResult>?>()
+        private val stopBegan = AtomicBoolean(false)
+        private val stopFinished = AtomicBoolean(false)
+        private var playCalls = 0
+        private var stopCalls = 0
+
+        override suspend fun play(bytes: ByteArray): SpeechEngineResult {
+            playCalls++
+            val completion = CompletableDeferred<SpeechEngineResult>()
+            current.set(completion)
+            if (playCalls == 1) firstStarted.complete(Unit)
+            if (stopBegan.get()) overlapStarted.set(true)
+            if (stopFinished.get()) return SpeechEngineResult.Completed
+            return completion.await()
+        }
+
+        override fun stop() {
+            stopCalls++
+            if (stopCalls != 1) return
+            stopBegan.set(true)
+            val overlappingThread = startOverlap()
+            while (!overlapStarted.get() && overlappingThread.state != Thread.State.BLOCKED) {
+                Thread.yield()
+            }
+            current.getAndSet(null)?.complete(SpeechEngineResult.Cancelled)
+            stopFinished.set(true)
+        }
+
+        override fun release() = Unit
+    }
+
+    private class StopCloseOverlapBackend : EncodedAudioBackend {
+        lateinit var startClose: () -> Thread
+        val releasedDuringFirstStop = AtomicBoolean(false)
+        @Volatile
+        var releaseCalls = 0
+        private val firstStopInProgress = AtomicBoolean(false)
+        private var stopCalls = 0
+
+        override suspend fun play(bytes: ByteArray): SpeechEngineResult = SpeechEngineResult.Completed
+
+        override fun stop() {
+            stopCalls++
+            if (stopCalls != 1) return
+            firstStopInProgress.set(true)
+            val closeThread = startClose()
+            while (releaseCalls == 0 && closeThread.state != Thread.State.BLOCKED) {
+                Thread.yield()
+            }
+            firstStopInProgress.set(false)
+        }
+
+        override fun release() {
+            if (firstStopInProgress.get()) releasedDuringFirstStop.set(true)
+            releaseCalls++
         }
     }
 

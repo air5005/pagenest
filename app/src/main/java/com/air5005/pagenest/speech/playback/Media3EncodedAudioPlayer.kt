@@ -53,7 +53,7 @@ class Media3EncodedAudioPlayer internal constructor(
     private var activePlayback: ActivePlayback? = null
 
     override suspend fun playMp3(bytes: ByteArray): SpeechEngineResult {
-        if (closed.get() || bytes.isEmpty() || bytes.size > maxAudioBytes || hasActivePlayback()) {
+        if (closed.get() || bytes.isEmpty() || bytes.size > maxAudioBytes) {
             return SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure)
         }
         val copiedBytes = bytes.copyOf()
@@ -92,30 +92,27 @@ class Media3EncodedAudioPlayer internal constructor(
     }
 
     override suspend fun stop() {
-        val playback = synchronized(activePlaybackLock) { activePlayback }
-        if (playback != null) {
-            cancelPlayback(playback, completeAsCancelled = true)
-        } else {
+        val playback = synchronized(activePlaybackLock) {
+            if (closed.get()) return
             stopBackendSafely()
+            activePlayback.also { activePlayback = null }
         }
+        playback?.completeCancellation(completeAsCancelled = true)
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        val playback = synchronized(activePlaybackLock) { activePlayback }
-        if (playback != null) {
-            cancelPlayback(playback, completeAsCancelled = true)
-        } else {
+        val playback = synchronized(activePlaybackLock) {
             stopBackendSafely()
+            activePlayback.also { activePlayback = null }
         }
+        playback?.completeCancellation(completeAsCancelled = true)
         try {
             releaseOnce()
         } finally {
             playbackScope.cancel()
         }
     }
-
-    private fun hasActivePlayback(): Boolean = synchronized(activePlaybackLock) { activePlayback != null }
 
     private fun finishPlayback(playback: ActivePlayback, result: SpeechEngineResult) {
         try {
@@ -132,16 +129,17 @@ class Media3EncodedAudioPlayer internal constructor(
     private fun cancelPlayback(playback: ActivePlayback, completeAsCancelled: Boolean) {
         synchronized(activePlaybackLock) {
             if (activePlayback !== playback) return
+            stopBackendSafely()
             activePlayback = null
         }
-        try {
-            stopBackendSafely()
-        } finally {
-            playback.worker?.cancel()
-            playback.clearBytes()
-            if (completeAsCancelled && playback.continuation.isActive) {
-                playback.continuation.resume(SpeechEngineResult.Cancelled)
-            }
+        playback.completeCancellation(completeAsCancelled)
+    }
+
+    private fun ActivePlayback.completeCancellation(completeAsCancelled: Boolean) {
+        worker?.cancel()
+        clearBytes()
+        if (completeAsCancelled && continuation.isActive) {
+            continuation.resume(SpeechEngineResult.Cancelled)
         }
     }
 

@@ -54,8 +54,14 @@ class AzureSpeechEngine(
         if (!closed.compareAndSet(false, true)) return
         try {
             encodedAudioPlayer.close()
-        } finally {
-            client.close()
+        } catch (primary: Throwable) {
+            try {
+                client.close()
+            } catch (secondary: Throwable) {
+                primary.addSuppressed(secondary)
+            }
+            throw primary
         }
+        client.close()
     }
 }

@@ -20,7 +20,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.SocketTimeoutException
 import kotlinx.coroutines.CancellationException
@@ -47,39 +46,47 @@ internal fun interface AzureResponseReader {
     suspend fun read(response: HttpResponse, limit: Int): ByteArray?
 }
 
-private object BoundedAzureResponseReader : AzureResponseReader {
+internal fun interface ByteArrayAllocator {
+    fun allocate(size: Int): ByteArray
+}
+
+private object DefaultByteArrayAllocator : ByteArrayAllocator {
+    override fun allocate(size: Int): ByteArray = ByteArray(size)
+}
+
+internal class BoundedAzureResponseReader(
+    private val allocator: ByteArrayAllocator = DefaultByteArrayAllocator,
+) : AzureResponseReader {
     override suspend fun read(response: HttpResponse, limit: Int): ByteArray? {
+        require(limit >= 0) { "Response limit is invalid" }
         val channel = response.bodyAsChannel()
-        val output = WipeableByteArrayOutputStream(minOf(limit, READ_BUFFER_BYTES))
-        val buffer = ByteArray(READ_BUFFER_BYTES)
+        val accumulated = allocator.allocate(limit)
+        val readBuffer = allocator.allocate(READ_BUFFER_BYTES)
+        var accumulatedSize = 0
         try {
             while (true) {
-                val read = channel.readAvailable(buffer)
+                val read = channel.readAvailable(readBuffer)
                 if (read < 0) break
                 if (read == 0) {
                     yield()
                     continue
                 }
-                if (output.size() > limit - read) {
+                if (accumulatedSize > limit - read) {
                     channel.cancel(null)
                     return null
                 }
-                output.write(buffer, 0, read)
+                readBuffer.copyInto(accumulated, destinationOffset = accumulatedSize, endIndex = read)
+                accumulatedSize += read
             }
-            return output.toByteArray()
+            return accumulated.copyOf(accumulatedSize)
         } finally {
-            buffer.fill(0)
-            output.wipe()
+            readBuffer.fill(0)
+            accumulated.fill(0)
         }
     }
 
-    private const val READ_BUFFER_BYTES = 8 * 1024
-}
-
-private class WipeableByteArrayOutputStream(initialSize: Int) : ByteArrayOutputStream(initialSize) {
-    fun wipe() {
-        buf.fill(0)
-        reset()
+    private companion object {
+        const val READ_BUFFER_BYTES = 8 * 1024
     }
 }
 
@@ -87,7 +94,7 @@ class AzureSpeechClient private constructor(
     private val httpClient: HttpClient,
     private val maxAudioBytes: Int = DEFAULT_MAX_AUDIO_BYTES,
     private val maxVoiceListBytes: Int = DEFAULT_MAX_VOICE_LIST_BYTES,
-    private val responseReader: AzureResponseReader = BoundedAzureResponseReader,
+    private val responseReader: AzureResponseReader = BoundedAzureResponseReader(),
 ) : AzureSpeechService {
     constructor(
         engine: HttpClientEngine,

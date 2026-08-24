@@ -297,6 +297,27 @@ class AzureSpeechClientTest {
     }
 
     @Test
+    fun `response larger than eight KiB wipes every temporary byte buffer`() = runTest {
+        val allocations = mutableListOf<ByteArray>()
+        val allocator = ByteArrayAllocator { size ->
+            ByteArray(size) { 0x5a }.also(allocations::add)
+        }
+        val payload = ByteArray(9_001) { index -> (index % 251 + 1).toByte() }
+        val client = AzureSpeechClient(
+            engine = MockEngine { respond(payload, HttpStatusCode.OK) },
+            maxAudioBytes = 10_000,
+            maxVoiceListBytes = AzureSpeechClient.DEFAULT_MAX_VOICE_LIST_BYTES,
+            responseReader = BoundedAzureResponseReader(allocator),
+        )
+
+        val result = client.synthesize(credentials(), request("text"))
+
+        assertArrayEquals(payload, result.value)
+        assertEquals(listOf(10_000, 8_192), allocations.map(ByteArray::size))
+        assertTrue(allocations.all { bytes -> bytes.all { it == 0.toByte() } })
+    }
+
+    @Test
     fun `voice response exceeding its bound is rejected`() = runTest {
         val client = AzureSpeechClient(
             MockEngine { respond(ByteArray(9), HttpStatusCode.OK) },
@@ -395,6 +416,22 @@ class AzureSpeechClientTest {
         assertEquals(1, service.closeCalls)
     }
 
+    @Test
+    fun `engine close preserves player failure and suppresses service failure`() {
+        val playerFailure = IllegalStateException("player close failed")
+        val serviceFailure = IllegalStateException("service close failed")
+        val player = CloseFailurePlayer(playerFailure)
+        val service = FixedAzureService(byteArrayOf(1), closeFailure = serviceFailure)
+        val engine = AzureSpeechEngine(FixedCredentialStore(credentials()), service, player)
+
+        val thrown = assertThrows(IllegalStateException::class.java) { engine.close() }
+
+        assertSame(playerFailure, thrown)
+        assertEquals(listOf(serviceFailure), thrown.suppressed.toList())
+        assertEquals(1, player.closeCalls)
+        assertEquals(1, service.closeCalls)
+    }
+
     private fun azureClient(engine: MockEngine): AzureSpeechClient =
         AzureSpeechClient(engine)
 
@@ -444,6 +481,7 @@ private class SuspendingPlayer(
 
 private class FixedAzureService(
     private val audio: ByteArray,
+    private val closeFailure: RuntimeException? = null,
 ) : AzureSpeechService {
     var closeCalls = 0
     var lastReturnedAudio: ByteArray? = null
@@ -460,7 +498,10 @@ private class FixedAzureService(
         return AzureResult(value = returned)
     }
 
-    override fun close() { closeCalls++ }
+    override fun close() {
+        closeCalls++
+        closeFailure?.let { throw it }
+    }
 }
 
 private class FirstAudioWaitsBackend : EncodedAudioBackend {
@@ -490,13 +531,15 @@ private class CountingResponseReader : AzureResponseReader {
     }
 }
 
-private class CloseFailurePlayer : EncodedAudioPlayer {
+private class CloseFailurePlayer(
+    private val closeFailure: RuntimeException = IllegalStateException("player close failed"),
+) : EncodedAudioPlayer {
     var closeCalls = 0
 
     override suspend fun playMp3(bytes: ByteArray): SpeechEngineResult = SpeechEngineResult.Completed
     override suspend fun stop() = Unit
     override fun close() {
         closeCalls++
-        throw IllegalStateException("player close failed")
+        throw closeFailure
     }
 }
