@@ -136,7 +136,11 @@ class SpeechMediaPlayer(
 
     override fun handleStop(): ListenableFuture<*> {
         controller.stop()
+        state = state.buildUpon()
+            .setPlayWhenReady(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+            .build()
         onPlaybackActiveChanged(false)
+        invalidateState()
         return Futures.immediateVoidFuture()
     }
 

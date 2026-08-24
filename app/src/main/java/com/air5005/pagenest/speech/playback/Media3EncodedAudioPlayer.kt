@@ -16,6 +16,7 @@ import com.air5005.pagenest.speech.engine.SpeechEngineResult
 import com.air5005.pagenest.speech.model.SpeechError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -58,14 +59,10 @@ class Media3EncodedAudioPlayer internal constructor(
         val copiedBytes = bytes.copyOf()
         return suspendCancellableCoroutine { continuation ->
             val playback = ActivePlayback(continuation)
-            synchronized(activePlaybackLock) {
-                if (closed.get() || activePlayback != null) {
-                    continuation.resume(SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure))
-                    return@suspendCancellableCoroutine
-                }
-                activePlayback = playback
+            continuation.invokeOnCancellation {
+                cancelPlayback(playback, completeAsCancelled = false)
             }
-            playback.worker = playbackScope.launch {
+            playback.worker = playbackScope.launch(start = CoroutineStart.LAZY) {
                 try {
                     finishPlayback(playback, backend.play(copiedBytes))
                 } catch (cancelled: CancellationException) {
@@ -77,9 +74,19 @@ class Media3EncodedAudioPlayer internal constructor(
                     )
                 }
             }
-            continuation.invokeOnCancellation {
-                cancelPlayback(playback, completeAsCancelled = false)
+            synchronized(activePlaybackLock) {
+                if (closed.get() || activePlayback != null) {
+                    playback.worker?.cancel()
+                    continuation.resume(SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure))
+                    return@suspendCancellableCoroutine
+                }
+                activePlayback = playback
             }
+            if (!continuation.isActive) {
+                cancelPlayback(playback, completeAsCancelled = false)
+                return@suspendCancellableCoroutine
+            }
+            playback.worker?.start()
         }
     }
 

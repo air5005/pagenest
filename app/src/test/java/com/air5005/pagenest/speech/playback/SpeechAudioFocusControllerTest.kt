@@ -2,8 +2,10 @@ package com.air5005.pagenest.speech.playback
 
 import android.content.Intent
 import android.media.AudioManager
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -51,6 +53,43 @@ class SpeechAudioFocusControllerTest {
 
         assertEquals(listOf("media bridge"), cleanup)
         assertEquals(emptyList<String>(), commands.values)
+    }
+
+    @Test
+    fun `focus loss pauses Media3 and marks playback inactive`() {
+        val commands = RecordingSpeechController()
+        val activeStates = mutableListOf<Boolean>()
+        val player = SpeechMediaPlayer(Looper.getMainLooper(), commands, activeStates::add)
+        player.setPlayWhenReady(true)
+        val focus = SpeechAudioFocusController(
+            context = ApplicationProvider.getApplicationContext(),
+            controller = commands,
+            onInterruption = player::pauseForInterruption,
+        )
+
+        focus.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+
+        assertFalse(player.playWhenReady)
+        assertEquals(listOf("resume", "pause"), commands.values)
+        assertEquals(listOf(true, false), activeStates)
+        player.release()
+    }
+
+    @Test
+    fun `becoming noisy pauses Media3 and marks playback inactive`() {
+        val commands = RecordingSpeechController()
+        val activeStates = mutableListOf<Boolean>()
+        val player = SpeechMediaPlayer(Looper.getMainLooper(), commands, activeStates::add)
+        player.setPlayWhenReady(true)
+        val receiver = BecomingNoisyReceiver(player::pauseForInterruption)
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+        receiver.onReceive(context, Intent(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+
+        assertFalse(player.playWhenReady)
+        assertEquals(listOf("resume", "pause"), commands.values)
+        assertEquals(listOf(true, false), activeStates)
+        player.release()
     }
 
     private class RecordingSpeechController : SpeechController {

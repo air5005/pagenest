@@ -101,6 +101,21 @@ class SpeechMediaPlayerTest {
         player.release()
     }
 
+    @Test
+    fun `standard stop clears Media3 playback activity`() {
+        val commands = RecordingSpeechController()
+        val activeStates = mutableListOf<Boolean>()
+        val player = SpeechMediaPlayer(Looper.getMainLooper(), commands, activeStates::add)
+        player.setPlayWhenReady(true)
+
+        player.stop()
+
+        assertEquals(listOf("resume", "stop"), commands.values)
+        assertFalse(player.playWhenReady)
+        assertEquals(listOf(true, false), activeStates)
+        player.release()
+    }
+
     private class RecordingSpeechController : SpeechController {
         val values = mutableListOf<String>()
         override fun resume() { values += "resume" }
