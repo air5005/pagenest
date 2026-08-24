@@ -59,6 +59,7 @@ import com.air5005.pagenest.speech.model.SpeechPlaybackState
 import com.air5005.pagenest.speech.settings.SpeechSettingsViewModel
 import com.air5005.pagenest.speech.settings.SpeechUiEvent
 import com.air5005.pagenest.speech.ui.SpeechControlPolicy
+import com.air5005.pagenest.speech.ui.SpeechSettingsEventPolicy
 import com.air5005.pagenest.speech.ui.SpeechControlSheet
 import com.air5005.pagenest.speech.ui.SpeechControlUiState
 
@@ -76,7 +77,7 @@ fun PdfReaderScreen(
         speechSettings.events.collect { event ->
             if (event is SpeechUiEvent.ShowFallbackMessage) {
                 Toast.makeText(context, event.message, Toast.LENGTH_LONG).show()
-            } else {
+            } else if (event is SpeechUiEvent.ShowMessage) {
                 speechEvent = event
             }
         }
@@ -341,13 +342,17 @@ fun PdfReaderScreen(
             )
         }
 
-        when (val event = speechEvent) {
-            SpeechUiEvent.RequestOnlineConsent -> AlertDialog(
-                onDismissRequest = { speechEvent = null; speechSettings.cancelOnlineConsent() },
+        if (SpeechSettingsEventPolicy.shouldShowOnlineConsent(speechState)) {
+            AlertDialog(
+                onDismissRequest = speechSettings::cancelOnlineConsent,
                 text = { Text(stringResource(com.wxn.reader.R.string.speech_online_consent)) },
-                confirmButton = { Button(onClick = { speechEvent = null; speechSettings.confirmOnlineConsent() }) { Text(stringResource(com.wxn.reader.R.string.confirm)) } },
-                dismissButton = { Button(onClick = { speechEvent = null; speechSettings.cancelOnlineConsent() }) { Text(stringResource(com.wxn.reader.R.string.cancel)) } },
+                confirmButton = { Button(onClick = speechSettings::confirmOnlineConsent) { Text(stringResource(com.wxn.reader.R.string.confirm)) } },
+                dismissButton = { Button(onClick = speechSettings::cancelOnlineConsent) { Text(stringResource(com.wxn.reader.R.string.cancel)) } },
             )
+        }
+
+        when (val event = speechEvent) {
+            SpeechUiEvent.RequestOnlineConsent -> Unit
             is SpeechUiEvent.ShowMessage -> AlertDialog(
                 onDismissRequest = { speechEvent = null },
                 text = { Text(event.message) },

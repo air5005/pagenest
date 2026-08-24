@@ -45,6 +45,8 @@ import com.wxn.reader.domain.use_case.notes.GetNotesForBookUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
@@ -167,20 +169,6 @@ open class PageViewController @Inject constructor(
         }
     }
 
-    private fun beginReaderLoad(): ReaderLoadToken {
-        while (true) {
-            val current = speechLayoutState.get()
-            val loading = current.copy(readerLoadSerial = current.readerLoadSerial + 1L)
-            if (speechLayoutState.compareAndSet(current, loading)) {
-                return ReaderLoadToken(
-                    layoutGeneration = loading.generation,
-                    readerLoadSerial = loading.readerLoadSerial,
-                    requiresActiveLayoutReload = false,
-                )
-            }
-        }
-    }
-
     private fun currentReaderLoadToken(): ReaderLoadToken {
         val current = speechLayoutState.get()
         return ReaderLoadToken(
@@ -209,12 +197,12 @@ open class PageViewController @Inject constructor(
         }
     }
 
-    private fun finishSpeechLayoutReload(token: ReaderLoadToken) {
+    private fun finishSpeechLayoutReload(token: ReaderLoadToken): Boolean {
         while (true) {
             val current = speechLayoutState.get()
-            if (current.activeReloadGeneration != token.layoutGeneration) return
+            if (current.activeReloadGeneration != token.layoutGeneration) return false
             val finished = current.copy(activeReloadGeneration = null)
-            if (speechLayoutState.compareAndSet(current, finished)) return
+            if (speechLayoutState.compareAndSet(current, finished)) return true
         }
     }
 
@@ -456,13 +444,14 @@ open class PageViewController @Inject constructor(
         val readerLoadToken = beginSpeechLayoutReload()
         val currentChapterIndex = durChapterIndex
         reloadScope.launchIO {
+            var installedAll = false
+            var currentInstalled = false
             try {
-                loadContent(
+                currentInstalled = loadContent(
                     currentChapterIndex,
                     resetPageOffset = resetPageOffset,
                     readerLoadToken = readerLoadToken,
-                    pageChangeOrigin = pageChangeOrigin,
-                )
+                ) != null
                 loadContent(
                     currentChapterIndex + 1,
                     resetPageOffset = resetPageOffset,
@@ -473,9 +462,13 @@ open class PageViewController @Inject constructor(
                     resetPageOffset = resetPageOffset,
                     readerLoadToken = readerLoadToken,
                 )
+                installedAll = true
             } finally {
                 withContext(NonCancellable + Dispatchers.Main.immediate) {
-                    finishSpeechLayoutReload(readerLoadToken)
+                    val released = finishSpeechLayoutReload(readerLoadToken)
+                    if (installedAll && currentInstalled && released && durChapterIndex == currentChapterIndex && pageChangeOrigin != null) {
+                        notifyPageChanged(pageChangeOrigin)
+                    }
                 }
             }
         }
@@ -703,7 +696,6 @@ open class PageViewController @Inject constructor(
         resetPageOffset: Boolean,
         readerLoadToken: ReaderLoadToken,
         applyToReaderState: Boolean = true,
-        pageChangeOrigin: PageChangeOrigin? = null,
     ): TextChapter? {
 //        Logger.i("PageViewController::loadContent:index=$index,upContent=$upContent,resetPageOffset=$resetPageOffset,bookid=${book?.id},bookname=${book?.title}")
         if (chapterIndex < 0) return null
@@ -846,10 +838,6 @@ open class PageViewController @Inject constructor(
                 }
             }
 
-            if (chapter.chapterIndex == durChapterIndex && pageChangeOrigin != null) {
-                Logger.e("PageViewController::loadContent success onPageChange::${durChapterIndex}")
-                clickListener?.onPageChange(pageChangeOrigin)
-            }
                 textChapter
             }
         }
@@ -887,25 +875,45 @@ open class PageViewController @Inject constructor(
         prevTextChapter = curTextChapter
         curTextChapter = nextTextChapter
         nextTextChapter = null
-        val readerLoadToken = beginReaderLoad()
-        if (curTextChapter == null) {
-            Coroutines.mainScope().launchIO {
-                Logger.d("PageViewController::moveToNextChapter:when curTextChapter is null, durChapterIndex=$durChapterIndex")
-                loadContent(
-                    durChapterIndex,
-                    upContent,
-                    false,
-                    readerLoadToken,
-                    pageChangeOrigin = PageChangeOrigin.USER,
-                )
-            }
-        } else {
+        val readerLoadToken = beginSpeechLayoutReload()
+        val targetChapterIndex = durChapterIndex
+        val needsCurrentLoad = curTextChapter == null
+        if (!needsCurrentLoad) {
             callBack?.upContent()
-            notifyPageChanged(PageChangeOrigin.USER)
         }
         Coroutines.mainScope().launchIO {
-            Logger.d("PageViewController::moveToNextChapter:, durChapterIndex=${durChapterIndex + 1}")
-            loadContent(durChapterIndex.plus(1), upContent, false, readerLoadToken)
+            var currentInstalled = false
+            try {
+                currentInstalled = coroutineScope {
+                    val currentLoad = async {
+                        if (needsCurrentLoad) {
+                            Logger.d("PageViewController::moveToNextChapter:when curTextChapter is null, durChapterIndex=$durChapterIndex")
+                            loadContent(
+                                targetChapterIndex,
+                                upContent,
+                                false,
+                                readerLoadToken,
+                            ) != null
+                        } else {
+                            true
+                        }
+                    }
+                    val adjacentLoad = async {
+                        Logger.d("PageViewController::moveToNextChapter:, durChapterIndex=${targetChapterIndex + 1}")
+                        loadContent(targetChapterIndex + 1, upContent, false, readerLoadToken)
+                    }
+                    val ready = currentLoad.await()
+                    adjacentLoad.await()
+                    ready
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main.immediate) {
+                    val released = finishSpeechLayoutReload(readerLoadToken)
+                    if (currentInstalled && released && durChapterIndex == targetChapterIndex) {
+                        notifyPageChanged(PageChangeOrigin.USER)
+                    }
+                }
+            }
         }
         saveRead()
         callBack?.upView()
@@ -929,29 +937,45 @@ open class PageViewController @Inject constructor(
         nextTextChapter = curTextChapter
         curTextChapter = prevTextChapter
         prevTextChapter = null
-        val readerLoadToken = beginReaderLoad()
-
-        if (curTextChapter == null) {
-            Coroutines.mainScope().launchIO {
-                Logger.d("PageViewController::moveToPrevChapter when curTextChapter is null, durChapterIndex=${durChapterIndex}")
-                loadContent(
-                    durChapterIndex,
-                    upContent,
-                    false,
-                    readerLoadToken,
-                    pageChangeOrigin = PageChangeOrigin.USER,
-                )
-            }
-        } else if (upContent) {
+        val readerLoadToken = beginSpeechLayoutReload()
+        val targetChapterIndex = durChapterIndex
+        val needsCurrentLoad = curTextChapter == null
+        if (!needsCurrentLoad && upContent) {
             callBack?.upContent()
-            notifyPageChanged(PageChangeOrigin.USER)
-        } else {
-            notifyPageChanged(PageChangeOrigin.USER)
         }
-
         Coroutines.mainScope().launchIO {
-            Logger.d("PageViewController::moveToPrevChapter, durChapterIndex=${durChapterIndex - 1}")
-            loadContent(durChapterIndex.minus(1), upContent, false, readerLoadToken)
+            var currentInstalled = false
+            try {
+                currentInstalled = coroutineScope {
+                    val currentLoad = async {
+                        if (needsCurrentLoad) {
+                            Logger.d("PageViewController::moveToPrevChapter when curTextChapter is null, durChapterIndex=${durChapterIndex}")
+                            loadContent(
+                                targetChapterIndex,
+                                upContent,
+                                false,
+                                readerLoadToken,
+                            ) != null
+                        } else {
+                            true
+                        }
+                    }
+                    val adjacentLoad = async {
+                        Logger.d("PageViewController::moveToPrevChapter, durChapterIndex=${targetChapterIndex - 1}")
+                        loadContent(targetChapterIndex - 1, upContent, false, readerLoadToken)
+                    }
+                    val ready = currentLoad.await()
+                    adjacentLoad.await()
+                    ready
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main.immediate) {
+                    val released = finishSpeechLayoutReload(readerLoadToken)
+                    if (currentInstalled && released && durChapterIndex == targetChapterIndex) {
+                        notifyPageChanged(PageChangeOrigin.USER)
+                    }
+                }
+            }
         }
         saveRead()
         callBack?.upView()

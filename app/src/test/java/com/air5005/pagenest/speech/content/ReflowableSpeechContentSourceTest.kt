@@ -22,6 +22,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -237,6 +238,107 @@ class PageViewControllerSpeechSnapshotTest {
             listener.pageChangeOrigins,
         )
         assertEquals(1, listener.pageChangeOrigins.count { it == PageViewController.PageChangeOrigin.USER })
+    }
+
+    @Test
+    fun `user chapter jump callback can load real speech page after layout fence`() = runTest {
+        val controller = manualNavigationController()
+        controller.scope = this
+        val navigationAcknowledged = CompletableDeferred<Unit>()
+        controller.clickListener = RecordingClickListener { origin ->
+            if (origin == PageViewController.PageChangeOrigin.USER) {
+                navigationAcknowledged.complete(Unit)
+            }
+        }
+        every { controller.getChapterByIdUserCase(1, any()) } answers {
+            flowOf(bookChapter(secondArg()))
+        }
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            listOf(ReaderText.Text(line = "jump-${thirdArg<BookChapter>().chapterIndex}"))
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            val chapter = firstArg<BookChapter>()
+            textChapter(
+                chapter.chapterIndex,
+                TextPage(index = 0, textLines = arrayListOf(textLine("jump-${chapter.chapterIndex}"))),
+            )
+        }
+
+        assertTrue(controller.changeChapter(1))
+        awaitRealTime(navigationAcknowledged)
+        val loaded = controller.loadSpeechPage(1, 0)
+
+        assertEquals("jump-1", loaded?.snapshot?.lines?.single()?.text)
+    }
+
+    @Test
+    fun `manual navigation owns the fence and acknowledges only after adjacent content`() = runTest {
+        val controller = manualNavigationController()
+        controller.scope = this
+        val oldReloadEntered = CompletableDeferred<Unit>()
+        val allowOldReload = CompletableDeferred<Unit>()
+        val manualCurrentBuilt = CompletableDeferred<Unit>()
+        val manualAdjacentEntered = CompletableDeferred<Unit>()
+        val allowManualAdjacent = CompletableDeferred<Unit>()
+        val userAcknowledged = CompletableDeferred<Unit>()
+        val listener = RecordingClickListener { origin ->
+            if (origin == PageViewController.PageChangeOrigin.USER) userAcknowledged.complete(Unit)
+        }
+        controller.clickListener = listener
+        every { controller.getChapterByIdUserCase(1, any()) } answers {
+            flowOf(bookChapter(secondArg()))
+        }
+        coEvery { controller.textParser.parsedChapterData(any(), any(), any()) } coAnswers {
+            val chapter = thirdArg<BookChapter>()
+            when (chapter.chapterIndex) {
+                0 -> {
+                    oldReloadEntered.complete(Unit)
+                    allowOldReload.await()
+                }
+
+                2 -> {
+                    manualAdjacentEntered.complete(Unit)
+                    allowManualAdjacent.await()
+                }
+            }
+            listOf(ReaderText.Text(line = "owned-${chapter.chapterIndex}"))
+        }
+        coEvery { controller.textParser.parseCss(any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { controller.appPreferencesUtil.chineseConverterType() } returns 0
+        mockkObject(ChapterProvider)
+        coEvery { ChapterProvider.getTextChapter(any(), any(), any(), any()) } coAnswers {
+            val chapter = firstArg<BookChapter>()
+            textChapter(
+                chapter.chapterIndex,
+                TextPage(index = 0, textLines = arrayListOf(textLine("owned-${chapter.chapterIndex}"))),
+            ).also {
+                if (chapter.chapterIndex == 1) manualCurrentBuilt.complete(Unit)
+            }
+        }
+
+        controller.loadContent(resetPageOffset = true)
+        oldReloadEntered.await()
+        assertTrue(controller.moveToNextChapter(upContent = true))
+        manualCurrentBuilt.await()
+        manualAdjacentEntered.await()
+
+        assertFalse(userAcknowledged.isCompleted)
+        assertNull(controller.loadSpeechPage(chapterIndex = 1, pageIndex = 0))
+
+        allowManualAdjacent.complete(Unit)
+        awaitRealTime(userAcknowledged)
+        val loadedAfterFence = requireNotNull(controller.loadSpeechPage(chapterIndex = 1, pageIndex = 0))
+
+        assertEquals("owned-1", loadedAfterFence.snapshot.lines.single().text)
+        assertEquals(listOf(PageViewController.PageChangeOrigin.USER), listener.pageChangeOrigins)
+        assertFalse(allowOldReload.isCompleted)
+
+        allowOldReload.complete(Unit)
+        testScheduler.advanceUntilIdle()
+        assertEquals(listOf(PageViewController.PageChangeOrigin.USER), listener.pageChangeOrigins)
     }
 
     @Test
@@ -563,7 +665,10 @@ class PageViewControllerSpeechSnapshotTest {
     @Test
     fun `manual navigation without a newer operation installs its current and adjacent chapters`() = runTest {
         val controller = manualNavigationController()
-        val listener = RecordingClickListener()
+        val userNotified = CompletableDeferred<Unit>()
+        val listener = RecordingClickListener { origin ->
+            if (origin == PageViewController.PageChangeOrigin.USER) userNotified.complete(Unit)
+        }
         controller.clickListener = listener
         val currentBuilt = CompletableDeferred<Unit>()
         val adjacentBuilt = CompletableDeferred<Unit>()
@@ -595,6 +700,7 @@ class PageViewControllerSpeechSnapshotTest {
         adjacentBuilt.await()
         awaitCurrentChapterText(controller, "manual-1")
         awaitNextChapterText(controller, "manual-2")
+        awaitRealTime(userNotified)
         val candidate = requireNotNull(controller.loadSpeechPage(chapterIndex = 1, pageIndex = 0))
 
         assertEquals("manual-1", currentChapterText(controller))
@@ -939,7 +1045,9 @@ class PageViewControllerSpeechSnapshotTest {
     private fun currentChapterText(controller: PageViewController): String? =
         controller.curTextChapter?.pages?.single()?.textLines?.single()?.text
 
-    private class RecordingClickListener : PageViewController.OnClickListener {
+    private class RecordingClickListener(
+        private val onChange: (PageViewController.PageChangeOrigin) -> Unit = {},
+    ) : PageViewController.OnClickListener {
         val pageChanges = AtomicInteger()
         val pageChangeOrigins = mutableListOf<PageViewController.PageChangeOrigin>()
 
@@ -948,6 +1056,7 @@ class PageViewControllerSpeechSnapshotTest {
         override fun onPageChange(origin: PageViewController.PageChangeOrigin) {
             pageChanges.incrementAndGet()
             pageChangeOrigins += origin
+            onChange(origin)
         }
         override fun onSelectedText(startX: Float, startY: Float, endX: Float, endY: Float) = Unit
         override fun onSelectedCancel() = Unit
@@ -983,6 +1092,11 @@ class PageViewControllerSpeechSnapshotTest {
             yield()
         }
     }
+
+    private suspend fun <T> awaitRealTime(deferred: CompletableDeferred<T>): T =
+        kotlinx.coroutines.withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(5_000) { deferred.await() }
+        }
 
     private fun textLine(text: String, paragraphIndex: Int = 0) = TextLine(
         text = text,

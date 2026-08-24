@@ -5,6 +5,7 @@ import com.air5005.pagenest.speech.model.SpeechPlaybackState
 import com.air5005.pagenest.speech.model.SpeechPosition
 import com.air5005.pagenest.speech.model.SpeechSegment
 import com.air5005.pagenest.speech.settings.SpeechUiEvent
+import com.air5005.pagenest.speech.settings.SpeechSettingsState
 import com.wxn.base.bean.Locator
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -60,6 +61,19 @@ class SpeechControlPolicyTest {
             SpeechSettingsEventPresentation.Snackbar("网络连接超时，请检查网络后重试"),
             SpeechSettingsEventPolicy.presentationFor(
                 SpeechUiEvent.ShowFallbackMessage("网络连接超时，请检查网络后重试"),
+            ),
+        )
+    }
+
+    @Test fun `durable consent state reconstructs reader dialogs until confirm or cancel`() {
+        assertTrue(
+            SpeechSettingsEventPolicy.shouldShowOnlineConsent(
+                SpeechSettingsState(onlineConsentPending = true),
+            ),
+        )
+        assertFalse(
+            SpeechSettingsEventPolicy.shouldShowOnlineConsent(
+                SpeechSettingsState(onlineConsentPending = false),
             ),
         )
     }

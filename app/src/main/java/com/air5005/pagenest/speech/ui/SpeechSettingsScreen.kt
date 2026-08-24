@@ -121,7 +121,7 @@ fun SpeechSettingsScreen(viewModel: SpeechSettingsViewModel = hiltViewModel()) {
         }
     }
 
-    if (state.onlineConsentPending) {
+    if (SpeechSettingsEventPolicy.shouldShowOnlineConsent(state)) {
         AlertDialog(
             onDismissRequest = {
                 viewModel.cancelOnlineConsent()
