@@ -3,6 +3,8 @@ package com.air5005.pagenest.speech.cache
 import com.air5005.pagenest.speech.engine.SpeechRequest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -48,25 +50,37 @@ class FileSpeechAudioCache(
     ),
 ) : SpeechAudioCache {
     private val mutex = Mutex()
-    private var scopeGeneration = 0L
+    private var activeGeneration = Long.MIN_VALUE
     private var activeToken: SpeechCacheScopeToken? = null
 
     init {
         require(maxBytes >= 0) { "maxBytes must not be negative" }
         require(expiryMillis >= 0) { "expiryMillis must not be negative" }
+        require(!stagingDirectory.absoluteFile.toPath().normalize()
+            .startsWith(rootDirectory.absoluteFile.toPath().normalize())) {
+            "stagingDirectory must be outside rootDirectory"
+        }
     }
 
-    override suspend fun retainScope(request: SpeechRequest): SpeechCacheScopeToken = withContext(ioDispatcher) {
+    override suspend fun retainScope(
+        requestGeneration: Long,
+        request: SpeechRequest,
+    ): SpeechCacheScopeToken = withContext(ioDispatcher) {
         mutex.withLock {
+            val token = SpeechCacheScopeToken(
+                generation = requestGeneration,
+                bookId = request.segment.position.bookId,
+                chapterIndex = request.segment.position.chapterIndex,
+            )
+            if (requestGeneration <= activeGeneration) return@withLock token
+            currentCoroutineContext().ensureActive()
+            activeGeneration = requestGeneration
+            activeToken = token
             cleanupOrphanTemps(rootDirectory)
             cleanupOrphanTemps(stagingDirectory)
             val scope = retainScopeOnDisk(request)
             enforceCapacity(scope, maxBytes)
-            SpeechCacheScopeToken(
-                generation = ++scopeGeneration,
-                bookId = request.segment.position.bookId,
-                chapterIndex = request.segment.position.chapterIndex,
-            ).also { activeToken = it }
+            token
         }
     }
 
@@ -108,12 +122,13 @@ class FileSpeechAudioCache(
             }
 
             val destination = entryFile(scope, request)
-            enforceCapacity(scope, maxBytes - entryBytes, destination)
+            if (!reserveTemporaryHeadroom(scope, entryBytes, destination)) return@withLock
             scope.mkdirs()
             stagingDirectory.mkdirs()
             val temporary = File(stagingDirectory, ".${UUID.randomUUID()}.tmp")
             try {
                 writeEntry(temporary, nowMillis, audio)
+                if (combinedUsageBytes() > maxBytes) return@withLock
                 if (!isActive(token, request)) return@withLock
                 publisher.publish(temporary, destination)
                 destination.setLastModified(nowMillis)
@@ -138,7 +153,6 @@ class FileSpeechAudioCache(
     override suspend fun clear() = withContext(ioDispatcher) {
         mutex.withLock {
             activeToken = null
-            scopeGeneration++
             deleteRecursively(rootDirectory)
             deleteRecursively(stagingDirectory)
         }
@@ -260,6 +274,23 @@ class FileSpeechAudioCache(
             if (entry.file.delete()) total -= entry.entryBytes
         }
     }
+
+    private fun reserveTemporaryHeadroom(scope: File, entryBytes: Long, destination: File): Boolean {
+        val candidates = scope.listFiles().orEmpty().mapNotNull { file ->
+            if (file == destination || file.extension != CACHE_EXTENSION) return@mapNotNull null
+            CacheFile(file, file.length())
+        }.sortedWith(compareBy<CacheFile> { it.file.lastModified() }.thenBy { it.file.name })
+        var total = combinedUsageBytes()
+        candidates.forEach { entry ->
+            if (total + entryBytes <= maxBytes) return true
+            if (entry.file.delete()) total -= entry.entryBytes
+        }
+        return total + entryBytes <= maxBytes
+    }
+
+    private fun combinedUsageBytes(): Long = sequenceOf(rootDirectory, stagingDirectory)
+        .flatMap { directory -> directory.walkTopDown().filter(File::isFile) }
+        .sumOf(File::length)
 
     private fun isExpired(createdAtMillis: Long, nowMillis: Long): Boolean =
         nowMillis >= createdAtMillis && nowMillis - createdAtMillis >= expiryMillis

@@ -19,6 +19,7 @@ import java.io.IOException
 class FileSpeechAudioCacheTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+    private var requestGeneration = 0L
 
     @Test
     fun `cache evicts least recently used entries by real disk bytes and expires after 24 hours`() = runTest {
@@ -77,7 +78,7 @@ class FileSpeechAudioCacheTest {
         val next = request(bookId = 12, chapterIndex = 4, text = "next")
         cache.putCurrent(old, byteArrayOf(1), nowMillis = 0)
 
-        cache.retainScope(next)
+        cache.retainScope(nextGeneration(), next)
 
         assertTrue(cacheFiles().isEmpty())
         assertFalse(File(cacheRoot(), "11/chapter-2").exists())
@@ -88,8 +89,8 @@ class FileSpeechAudioCacheTest {
         val cache = cache()
         val old = request(bookId = 11, chapterIndex = 2, text = "old")
         val latest = request(bookId = 12, chapterIndex = 4, text = "latest")
-        val oldToken = cache.retainScope(old)
-        val latestToken = cache.retainScope(latest)
+        val oldToken = cache.retainScope(nextGeneration(), old)
+        val latestToken = cache.retainScope(nextGeneration(), latest)
         cache.put(latestToken, latest, byteArrayOf(2), nowMillis = 1)
 
         cache.put(oldToken, old, byteArrayOf(1), nowMillis = 2)
@@ -126,8 +127,8 @@ class FileSpeechAudioCacheTest {
     }
 
     @Test
-    fun `same key replacement stages outside bounded directory and never exceeds real byte limit`() = runTest {
-        val maxBytes = 160L
+    fun `same key replacement counts published and staged bytes throughout atomic publication`() = runTest {
+        val maxBytes = 300L
         val request = request(text = "replacement")
         val observedTotals = mutableListOf<Long>()
         var publications = 0
@@ -135,12 +136,12 @@ class FileSpeechAudioCacheTest {
             maxBytes = maxBytes,
             publisher = CacheFilePublisher { temporary, destination ->
                 assertFalse(temporary.toPath().startsWith(cacheRoot().toPath()))
-                observedTotals += cacheDirectoryBytes()
-                assertTrue(cacheDirectoryBytes() <= maxBytes)
+                observedTotals += combinedCacheBytes()
+                assertTrue(combinedCacheBytes() <= maxBytes)
                 publications++
                 if (publications == 2) assertTrue(destination.exists())
                 AtomicCacheFilePublisher.publish(temporary, destination)
-                observedTotals += cacheDirectoryBytes()
+                observedTotals += combinedCacheBytes()
             },
         )
         cache.putCurrent(request, ByteArray(80) { 1 }, nowMillis = 1)
@@ -148,23 +149,46 @@ class FileSpeechAudioCacheTest {
         cache.putCurrent(request, ByteArray(100) { 2 }, nowMillis = 2)
 
         assertTrue(observedTotals.all { it <= maxBytes })
-        assertTrue(cacheDirectoryBytes() <= maxBytes)
+        assertTrue(combinedCacheBytes() <= maxBytes)
         assertArrayEquals(ByteArray(100) { 2 }, cache.getCurrent(request, nowMillis = 3)!!)
     }
 
     @Test
-    fun `retaining current scope removes orphan temporary files before admitting work`() = runTest {
+    fun `replacement without combined staging headroom retains the old value`() = runTest {
+        val maxBytes = 160L
+        val request = request(text = "replacement-without-headroom")
+        var publications = 0
+        val cache = cache(
+            maxBytes = maxBytes,
+            publisher = CacheFilePublisher { temporary, destination ->
+                publications++
+                AtomicCacheFilePublisher.publish(temporary, destination)
+            },
+        )
+        cache.putCurrent(request, ByteArray(80) { 1 }, nowMillis = 1)
+
+        cache.putCurrent(request, ByteArray(100) { 2 }, nowMillis = 2)
+
+        assertEquals(1, publications)
+        assertTrue(combinedCacheBytes() <= maxBytes)
+        assertArrayEquals(ByteArray(80) { 1 }, cache.getCurrent(request, nowMillis = 3)!!)
+    }
+
+    @Test
+    fun `retaining a full scope removes orphan staging bytes before admitting work`() = runTest {
         val maxBytes = 160L
         val request = request(text = "orphan")
         val cache = cache(maxBytes = maxBytes)
-        cache.putCurrent(request, ByteArray(50) { 1 }, nowMillis = 1)
-        val orphan = File(cacheFiles().single().parentFile, ".abandoned.tmp")
-        orphan.writeBytes(ByteArray(200) { 9 })
+        cache.putCurrent(request, ByteArray(100) { 1 }, nowMillis = 1)
+        val orphan = File(stagingRoot(), ".abandoned.tmp")
+        orphan.parentFile!!.mkdirs()
+        orphan.writeBytes(ByteArray(50) { 9 })
+        assertTrue(combinedCacheBytes() > maxBytes)
 
-        cache.retainScope(request)
+        cache.retainScope(nextGeneration(), request)
 
         assertFalse(orphan.exists())
-        assertTrue(cacheDirectoryBytes() <= maxBytes)
+        assertTrue(combinedCacheBytes() <= maxBytes)
     }
 
     @Test
@@ -189,9 +213,15 @@ class FileSpeechAudioCacheTest {
 
     private fun cacheRoot() = File(temporaryFolder.root, "speech-cache")
 
+    private fun stagingRoot() = File(temporaryFolder.root, "speech-cache-staging")
+
     private fun cacheFiles() = cacheRoot().walkTopDown().filter { it.isFile && it.extension == "cache" }.toList()
 
     private fun cacheDirectoryBytes() = cacheRoot().walkTopDown().filter(File::isFile).sumOf(File::length)
+
+    private fun combinedCacheBytes() = sequenceOf(cacheRoot(), stagingRoot())
+        .flatMap { root -> root.walkTopDown().filter(File::isFile) }
+        .sumOf(File::length)
 
     private fun cachedScopePaths() = cacheFiles().map {
         it.parentFile!!.relativeTo(cacheRoot()).invariantSeparatorsPath
@@ -223,7 +253,7 @@ class FileSpeechAudioCacheTest {
         audio: ByteArray,
         nowMillis: Long,
     ) {
-        val token = retainScope(request)
+        val token = retainScope(nextGeneration(), request)
         put(token, request, audio, nowMillis)
     }
 
@@ -231,7 +261,9 @@ class FileSpeechAudioCacheTest {
         request: SpeechRequest,
         nowMillis: Long,
     ): ByteArray? {
-        val token = retainScope(request)
+        val token = retainScope(nextGeneration(), request)
         return get(token, request, nowMillis)
     }
+
+    private fun nextGeneration(): Long = ++requestGeneration
 }

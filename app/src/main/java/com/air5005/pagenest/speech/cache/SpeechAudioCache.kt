@@ -9,7 +9,7 @@ class SpeechCacheScopeToken internal constructor(
 )
 
 interface SpeechAudioCache {
-    suspend fun retainScope(request: SpeechRequest): SpeechCacheScopeToken
+    suspend fun retainScope(requestGeneration: Long, request: SpeechRequest): SpeechCacheScopeToken
     suspend fun get(token: SpeechCacheScopeToken, request: SpeechRequest, nowMillis: Long): ByteArray?
     suspend fun put(
         token: SpeechCacheScopeToken,

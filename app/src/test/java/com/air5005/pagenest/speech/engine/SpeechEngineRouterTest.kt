@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -158,13 +159,80 @@ class SpeechEngineRouterTest {
         cache.allowOldRead.complete(Unit)
         assertEquals(SpeechEngineResult.Completed, oldPlayback.await().result)
 
-        val latestToken = delegate.retainScope(latest)
+        val latestToken = delegate.retainScope(Long.MAX_VALUE, latest)
         assertEquals(listOf(2.toByte()), delegate.get(latestToken, latest, 43L)!!.toList())
         assertEquals(listOf("12/chapter-4"), root.walkTopDown()
             .filter { it.isFile && it.extension == "cache" }
             .map { it.parentFile!!.relativeTo(root).invariantSeparatorsPath }
             .distinct()
             .toList())
+    }
+
+    @Test
+    fun `request allocated first but retained last cannot supersede the later request`() = runTest {
+        val root = File(temporaryFolder.root, "speech-cache")
+        val delegate = FileSpeechAudioCache(root)
+        val old = request("old-before-retain", bookId = 11, chapterIndex = 2)
+        val latest = request("latest-retains-first", bookId = 12, chapterIndex = 4)
+        val cache = BlockingOldRetainCache(delegate, old.segment.id)
+        val azure = RecordingOnlineEngine(
+            synthesisResults = ArrayDeque(
+                listOf(
+                    OnlineSynthesisResult.Audio(byteArrayOf(2)),
+                    OnlineSynthesisResult.Audio(byteArrayOf(1)),
+                ),
+            ),
+        )
+        val router = SpeechEngineRouter(
+            systemEngine = RecordingSpeechEngine("system"),
+            onlineEngine = azure,
+            cache = cache,
+            nowMillis = { 42L },
+            delayMillis = {},
+        )
+        val oldPlayback = async { router.speak(old, SpeechMode.ONLINE) }
+        cache.oldRetainEntered.await()
+
+        assertEquals(SpeechEngineResult.Completed, router.speak(latest, SpeechMode.ONLINE).result)
+        cache.allowOldRetain.complete(Unit)
+        assertEquals(SpeechEngineResult.Completed, oldPlayback.await().result)
+
+        val latestToken = delegate.retainScope(Long.MAX_VALUE, latest)
+        assertEquals(listOf(2.toByte()), delegate.get(latestToken, latest, 43L)!!.toList())
+        assertEquals(listOf("12/chapter-4"), root.walkTopDown()
+            .filter { it.isFile && it.extension == "cache" }
+            .map { it.parentFile!!.relativeTo(root).invariantSeparatorsPath }
+            .distinct()
+            .toList())
+    }
+
+    @Test
+    fun `canceled request waiting to retain cannot alter the admitted scope`() = runTest {
+        val root = File(temporaryFolder.root, "speech-cache")
+        val delegate = FileSpeechAudioCache(root)
+        val old = request("old-canceled-retain", bookId = 11, chapterIndex = 2)
+        val latest = request("latest-after-cancel", bookId = 12, chapterIndex = 4)
+        val cache = BlockingOldRetainCache(delegate, old.segment.id)
+        val router = SpeechEngineRouter(
+            systemEngine = RecordingSpeechEngine("system"),
+            onlineEngine = RecordingOnlineEngine(
+                synthesisResults = ArrayDeque(listOf(OnlineSynthesisResult.Audio(byteArrayOf(2)))),
+            ),
+            cache = cache,
+            nowMillis = { 42L },
+            delayMillis = {},
+        )
+        val canceled = async { router.speak(old, SpeechMode.ONLINE) }
+        cache.oldRetainEntered.await()
+
+        assertEquals(SpeechEngineResult.Completed, router.speak(latest, SpeechMode.ONLINE).result)
+        canceled.cancel()
+        cache.allowOldRetain.complete(Unit)
+        canceled.cancelAndJoin()
+
+        val latestToken = delegate.retainScope(Long.MAX_VALUE, latest)
+        assertEquals(listOf(2.toByte()), delegate.get(latestToken, latest, 43L)!!.toList())
+        assertFalse(File(root, "11/chapter-2").exists())
     }
 
     @Test
@@ -368,20 +436,25 @@ private class RecordingCache(
     hit: ByteArray? = null,
 ) : SpeechAudioCache {
     private var stored = hit?.copyOf()
-    private var generation = 0L
+    private var activeGeneration = Long.MIN_VALUE
     private var activeToken: SpeechCacheScopeToken? = null
     var getCalls = 0
     var retainCalls = 0
     var removeCalls = 0
     val putAudio = mutableListOf<ByteArray>()
 
-    override suspend fun retainScope(request: SpeechRequest): SpeechCacheScopeToken {
+    override suspend fun retainScope(requestGeneration: Long, request: SpeechRequest): SpeechCacheScopeToken {
         retainCalls++
-        return SpeechCacheScopeToken(
-            generation = ++generation,
+        val token = SpeechCacheScopeToken(
+            generation = requestGeneration,
             bookId = request.segment.position.bookId,
             chapterIndex = request.segment.position.chapterIndex,
-        ).also { activeToken = it }
+        )
+        if (requestGeneration > activeGeneration) {
+            activeGeneration = requestGeneration
+            activeToken = token
+        }
+        return token
     }
 
     override suspend fun get(
@@ -421,8 +494,8 @@ private class BlockingOldReadCache(
     val oldReadEntered = CompletableDeferred<Unit>()
     val allowOldRead = CompletableDeferred<Unit>()
 
-    override suspend fun retainScope(request: SpeechRequest): SpeechCacheScopeToken =
-        delegate.retainScope(request)
+    override suspend fun retainScope(requestGeneration: Long, request: SpeechRequest): SpeechCacheScopeToken =
+        delegate.retainScope(requestGeneration, request)
 
     override suspend fun get(
         token: SpeechCacheScopeToken,
@@ -435,6 +508,43 @@ private class BlockingOldReadCache(
         }
         return delegate.get(token, request, nowMillis)
     }
+
+    override suspend fun put(
+        token: SpeechCacheScopeToken,
+        request: SpeechRequest,
+        audio: ByteArray,
+        nowMillis: Long,
+    ) = delegate.put(token, request, audio, nowMillis)
+
+    override suspend fun remove(token: SpeechCacheScopeToken, request: SpeechRequest) =
+        delegate.remove(token, request)
+
+    override suspend fun clear() = delegate.clear()
+}
+
+private class BlockingOldRetainCache(
+    private val delegate: SpeechAudioCache,
+    private val oldSegmentId: String,
+) : SpeechAudioCache {
+    val oldRetainEntered = CompletableDeferred<Unit>()
+    val allowOldRetain = CompletableDeferred<Unit>()
+
+    override suspend fun retainScope(
+        requestGeneration: Long,
+        request: SpeechRequest,
+    ): SpeechCacheScopeToken {
+        if (request.segment.id == oldSegmentId) {
+            oldRetainEntered.complete(Unit)
+            allowOldRetain.await()
+        }
+        return delegate.retainScope(requestGeneration, request)
+    }
+
+    override suspend fun get(
+        token: SpeechCacheScopeToken,
+        request: SpeechRequest,
+        nowMillis: Long,
+    ): ByteArray? = delegate.get(token, request, nowMillis)
 
     override suspend fun put(
         token: SpeechCacheScopeToken,

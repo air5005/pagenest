@@ -6,6 +6,7 @@ import com.air5005.pagenest.speech.model.SpeechError
 import com.air5005.pagenest.speech.model.SpeechMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicLong
 
 interface OnlineSpeechEngine : SpeechEngine {
     suspend fun synthesize(request: SpeechRequest): OnlineSynthesisResult
@@ -32,8 +33,11 @@ class SpeechEngineRouter(
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val delayMillis: suspend (Long) -> Unit = { delay(it) },
 ) {
+    private val requestSequence = AtomicLong()
+
     suspend fun speak(request: SpeechRequest, mode: SpeechMode): RoutedSpeechResult {
-        val cacheScope = retainCacheScope(request)
+        val requestGeneration = requestSequence.incrementAndGet()
+        val cacheScope = retainCacheScope(requestGeneration, request)
         return when (mode) {
             SpeechMode.OFFLINE -> routeOffline(request, fellBack = false)
             SpeechMode.ONLINE -> routeOnlineOnly(cacheScope, request)
@@ -107,9 +111,12 @@ class SpeechEngineRouter(
         }
     }
 
-    private suspend fun retainCacheScope(request: SpeechRequest): SpeechCacheScopeToken? =
+    private suspend fun retainCacheScope(
+        requestGeneration: Long,
+        request: SpeechRequest,
+    ): SpeechCacheScopeToken? =
         try {
-            cache.retainScope(request)
+            cache.retainScope(requestGeneration, request)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
