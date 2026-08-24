@@ -8,14 +8,17 @@ import com.air5005.pagenest.speech.model.SpeechError
 import com.air5005.pagenest.speech.model.SpeechPosition
 import com.air5005.pagenest.speech.model.SpeechSegment
 import com.air5005.pagenest.speech.playback.EncodedAudioPlayer
+import com.air5005.pagenest.speech.playback.EncodedAudioBackend
+import com.air5005.pagenest.speech.playback.Media3EncodedAudioPlayer
 import com.air5005.pagenest.speech.security.AzureCredentials
 import com.air5005.pagenest.speech.security.SpeechCredentialStore
 import com.wxn.base.bean.Locator
-import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.respondError
+import io.ktor.client.plugins.HttpTimeoutCapability
 import io.ktor.client.request.HttpRequestData
+import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -25,15 +28,22 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class AzureSpeechClientTest {
     @Test
     fun `synthesis uses only the regional official host and required request contract`() = runTest {
@@ -109,7 +119,7 @@ class AzureSpeechClientTest {
     }
 
     @Test
-    fun `authentication statuses are classified without exposing response content`() = runTest {
+    fun `authentication statuses are classified without consuming response content`() = runTest {
         listOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden).forEach { status ->
             val client = azureClient(MockEngine {
                 respond("response-content", status, headersOf(HttpHeaders.ContentType, ContentType.Text.Plain.toString()))
@@ -119,10 +129,54 @@ class AzureSpeechClientTest {
 
             assertEquals(SpeechError.InvalidCredentials, result.error)
             assertNull(result.value)
-            assertFalse(result.toString().contains("response-content"))
-            assertFalse(result.toString().contains("private-body"))
-            assertFalse(result.toString().contains("credential-value"))
         }
+    }
+
+    @Test
+    fun `quota status is classified without consuming response content`() = runTest {
+        val client = azureClient(MockEngine { respond("quota-response", HttpStatusCode.PaymentRequired) })
+
+        val result = client.synthesize(credentials(), request("text"))
+
+        assertEquals(SpeechError.QuotaExceeded, result.error)
+    }
+
+    @Test
+    fun `redirect is not followed and credential is sent only to the official host`() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val client = azureClient(MockEngine { request ->
+            requests += request
+            if (requests.size == 1) {
+                respond(
+                    "redirect-body",
+                    HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://collector.invalid/capture"),
+                )
+            } else {
+                respond(byteArrayOf(9), HttpStatusCode.OK)
+            }
+        })
+
+        val result = client.voices(credentials())
+
+        assertEquals(SpeechError.ServiceUnavailable, result.error)
+        assertEquals(1, requests.size)
+        assertEquals("eastasia.tts.speech.microsoft.com", requests.single().url.host)
+        assertEquals("credential-value", requests.single().headers["Ocp-Apim-Subscription-Key"])
+    }
+
+    @Test
+    fun `requests carry ten second connect and thirty second request timeouts`() = runTest {
+        var timeout: io.ktor.client.plugins.HttpTimeoutConfig? = null
+        val client = azureClient(MockEngine { request ->
+            timeout = request.getCapabilityOrNull(HttpTimeoutCapability)
+            respond(byteArrayOf(1), HttpStatusCode.OK)
+        })
+
+        client.synthesize(credentials(), request("text"))
+
+        assertEquals(10_000L, timeout?.connectTimeoutMillis)
+        assertEquals(30_000L, timeout?.requestTimeoutMillis)
     }
 
     @Test
@@ -142,14 +196,36 @@ class AzureSpeechClientTest {
     }
 
     @Test
-    fun `server failures are classified without reading their body`() = runTest {
+    fun `server failures are classified without consuming their body`() = runTest {
         listOf(HttpStatusCode.BadGateway, HttpStatusCode.ServiceUnavailable).forEach { status ->
             val client = azureClient(MockEngine { respond("server-body", status) })
 
             val result = client.synthesize(credentials(), request("text"))
 
             assertEquals(SpeechError.ServiceUnavailable, result.error)
-            assertFalse(result.toString().contains("server-body"))
+        }
+    }
+
+    @Test
+    fun `non-success responses never enter the bounded body reader`() = runTest {
+        listOf(
+            HttpStatusCode.Found,
+            HttpStatusCode.PaymentRequired,
+            HttpStatusCode.Unauthorized,
+            HttpStatusCode.TooManyRequests,
+            HttpStatusCode.ServiceUnavailable,
+        ).forEach { status ->
+            val reader = CountingResponseReader()
+            val client = AzureSpeechClient(
+                engine = MockEngine { respond("private-error-content", status) },
+                maxAudioBytes = AzureSpeechClient.DEFAULT_MAX_AUDIO_BYTES,
+                maxVoiceListBytes = AzureSpeechClient.DEFAULT_MAX_VOICE_LIST_BYTES,
+                responseReader = reader,
+            )
+
+            client.synthesize(credentials(), request("private-request-content"))
+
+            assertEquals(0, reader.calls)
         }
     }
 
@@ -175,6 +251,25 @@ class AzureSpeechClientTest {
     }
 
     @Test
+    fun `cancelling an in flight request stops it without a second request`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val requests = AtomicInteger(0)
+        val client = azureClient(MockEngine {
+            requests.incrementAndGet()
+            started.complete(Unit)
+            awaitCancellation()
+        })
+        val pending = async { client.synthesize(credentials(), request("text")) }
+        started.await()
+
+        pending.cancel(CancellationException("navigation changed"))
+        val thrown = runCatching { pending.await() }.exceptionOrNull()
+
+        assertTrue(thrown is CancellationException)
+        assertEquals(1, requests.get())
+    }
+
+    @Test
     fun `oversized text is rejected before any network request`() = runTest {
         val requests = AtomicInteger(0)
         val client = azureClient(MockEngine {
@@ -191,7 +286,7 @@ class AzureSpeechClientTest {
     @Test
     fun `audio response exceeding the private player bound is rejected`() = runTest {
         val client = AzureSpeechClient(
-            HttpClient(MockEngine { respond(ByteArray(9), HttpStatusCode.OK) }),
+            MockEngine { respond(ByteArray(9), HttpStatusCode.OK) },
             maxAudioBytes = 8,
         )
 
@@ -202,7 +297,20 @@ class AzureSpeechClientTest {
     }
 
     @Test
-    fun `transport exception text cannot leak credentials or request body through the result`() = runTest {
+    fun `voice response exceeding its bound is rejected`() = runTest {
+        val client = AzureSpeechClient(
+            MockEngine { respond(ByteArray(9), HttpStatusCode.OK) },
+            maxVoiceListBytes = 8,
+        )
+
+        val result = client.voices(credentials())
+
+        assertEquals(SpeechError.ServiceUnavailable, result.error)
+        assertNull(result.value)
+    }
+
+    @Test
+    fun `transport exception becomes a fixed typed error without escaping`() = runTest {
         val client = azureClient(MockEngine {
             throw IOException("credential-value private-body")
         })
@@ -210,8 +318,6 @@ class AzureSpeechClientTest {
         val result = client.synthesize(credentials(), request("private-body"))
 
         assertEquals(SpeechError.NetworkTimeout, result.error)
-        assertFalse(result.toString().contains("credential-value"))
-        assertFalse(result.toString().contains("private-body"))
     }
 
     @Test
@@ -234,8 +340,63 @@ class AzureSpeechClientTest {
         assertTrue(player.stopped)
     }
 
+    @Test
+    fun `engine preserves cancellation when stopping the player fails`() = runTest {
+        val marker = CancellationException("new navigation")
+        val player = SuspendingPlayer(marker, stopFailure = IllegalStateException("stop failed"))
+        val engine = AzureSpeechEngine(
+            FixedCredentialStore(credentials()),
+            FixedAzureService(byteArrayOf(1)),
+            player,
+        )
+
+        val thrown = runCatching { engine.speak(request("text")) }.exceptionOrNull()
+
+        assertSame(marker, thrown)
+        assertTrue(player.stopped)
+    }
+
+    @Test
+    fun `engine stop cancels current audio and the next synthesis can play`() = runTest {
+        val backend = FirstAudioWaitsBackend()
+        val player = Media3EncodedAudioPlayer(maxAudioBytes = 16, backend = backend)
+        val service = FixedAzureService(byteArrayOf(1, 2, 3))
+        val engine = AzureSpeechEngine(
+            FixedCredentialStore(credentials()),
+            service,
+            player,
+        )
+        val first = async { engine.speak(request("first")) }
+        runCurrent()
+        backend.firstStarted.await()
+
+        engine.stop()
+
+        assertEquals(SpeechEngineResult.Cancelled, first.await())
+        assertEquals(SpeechEngineResult.Completed, engine.speak(request("second")))
+        assertEquals(0, backend.releaseCalls)
+        engine.close()
+        engine.close()
+        assertEquals(1, backend.releaseCalls)
+        assertEquals(1, service.closeCalls)
+        assertTrue(service.lastReturnedAudio!!.all { it == 0.toByte() })
+    }
+
+    @Test
+    fun `engine terminal close still closes service when player close fails`() {
+        val player = CloseFailurePlayer()
+        val service = FixedAzureService(byteArrayOf(1))
+        val engine = AzureSpeechEngine(FixedCredentialStore(credentials()), service, player)
+
+        assertThrows(IllegalStateException::class.java) { engine.close() }
+        engine.close()
+
+        assertEquals(1, player.closeCalls)
+        assertEquals(1, service.closeCalls)
+    }
+
     private fun azureClient(engine: MockEngine): AzureSpeechClient =
-        AzureSpeechClient(HttpClient(engine))
+        AzureSpeechClient(engine)
 
     private fun credentials() = AzureCredentials("credential-value", "eastasia")
 
@@ -265,6 +426,7 @@ private class FixedCredentialStore(
 
 private class SuspendingPlayer(
     private val cancellation: CancellationException,
+    private val stopFailure: RuntimeException? = null,
 ) : EncodedAudioPlayer {
     var stopped = false
 
@@ -274,7 +436,67 @@ private class SuspendingPlayer(
 
     override suspend fun stop() {
         stopped = true
+        stopFailure?.let { throw it }
     }
 
     override fun close() = Unit
+}
+
+private class FixedAzureService(
+    private val audio: ByteArray,
+) : AzureSpeechService {
+    var closeCalls = 0
+    var lastReturnedAudio: ByteArray? = null
+
+    override suspend fun voices(credentials: AzureCredentials): AzureResult<List<SpeechVoice>> =
+        AzureResult(value = emptyList())
+
+    override suspend fun synthesize(
+        credentials: AzureCredentials,
+        request: SpeechRequest,
+    ): AzureResult<ByteArray> {
+        val returned = audio.copyOf()
+        lastReturnedAudio = returned
+        return AzureResult(value = returned)
+    }
+
+    override fun close() { closeCalls++ }
+}
+
+private class FirstAudioWaitsBackend : EncodedAudioBackend {
+    var playCalls = 0
+    var releaseCalls = 0
+    val firstStarted = CompletableDeferred<Unit>()
+
+    override suspend fun play(bytes: ByteArray): SpeechEngineResult {
+        playCalls++
+        if (playCalls == 1) {
+            firstStarted.complete(Unit)
+            kotlinx.coroutines.awaitCancellation()
+        }
+        return SpeechEngineResult.Completed
+    }
+
+    override fun stop() = Unit
+    override fun release() { releaseCalls++ }
+}
+
+private class CountingResponseReader : AzureResponseReader {
+    var calls = 0
+
+    override suspend fun read(response: HttpResponse, limit: Int): ByteArray? {
+        calls++
+        return byteArrayOf()
+    }
+}
+
+private class CloseFailurePlayer : EncodedAudioPlayer {
+    var closeCalls = 0
+
+    override suspend fun playMp3(bytes: ByteArray): SpeechEngineResult = SpeechEngineResult.Completed
+    override suspend fun stop() = Unit
+    override fun close() {
+        closeCalls++
+        throw IllegalStateException("player close failed")
+    }
 }

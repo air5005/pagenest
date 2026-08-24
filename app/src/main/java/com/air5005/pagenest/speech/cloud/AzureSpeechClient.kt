@@ -6,6 +6,7 @@ import com.air5005.pagenest.speech.model.SpeechError
 import com.air5005.pagenest.speech.security.AzureCredentials
 import com.air5005.pagenest.speech.security.AzureRegionValidator
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.timeout
@@ -42,11 +43,73 @@ interface AzureSpeechService : AutoCloseable {
     override fun close() = Unit
 }
 
-class AzureSpeechClient(
+internal fun interface AzureResponseReader {
+    suspend fun read(response: HttpResponse, limit: Int): ByteArray?
+}
+
+private object BoundedAzureResponseReader : AzureResponseReader {
+    override suspend fun read(response: HttpResponse, limit: Int): ByteArray? {
+        val channel = response.bodyAsChannel()
+        val output = WipeableByteArrayOutputStream(minOf(limit, READ_BUFFER_BYTES))
+        val buffer = ByteArray(READ_BUFFER_BYTES)
+        try {
+            while (true) {
+                val read = channel.readAvailable(buffer)
+                if (read < 0) break
+                if (read == 0) {
+                    yield()
+                    continue
+                }
+                if (output.size() > limit - read) {
+                    channel.cancel(null)
+                    return null
+                }
+                output.write(buffer, 0, read)
+            }
+            return output.toByteArray()
+        } finally {
+            buffer.fill(0)
+            output.wipe()
+        }
+    }
+
+    private const val READ_BUFFER_BYTES = 8 * 1024
+}
+
+private class WipeableByteArrayOutputStream(initialSize: Int) : ByteArrayOutputStream(initialSize) {
+    fun wipe() {
+        buf.fill(0)
+        reset()
+    }
+}
+
+class AzureSpeechClient private constructor(
     private val httpClient: HttpClient,
     private val maxAudioBytes: Int = DEFAULT_MAX_AUDIO_BYTES,
     private val maxVoiceListBytes: Int = DEFAULT_MAX_VOICE_LIST_BYTES,
+    private val responseReader: AzureResponseReader = BoundedAzureResponseReader,
 ) : AzureSpeechService {
+    constructor(
+        engine: HttpClientEngine,
+        maxAudioBytes: Int = DEFAULT_MAX_AUDIO_BYTES,
+        maxVoiceListBytes: Int = DEFAULT_MAX_VOICE_LIST_BYTES,
+    ) : this(
+        httpClient = HttpClient(engine) { followRedirects = false },
+        maxAudioBytes = maxAudioBytes,
+        maxVoiceListBytes = maxVoiceListBytes,
+    )
+
+    internal constructor(
+        engine: HttpClientEngine,
+        maxAudioBytes: Int,
+        maxVoiceListBytes: Int,
+        responseReader: AzureResponseReader,
+    ) : this(
+        httpClient = HttpClient(engine) { followRedirects = false },
+        maxAudioBytes = maxAudioBytes,
+        maxVoiceListBytes = maxVoiceListBytes,
+        responseReader = responseReader,
+    )
     override suspend fun voices(credentials: AzureCredentials): AzureResult<List<SpeechVoice>> {
         val url = endpoint(credentials.region, VOICES_PATH)
             ?: return AzureResult(error = SpeechError.InvalidRegion)
@@ -59,7 +122,7 @@ class AzureSpeechClient(
                 }
             }
             if (response.status != HttpStatusCode.OK) return@execute classify(response)
-            val bytes = response.readBounded(maxVoiceListBytes)
+            val bytes = responseReader.read(response, maxVoiceListBytes)
                 ?: return@execute AzureResult(error = SpeechError.ServiceUnavailable)
             parseVoices(bytes)
         }
@@ -95,7 +158,7 @@ class AzureSpeechClient(
                 }
             }
             if (response.status != HttpStatusCode.OK) return@execute classify(response)
-            val audio = response.readBounded(maxAudioBytes)
+            val audio = responseReader.read(response, maxAudioBytes)
                 ?: return@execute AzureResult(error = SpeechError.AudioDecodeFailure)
             if (audio.isEmpty()) AzureResult(error = SpeechError.AudioDecodeFailure)
             else AzureResult(value = audio)
@@ -154,30 +217,6 @@ class AzureSpeechClient(
         bytes.fill(0)
     }
 
-    private suspend fun HttpResponse.readBounded(limit: Int): ByteArray? {
-        val channel = bodyAsChannel()
-        val output = ByteArrayOutputStream(minOf(limit, READ_BUFFER_BYTES))
-        val buffer = ByteArray(READ_BUFFER_BYTES)
-        try {
-            while (true) {
-                val read = channel.readAvailable(buffer)
-                if (read < 0) break
-                if (read == 0) {
-                    yield()
-                    continue
-                }
-                if (output.size() > limit - read) {
-                    channel.cancel(null)
-                    return null
-                }
-                output.write(buffer, 0, read)
-            }
-            return output.toByteArray()
-        } finally {
-            buffer.fill(0)
-        }
-    }
-
     private fun endpoint(region: String, path: String): String? {
         if (!AzureRegionValidator.isValid(region)) return null
         return "https://$region.tts.speech.microsoft.com$path"
@@ -203,8 +242,8 @@ class AzureSpeechClient(
         private const val SSML_CONTENT_TYPE = "application/ssml+xml"
         private const val AUDIO_CONTENT_TYPE = "audio/mpeg"
         private const val USER_AGENT = "PageNest"
-        private const val READ_BUFFER_BYTES = 8 * 1024
-
-        fun production(): AzureSpeechClient = AzureSpeechClient(HttpClient(OkHttp))
+        fun production(): AzureSpeechClient = AzureSpeechClient(
+            HttpClient(OkHttp) { followRedirects = false },
+        )
     }
 }

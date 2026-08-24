@@ -7,6 +7,7 @@ import com.air5005.pagenest.speech.security.SpeechCredentialStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 class AzureSpeechEngine(
     private val credentialStore: SpeechCredentialStore,
@@ -14,6 +15,7 @@ class AzureSpeechEngine(
     private val encodedAudioPlayer: EncodedAudioPlayer,
 ) : SpeechEngine {
     override val id: String = "azure"
+    private val closed = AtomicBoolean(false)
 
     override suspend fun voices(localeTag: String): List<SpeechVoice> {
         val credentials = credentialStore.loadAzure() ?: return emptyList()
@@ -30,9 +32,17 @@ class AzureSpeechEngine(
         synthesis.error?.let { return SpeechEngineResult.Failed(it) }
         val audio = synthesis.value
             ?: return SpeechEngineResult.Failed(SpeechError.ServiceUnavailable)
-        encodedAudioPlayer.playMp3(audio)
+        try {
+            encodedAudioPlayer.playMp3(audio)
+        } finally {
+            audio.fill(0)
+        }
     } catch (cancelled: CancellationException) {
-        withContext(NonCancellable) { encodedAudioPlayer.stop() }
+        try {
+            withContext(NonCancellable) { encodedAudioPlayer.stop() }
+        } catch (_: Exception) {
+            // Cancellation remains authoritative even if the playback backend cannot stop cleanly.
+        }
         throw cancelled
     }
 
@@ -41,7 +51,11 @@ class AzureSpeechEngine(
     }
 
     override fun close() {
-        encodedAudioPlayer.close()
-        client.close()
+        if (!closed.compareAndSet(false, true)) return
+        try {
+            encodedAudioPlayer.close()
+        } finally {
+            client.close()
+        }
     }
 }

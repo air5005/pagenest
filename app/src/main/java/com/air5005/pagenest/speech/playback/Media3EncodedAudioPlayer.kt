@@ -34,8 +34,8 @@ internal interface EncodedAudioBackend {
 }
 
 /**
- * Bounds private cloud audio before handing it to Media3, and releases the player when playback
- * is cancelled or the owning speech engine is closed.
+ * Bounds private cloud audio before handing it to Media3. Routine stop/cancellation only ends the
+ * active playback; terminal [close] releases the reusable backend exactly once.
  */
 class Media3EncodedAudioPlayer internal constructor(
     private val maxAudioBytes: Int,
@@ -58,7 +58,7 @@ class Media3EncodedAudioPlayer internal constructor(
         }
         val copiedBytes = bytes.copyOf()
         return suspendCancellableCoroutine { continuation ->
-            val playback = ActivePlayback(continuation)
+            val playback = ActivePlayback(continuation, copiedBytes)
             continuation.invokeOnCancellation {
                 cancelPlayback(playback, completeAsCancelled = false)
             }
@@ -77,6 +77,7 @@ class Media3EncodedAudioPlayer internal constructor(
             synchronized(activePlaybackLock) {
                 if (closed.get() || activePlayback != null) {
                     playback.worker?.cancel()
+                    playback.clearBytes()
                     continuation.resume(SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure))
                     return@suspendCancellableCoroutine
                 }
@@ -91,35 +92,40 @@ class Media3EncodedAudioPlayer internal constructor(
     }
 
     override suspend fun stop() {
-        closed.set(true)
         val playback = synchronized(activePlaybackLock) { activePlayback }
         if (playback != null) {
             cancelPlayback(playback, completeAsCancelled = true)
         } else {
-            backend.stop()
-            releaseOnce()
+            stopBackendSafely()
         }
     }
 
     override fun close() {
-        closed.set(true)
+        if (!closed.compareAndSet(false, true)) return
         val playback = synchronized(activePlaybackLock) { activePlayback }
         if (playback != null) {
             cancelPlayback(playback, completeAsCancelled = true)
         } else {
-            backend.stop()
-            releaseOnce()
+            stopBackendSafely()
         }
-        playbackScope.cancel()
+        try {
+            releaseOnce()
+        } finally {
+            playbackScope.cancel()
+        }
     }
 
     private fun hasActivePlayback(): Boolean = synchronized(activePlaybackLock) { activePlayback != null }
 
     private fun finishPlayback(playback: ActivePlayback, result: SpeechEngineResult) {
-        synchronized(activePlaybackLock) {
-            if (activePlayback !== playback) return
-            activePlayback = null
-            if (playback.continuation.isActive) playback.continuation.resume(result)
+        try {
+            synchronized(activePlaybackLock) {
+                if (activePlayback !== playback) return
+                activePlayback = null
+                if (playback.continuation.isActive) playback.continuation.resume(result)
+            }
+        } finally {
+            playback.clearBytes()
         }
     }
 
@@ -128,13 +134,23 @@ class Media3EncodedAudioPlayer internal constructor(
             if (activePlayback !== playback) return
             activePlayback = null
         }
-        backend.stop()
-        playback.worker?.cancel()
-        if (completeAsCancelled && playback.continuation.isActive) {
-            playback.continuation.resume(SpeechEngineResult.Cancelled)
+        try {
+            stopBackendSafely()
+        } finally {
+            playback.worker?.cancel()
+            playback.clearBytes()
+            if (completeAsCancelled && playback.continuation.isActive) {
+                playback.continuation.resume(SpeechEngineResult.Cancelled)
+            }
         }
-        closed.set(true)
-        releaseOnce()
+    }
+
+    private fun stopBackendSafely() {
+        try {
+            backend.stop()
+        } catch (_: Exception) {
+            // Stop is best-effort; cancellation state and future admission remain deterministic.
+        }
     }
 
     private fun releaseOnce() {
@@ -147,8 +163,15 @@ class Media3EncodedAudioPlayer internal constructor(
 
     private class ActivePlayback(
         val continuation: CancellableContinuation<SpeechEngineResult>,
+        private val bytes: ByteArray,
         var worker: Job? = null,
-    )
+    ) {
+        private val bytesCleared = AtomicBoolean(false)
+
+        fun clearBytes() {
+            if (bytesCleared.compareAndSet(false, true)) bytes.fill(0)
+        }
+    }
 }
 
 @AndroidxOptIn(markerClass = [UnstableApi::class])

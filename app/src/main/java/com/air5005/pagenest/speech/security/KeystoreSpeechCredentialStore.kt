@@ -5,7 +5,6 @@ import android.security.keystore.KeyProperties
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.KeyStore
@@ -22,6 +21,48 @@ import kotlinx.coroutines.withContext
 
 interface SecretKeyProvider {
     fun getOrCreate(): SecretKey
+}
+
+internal interface SecretEncoder {
+    fun encode(value: String): ByteArray
+}
+
+private object Utf8SecretEncoder : SecretEncoder {
+    override fun encode(value: String): ByteArray = value.toByteArray(StandardCharsets.UTF_8)
+}
+
+internal interface CredentialPublication {
+    fun prepare(directory: File)
+    fun writeAndSync(file: File, bytes: ByteArray)
+    fun atomicReplace(source: File, target: File)
+    fun deleteIfExists(file: File)
+}
+
+private object AtomicFileCredentialPublication : CredentialPublication {
+    override fun prepare(directory: File) {
+        Files.createDirectories(directory.toPath())
+    }
+
+    override fun writeAndSync(file: File, bytes: ByteArray) {
+        java.io.FileOutputStream(file).use { output ->
+            output.write(bytes)
+            output.flush()
+            output.fd.sync()
+        }
+    }
+
+    override fun atomicReplace(source: File, target: File) {
+        Files.move(
+            source.toPath(),
+            target.toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING,
+        )
+    }
+
+    override fun deleteIfExists(file: File) {
+        Files.deleteIfExists(file.toPath())
+    }
 }
 
 class AndroidKeystoreSecretKeyProvider : SecretKeyProvider {
@@ -52,32 +93,72 @@ class AndroidKeystoreSecretKeyProvider : SecretKeyProvider {
     }
 }
 
-class KeystoreSpeechCredentialStore(
+class KeystoreSpeechCredentialStore private constructor(
     filesDir: File,
-    private val secretKeyProvider: SecretKeyProvider = AndroidKeystoreSecretKeyProvider(),
-    private val secureRandom: SecureRandom = SecureRandom(),
+    private val secretKeyProvider: SecretKeyProvider,
+    private val secureRandom: SecureRandom,
+    private val publication: CredentialPublication,
+    private val secretEncoder: SecretEncoder,
+    @Suppress("UNUSED_PARAMETER") constructionMarker: Unit,
 ) : SpeechCredentialStore {
+    constructor(
+        filesDir: File,
+        secretKeyProvider: SecretKeyProvider = AndroidKeystoreSecretKeyProvider(),
+        secureRandom: SecureRandom = SecureRandom(),
+    ) : this(
+        filesDir,
+        secretKeyProvider,
+        secureRandom,
+        AtomicFileCredentialPublication,
+        Utf8SecretEncoder,
+        Unit,
+    )
+
+    internal constructor(
+        filesDir: File,
+        secretKeyProvider: SecretKeyProvider,
+        publication: CredentialPublication,
+    ) : this(filesDir, secretKeyProvider, SecureRandom(), publication, Utf8SecretEncoder, Unit)
+
+    internal constructor(
+        filesDir: File,
+        secretKeyProvider: SecretKeyProvider,
+        secretEncoder: SecretEncoder,
+    ) : this(
+        filesDir,
+        secretKeyProvider,
+        SecureRandom(),
+        AtomicFileCredentialPublication,
+        secretEncoder,
+        Unit,
+    )
+
     private val secretDirectory = File(filesDir, SECRET_DIRECTORY)
     private val backingFile = File(secretDirectory, AZURE_FILE)
     private val mutex = Mutex()
 
     override suspend fun saveAzure(key: String, region: String) = withContext(Dispatchers.IO) {
         require(key.isNotBlank()) { "Azure credential is empty" }
+        require(key.length <= MAX_KEY_CHARS) { "Azure credential is too large" }
         AzureRegionValidator.requireValid(region)
         mutex.withLock {
-            val keyBytes = key.toByteArray(StandardCharsets.UTF_8)
-            val regionBytes = region.toByteArray(StandardCharsets.UTF_8)
-            require(keyBytes.size <= MAX_KEY_BYTES) { "Azure credential is too large" }
-            val plaintext = ByteBuffer.allocate(Int.SIZE_BYTES * 2 + keyBytes.size + regionBytes.size)
-                .putInt(keyBytes.size)
-                .put(keyBytes)
-                .putInt(regionBytes.size)
-                .put(regionBytes)
-                .array()
-            val iv = ByteArray(GCM_IV_BYTES).also(secureRandom::nextBytes)
+            var keyBytes: ByteArray? = null
+            var regionBytes: ByteArray? = null
+            var plaintext: ByteArray? = null
+            var iv: ByteArray? = null
             var ciphertext: ByteArray? = null
             var published: ByteArray? = null
             try {
+                keyBytes = secretEncoder.encode(key)
+                require(keyBytes.size <= MAX_KEY_BYTES) { "Azure credential is too large" }
+                regionBytes = secretEncoder.encode(region)
+                plaintext = ByteBuffer.allocate(Int.SIZE_BYTES * 2 + keyBytes.size + regionBytes.size)
+                    .putInt(keyBytes.size)
+                    .put(keyBytes)
+                    .putInt(regionBytes.size)
+                    .put(regionBytes)
+                    .array()
+                iv = ByteArray(GCM_IV_BYTES).also(secureRandom::nextBytes)
                 val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION).apply {
                     init(Cipher.ENCRYPT_MODE, secretKeyProvider.getOrCreate(), GCMParameterSpec(GCM_TAG_BITS, iv))
                 }
@@ -86,13 +167,15 @@ class KeystoreSpeechCredentialStore(
                 publishAtomically(published)
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (invalid: IllegalArgumentException) {
+                throw invalid
             } catch (_: Exception) {
                 throw CredentialStorageException()
             } finally {
-                keyBytes.fill(0)
-                regionBytes.fill(0)
-                plaintext.fill(0)
-                iv.fill(0)
+                keyBytes?.fill(0)
+                regionBytes?.fill(0)
+                plaintext?.fill(0)
+                iv?.fill(0)
                 ciphertext?.fill(0)
                 published?.fill(0)
             }
@@ -135,8 +218,8 @@ class KeystoreSpeechCredentialStore(
     override suspend fun clearAzure() = withContext(Dispatchers.IO) {
         mutex.withLock {
             try {
-                Files.deleteIfExists(backingFile.toPath())
-                Files.deleteIfExists(File(secretDirectory, TEMP_FILE).toPath())
+                publication.deleteIfExists(backingFile)
+                publication.deleteIfExists(File(secretDirectory, TEMP_FILE))
                 Unit
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -147,23 +230,21 @@ class KeystoreSpeechCredentialStore(
     }
 
     private fun publishAtomically(bytes: ByteArray) {
-        Files.createDirectories(secretDirectory.toPath())
         val temporary = File(secretDirectory, TEMP_FILE)
-        temporary.outputStream().use { output ->
-            output.write(bytes)
-            output.flush()
-            (output as java.io.FileOutputStream).fd.sync()
-        }
+        var completed = false
         try {
-            Files.move(
-                temporary.toPath(),
-                backingFile.toPath(),
-                StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING,
-            )
-        } catch (_: AtomicMoveNotSupportedException) {
-            Files.deleteIfExists(temporary.toPath())
-            throw CredentialStorageException()
+            publication.prepare(secretDirectory)
+            publication.writeAndSync(temporary, bytes)
+            publication.atomicReplace(temporary, backingFile)
+            completed = true
+        } finally {
+            if (!completed) {
+                try {
+                    publication.deleteIfExists(temporary)
+                } catch (_: Exception) {
+                    // Preserve the fixed outer storage failure and never attach a path-bearing cause.
+                }
+            }
         }
     }
 
@@ -199,6 +280,7 @@ class KeystoreSpeechCredentialStore(
         const val GCM_IV_BYTES = 12
         const val GCM_TAG_BITS = 128
         const val MAX_KEY_BYTES = 4_096
+        const val MAX_KEY_CHARS = 4_096
         const val MAX_REGION_BYTES = 32
         const val MIN_BLOB_BYTES = GCM_IV_BYTES + (GCM_TAG_BITS / 8) + Int.SIZE_BYTES * 2 + 3
         const val MAX_BLOB_BYTES = GCM_IV_BYTES + (GCM_TAG_BITS / 8) + Int.SIZE_BYTES * 2 + MAX_KEY_BYTES + MAX_REGION_BYTES

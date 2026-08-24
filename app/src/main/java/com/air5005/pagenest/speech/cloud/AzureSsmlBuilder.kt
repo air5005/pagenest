@@ -15,8 +15,8 @@ object AzureSsmlBuilder {
     ): String {
         require(text.isNotBlank()) { "Speech text is empty" }
         require(text.codePointCount(0, text.length) <= MAX_TEXT_CODE_POINTS) { "Speech text is too large" }
-        require(rate.isFinite() && rate > 0f) { "Speech rate is invalid" }
-        require(pitch.isFinite() && pitch > 0f) { "Speech pitch is invalid" }
+        require(rate.isFinite() && rate in MIN_MULTIPLIER..MAX_MULTIPLIER) { "Speech rate is invalid" }
+        require(pitch.isFinite() && pitch in MIN_MULTIPLIER..MAX_MULTIPLIER) { "Speech pitch is invalid" }
 
         val escapedText = escapeXml(text)
         val escapedLocale = escapeXml(localeTag.ifBlank { DEFAULT_LOCALE })
@@ -48,4 +48,6 @@ object AzureSsmlBuilder {
 
     private const val DEFAULT_LOCALE = "zh-CN"
     private const val DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
+    private const val MIN_MULTIPLIER = 0.1f
+    private const val MAX_MULTIPLIER = 4f
 }

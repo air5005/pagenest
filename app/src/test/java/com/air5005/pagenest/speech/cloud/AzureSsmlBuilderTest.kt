@@ -54,4 +54,44 @@ class AzureSsmlBuilderTest {
             AzureSsmlBuilder.build("  ", "zh-CN", null, 1f, 1f)
         }
     }
+
+    @Test
+    fun `rate and pitch multipliers map to signed SSML percentages`() {
+        val ssml = AzureSsmlBuilder.build(
+            text = "hello",
+            localeTag = "en-US",
+            voiceId = "en-US-JennyNeural",
+            rate = 1.25f,
+            pitch = 0.8f,
+        )
+
+        assertTrue(ssml.contains("rate=\"+25%\""))
+        assertTrue(ssml.contains("pitch=\"-20%\""))
+    }
+
+    @Test
+    fun `non-finite and out-of-range rate values are rejected`() {
+        listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, 0f, 0.09f, 4.01f)
+            .forEach { invalidRate ->
+                assertThrows(IllegalArgumentException::class.java) {
+                    AzureSsmlBuilder.build("hello", "en-US", null, invalidRate, 1f)
+                }
+            }
+    }
+
+    @Test
+    fun `non-finite and out-of-range pitch values are rejected`() {
+        listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, 0f, 0.09f, 4.01f)
+            .forEach { invalidPitch ->
+                assertThrows(IllegalArgumentException::class.java) {
+                    AzureSsmlBuilder.build("hello", "en-US", null, 1f, invalidPitch)
+                }
+            }
+    }
+
+    @Test
+    fun `rate and pitch boundaries are accepted`() {
+        AzureSsmlBuilder.build("hello", "en-US", null, 0.1f, 0.1f)
+        AzureSsmlBuilder.build("hello", "en-US", null, 4f, 4f)
+    }
 }
