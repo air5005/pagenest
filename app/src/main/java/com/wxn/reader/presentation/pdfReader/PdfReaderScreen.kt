@@ -343,10 +343,10 @@ fun PdfReaderScreen(
 
         when (val event = speechEvent) {
             SpeechUiEvent.RequestOnlineConsent -> AlertDialog(
-                onDismissRequest = { speechEvent = null },
+                onDismissRequest = { speechEvent = null; speechSettings.cancelOnlineConsent() },
                 text = { Text(stringResource(com.wxn.reader.R.string.speech_online_consent)) },
                 confirmButton = { Button(onClick = { speechEvent = null; speechSettings.confirmOnlineConsent() }) { Text(stringResource(com.wxn.reader.R.string.confirm)) } },
-                dismissButton = { Button(onClick = { speechEvent = null }) { Text(stringResource(com.wxn.reader.R.string.cancel)) } },
+                dismissButton = { Button(onClick = { speechEvent = null; speechSettings.cancelOnlineConsent() }) { Text(stringResource(com.wxn.reader.R.string.cancel)) } },
             )
             is SpeechUiEvent.ShowMessage -> AlertDialog(
                 onDismissRequest = { speechEvent = null },

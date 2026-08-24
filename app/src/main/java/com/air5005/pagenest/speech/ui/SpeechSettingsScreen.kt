@@ -9,15 +9,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,7 +31,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.air5005.pagenest.speech.model.SpeechMode
 import com.air5005.pagenest.speech.settings.SpeechSettingsViewModel
 import com.wxn.reader.R
@@ -39,9 +46,24 @@ fun SpeechSettingsScreen(viewModel: SpeechSettingsViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var key by remember { mutableStateOf("") }
     var region by remember(state.region) { mutableStateOf(state.region) }
+    val snackbarHostState = remember { SnackbarHostState() }
     val navController = LocalNavController.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    Scaffold(topBar = {
+    LaunchedEffect(viewModel, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            viewModel.events.collect { event ->
+                when (val presentation = SpeechSettingsEventPolicy.presentationFor(event)) {
+                    SpeechSettingsEventPresentation.OnlineConsentDialog -> Unit
+                    is SpeechSettingsEventPresentation.Snackbar -> snackbarHostState.showSnackbar(presentation.message)
+                }
+            }
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
         TopAppBar(
             title = { Text(stringResource(R.string.speech_settings)) },
             navigationIcon = {
@@ -50,7 +72,8 @@ fun SpeechSettingsScreen(viewModel: SpeechSettingsViewModel = hiltViewModel()) {
                 }
             },
         )
-    }) { padding ->
+        },
+    ) { padding ->
         Column(Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
             Text(stringResource(R.string.speech_mode))
             Row {
@@ -96,5 +119,24 @@ fun SpeechSettingsScreen(viewModel: SpeechSettingsViewModel = hiltViewModel()) {
                 }
             }
         }
+    }
+
+    if (state.onlineConsentPending) {
+        AlertDialog(
+            onDismissRequest = {
+                viewModel.cancelOnlineConsent()
+            },
+            text = { Text(stringResource(R.string.speech_online_consent)) },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.confirmOnlineConsent()
+                }) { Text(stringResource(R.string.confirm)) }
+            },
+            dismissButton = {
+                Button(onClick = {
+                    viewModel.cancelOnlineConsent()
+                }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 }

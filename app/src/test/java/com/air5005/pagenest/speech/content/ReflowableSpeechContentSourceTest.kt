@@ -221,6 +221,25 @@ class PageViewControllerSpeechSnapshotTest {
     }
 
     @Test
+    fun `speech page follow never becomes a manual seek and user page change is emitted once`() = runTest {
+        val controller = controllerWith(
+            TextPage(index = 0, textLines = arrayListOf(textLine("first"))),
+            TextPage(index = 1, textLines = arrayListOf(textLine("second"))),
+        )
+        val listener = RecordingClickListener()
+        controller.clickListener = listener
+
+        assertEquals("second", controller.nextSpeechPage()?.lines?.single()?.text)
+        controller.setPageIndex(0)
+
+        assertEquals(
+            listOf(PageViewController.PageChangeOrigin.SPEECH_FOLLOW, PageViewController.PageChangeOrigin.USER),
+            listener.pageChangeOrigins,
+        )
+        assertEquals(1, listener.pageChangeOrigins.count { it == PageViewController.PageChangeOrigin.USER })
+    }
+
+    @Test
     fun `next speech page awaits an unloaded chapter before returning its first page`() = runTest {
         val parsed = CompletableDeferred<Unit>()
         val target = textChapter(1, TextPage(index = 0, textLines = arrayListOf(textLine("next"))))
@@ -544,6 +563,8 @@ class PageViewControllerSpeechSnapshotTest {
     @Test
     fun `manual navigation without a newer operation installs its current and adjacent chapters`() = runTest {
         val controller = manualNavigationController()
+        val listener = RecordingClickListener()
+        controller.clickListener = listener
         val currentBuilt = CompletableDeferred<Unit>()
         val adjacentBuilt = CompletableDeferred<Unit>()
         every { controller.getChapterByIdUserCase(1, any()) } answers {
@@ -579,6 +600,7 @@ class PageViewControllerSpeechSnapshotTest {
         assertEquals("manual-1", currentChapterText(controller))
         assertEquals("manual-2", controller.nextTextChapter?.pages?.single()?.textLines?.single()?.text)
         assertEquals("manual-1", candidate.snapshot.lines.single().text)
+        assertEquals(listOf(PageViewController.PageChangeOrigin.USER), listener.pageChangeOrigins)
     }
 
     @Test
@@ -919,11 +941,13 @@ class PageViewControllerSpeechSnapshotTest {
 
     private class RecordingClickListener : PageViewController.OnClickListener {
         val pageChanges = AtomicInteger()
+        val pageChangeOrigins = mutableListOf<PageViewController.PageChangeOrigin>()
 
         override fun onCenterClick() = Unit
         override fun onLinkClick(href: String?, clickX: Float, clickY: Float) = Unit
-        override fun onPageChange() {
+        override fun onPageChange(origin: PageViewController.PageChangeOrigin) {
             pageChanges.incrementAndGet()
+            pageChangeOrigins += origin
         }
         override fun onSelectedText(startX: Float, startY: Float, endX: Float, endY: Float) = Unit
         override fun onSelectedCancel() = Unit

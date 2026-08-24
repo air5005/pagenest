@@ -103,12 +103,14 @@ open class PageViewController @Inject constructor(
     interface OnClickListener {
         fun onCenterClick()
         fun onLinkClick(href: String?, clickX: Float, clickY: Float)
-        fun onPageChange()
+        fun onPageChange(origin: PageChangeOrigin)
         fun onSelectedText(startX: Float, startY : Float, endX : Float, endY : Float)
         fun onSelectedCancel()
         fun onCheckedAnnotation(annotationIds: List<String>, rect: RectF)
         fun onCheckedNote(noteId: String, rect: RectF)
     }
+
+    enum class PageChangeOrigin { USER, SPEECH_FOLLOW }
 
     var clickListener: OnClickListener? = null
 
@@ -385,7 +387,7 @@ open class PageViewController @Inject constructor(
 
             targetProgress = newProgress
         }
-        loadContent(true)
+        loadContent(true, PageChangeOrigin.USER)
         return true
     }
 
@@ -441,6 +443,10 @@ open class PageViewController @Inject constructor(
     }
 
     override fun loadContent(resetPageOffset: Boolean) {
+        loadContent(resetPageOffset, pageChangeOrigin = null)
+    }
+
+    private fun loadContent(resetPageOffset: Boolean, pageChangeOrigin: PageChangeOrigin?) {
         Logger.i("PageViewController::loadContent:resetPageOffset=$resetPageOffset,durChapterIndex=$durChapterIndex, isInitFinish=$isInitFinish")
         val reloadScope = scope
         if (!isInitFinish || reloadScope == null) {
@@ -448,20 +454,22 @@ open class PageViewController @Inject constructor(
             return
         }
         val readerLoadToken = beginSpeechLayoutReload()
+        val currentChapterIndex = durChapterIndex
         reloadScope.launchIO {
             try {
                 loadContent(
-                    durChapterIndex,
+                    currentChapterIndex,
+                    resetPageOffset = resetPageOffset,
+                    readerLoadToken = readerLoadToken,
+                    pageChangeOrigin = pageChangeOrigin,
+                )
+                loadContent(
+                    currentChapterIndex + 1,
                     resetPageOffset = resetPageOffset,
                     readerLoadToken = readerLoadToken,
                 )
                 loadContent(
-                    durChapterIndex + 1,
-                    resetPageOffset = resetPageOffset,
-                    readerLoadToken = readerLoadToken,
-                )
-                loadContent(
-                    durChapterIndex - 1,
+                    currentChapterIndex - 1,
                     resetPageOffset = resetPageOffset,
                     readerLoadToken = readerLoadToken,
                 )
@@ -476,17 +484,17 @@ open class PageViewController @Inject constructor(
     override fun setPageIndex(index: Int) {
         durPageIndex = index
         saveRead()
-        notifyPageChanged()
+        notifyPageChanged(PageChangeOrigin.USER)
     }
 
     private fun setSpeechPageIndex(index: Int) {
         durPageIndex = index
-        notifyPageChanged()
+        notifyPageChanged(PageChangeOrigin.SPEECH_FOLLOW)
     }
 
-    private fun notifyPageChanged() {
+    private fun notifyPageChanged(origin: PageChangeOrigin) {
         callBack?.pageChanged() // 通知界面刷新进度
-        clickListener?.onPageChange()
+        clickListener?.onPageChange(origin)
     }
 
     private fun saveRead() {
@@ -695,6 +703,7 @@ open class PageViewController @Inject constructor(
         resetPageOffset: Boolean,
         readerLoadToken: ReaderLoadToken,
         applyToReaderState: Boolean = true,
+        pageChangeOrigin: PageChangeOrigin? = null,
     ): TextChapter? {
 //        Logger.i("PageViewController::loadContent:index=$index,upContent=$upContent,resetPageOffset=$resetPageOffset,bookid=${book?.id},bookname=${book?.title}")
         if (chapterIndex < 0) return null
@@ -793,8 +802,6 @@ open class PageViewController @Inject constructor(
                     return@withContext null
                 }
 
-            var needOnPageChange = (targetProgress < 0.0)
-
             when (chapter.chapterIndex) {
                 durChapterIndex -> {    //加载的是当前章节
                     curTextChapter = textChapter
@@ -811,7 +818,6 @@ open class PageViewController @Inject constructor(
                         }
                         Logger.d("PageViewController::pageIndex =${pageIndex}, durPageIndex=$durPageIndex, wordCount=${curTextChapter?.wordCount},totalWordCount=${curTextChapter?.totalWordCount}")
                         targetProgress = -1.0
-                        needOnPageChange = true
                     }
 
                     if (upContent) {
@@ -840,9 +846,9 @@ open class PageViewController @Inject constructor(
                 }
             }
 
-            if (needOnPageChange) {
+            if (chapter.chapterIndex == durChapterIndex && pageChangeOrigin != null) {
                 Logger.e("PageViewController::loadContent success onPageChange::${durChapterIndex}")
-                clickListener?.onPageChange()
+                clickListener?.onPageChange(pageChangeOrigin)
             }
                 textChapter
             }
@@ -885,10 +891,17 @@ open class PageViewController @Inject constructor(
         if (curTextChapter == null) {
             Coroutines.mainScope().launchIO {
                 Logger.d("PageViewController::moveToNextChapter:when curTextChapter is null, durChapterIndex=$durChapterIndex")
-                loadContent(durChapterIndex, upContent, false, readerLoadToken)
+                loadContent(
+                    durChapterIndex,
+                    upContent,
+                    false,
+                    readerLoadToken,
+                    pageChangeOrigin = PageChangeOrigin.USER,
+                )
             }
         } else {
             callBack?.upContent()
+            notifyPageChanged(PageChangeOrigin.USER)
         }
         Coroutines.mainScope().launchIO {
             Logger.d("PageViewController::moveToNextChapter:, durChapterIndex=${durChapterIndex + 1}")
@@ -921,10 +934,19 @@ open class PageViewController @Inject constructor(
         if (curTextChapter == null) {
             Coroutines.mainScope().launchIO {
                 Logger.d("PageViewController::moveToPrevChapter when curTextChapter is null, durChapterIndex=${durChapterIndex}")
-                loadContent(durChapterIndex, upContent, false, readerLoadToken)
+                loadContent(
+                    durChapterIndex,
+                    upContent,
+                    false,
+                    readerLoadToken,
+                    pageChangeOrigin = PageChangeOrigin.USER,
+                )
             }
         } else if (upContent) {
             callBack?.upContent()
+            notifyPageChanged(PageChangeOrigin.USER)
+        } else {
+            notifyPageChanged(PageChangeOrigin.USER)
         }
 
         Coroutines.mainScope().launchIO {

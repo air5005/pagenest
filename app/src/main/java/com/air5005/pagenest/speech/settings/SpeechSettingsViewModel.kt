@@ -50,6 +50,7 @@ data class SpeechSettingsState(
     val region: String = "",
     val keyDraft: String = "",
     val availableVoices: List<SpeechVoice> = emptyList(),
+    val onlineConsentPending: Boolean = false,
 )
 
 sealed interface SpeechUiEvent {
@@ -66,6 +67,9 @@ class SpeechSettingsViewModel @Inject constructor(
     private val azureSpeechService: AzureSpeechService,
     private val playbackActions: SpeechPlaybackActions,
 ) : ViewModel() {
+    private enum class PendingOnlineAction { START_PLAYBACK, TEST_CONNECTION }
+
+    private var pendingOnlineAction: PendingOnlineAction? = null
     val playbackSnapshot: StateFlow<SpeechControllerSnapshot> = playbackActions.playbackSnapshot
     val routeIndicator: StateFlow<SpeechRouteIndicator> = playbackActions.routeIndicator
     private val _state = MutableStateFlow(SpeechSettingsState())
@@ -97,6 +101,8 @@ class SpeechSettingsViewModel @Inject constructor(
     fun start() {
         val preferences = state.value.preferences
         if (preferences.mode != SpeechMode.OFFLINE && !preferences.onlineConsentGranted) {
+            pendingOnlineAction = PendingOnlineAction.START_PLAYBACK
+            _state.value = _state.value.copy(onlineConsentPending = true)
             eventChannel.trySend(SpeechUiEvent.RequestOnlineConsent)
         } else {
             playbackActions.start()
@@ -104,10 +110,22 @@ class SpeechSettingsViewModel @Inject constructor(
     }
 
     fun confirmOnlineConsent() {
+        val pendingAction = pendingOnlineAction
+        pendingOnlineAction = null
+        _state.value = _state.value.copy(onlineConsentPending = false)
         viewModelScope.launch {
             preferencesRepository.update { it.copy(onlineConsentGranted = true) }
-            playbackActions.start()
+            when (pendingAction) {
+                PendingOnlineAction.START_PLAYBACK -> playbackActions.start()
+                PendingOnlineAction.TEST_CONNECTION -> performConnectionTest()
+                null -> Unit
+            }
         }
+    }
+
+    fun cancelOnlineConsent() {
+        pendingOnlineAction = null
+        _state.value = _state.value.copy(onlineConsentPending = false)
     }
 
     fun selectMode(mode: SpeechMode) {
@@ -147,19 +165,29 @@ class SpeechSettingsViewModel @Inject constructor(
     }
 
     fun testConnection() {
-        viewModelScope.launch {
-            val credentials = credentialStore.loadAzure()
-            if (credentials == null) {
-                eventChannel.send(SpeechUiEvent.ShowMessage("请先配置 Azure Speech Key 和 Region"))
-                return@launch
-            }
-            val result = azureSpeechService.voices(credentials)
-            if (result.error == null) {
-                _state.value = _state.value.copy(availableVoices = result.value.orEmpty())
-            }
-            val message = result.error?.let(SpeechControlPolicy::messageFor) ?: "Azure 连接成功"
-            eventChannel.send(SpeechUiEvent.ShowMessage(message))
+        if (!state.value.preferences.onlineConsentGranted) {
+            pendingOnlineAction = PendingOnlineAction.TEST_CONNECTION
+            _state.value = _state.value.copy(onlineConsentPending = true)
+            eventChannel.trySend(SpeechUiEvent.RequestOnlineConsent)
+            return
         }
+        viewModelScope.launch {
+            performConnectionTest()
+        }
+    }
+
+    private suspend fun performConnectionTest() {
+        val credentials = credentialStore.loadAzure()
+        if (credentials == null) {
+            eventChannel.send(SpeechUiEvent.ShowMessage("请先配置 Azure Speech Key 和 Region"))
+            return
+        }
+        val result = azureSpeechService.voices(credentials)
+        if (result.error == null) {
+            _state.value = _state.value.copy(availableVoices = result.value.orEmpty())
+        }
+        val message = result.error?.let(SpeechControlPolicy::messageFor) ?: "Azure 连接成功"
+        eventChannel.send(SpeechUiEvent.ShowMessage(message))
     }
 
     private fun updatePreferences(transform: (SpeechPreferences) -> SpeechPreferences) {

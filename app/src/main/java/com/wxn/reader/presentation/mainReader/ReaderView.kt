@@ -576,10 +576,10 @@ fun ReaderView(
 
         when (val event = speechEvent) {
             SpeechUiEvent.RequestOnlineConsent -> AlertDialog(
-                onDismissRequest = { speechEvent = null },
+                onDismissRequest = { speechEvent = null; speechSettings.cancelOnlineConsent() },
                 text = { Text(stringResource(R.string.speech_online_consent)) },
                 confirmButton = { Button(onClick = { speechEvent = null; speechSettings.confirmOnlineConsent() }) { Text(stringResource(R.string.confirm)) } },
-                dismissButton = { Button(onClick = { speechEvent = null }) { Text(stringResource(R.string.cancel)) } },
+                dismissButton = { Button(onClick = { speechEvent = null; speechSettings.cancelOnlineConsent() }) { Text(stringResource(R.string.cancel)) } },
             )
             is SpeechUiEvent.ShowMessage -> AlertDialog(
                 onDismissRequest = { speechEvent = null },

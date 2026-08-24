@@ -54,6 +54,8 @@ class SpeechSettingsViewModelTest {
         fixture.viewModel.selectMode(SpeechMode.ONLINE)
         advanceUntilIdle()
 
+        fixture.viewModel.start()
+        assertEquals(SpeechUiEvent.RequestOnlineConsent, fixture.viewModel.events.first())
         fixture.viewModel.confirmOnlineConsent()
         advanceUntilIdle()
 
@@ -154,15 +156,38 @@ class SpeechSettingsViewModelTest {
     }
 
     @Test
-    fun `connection test uses stored credentials and reports success`() = runTest(dispatcher) {
+    fun `connection test requires consent and resumes exactly once after confirm`() = runTest(dispatcher) {
         val fixture = fixture(credentials = AzureCredentials("secret", "eastasia"))
         fixture.azure.result = AzureResult(value = listOf(SpeechVoice("zh", "晓晓", "zh-CN")))
 
         fixture.viewModel.testConnection()
+        assertEquals(SpeechUiEvent.RequestOnlineConsent, fixture.viewModel.events.first())
+        assertEquals(0, fixture.azure.voiceCalls)
+        assertTrue(fixture.viewModel.state.value.onlineConsentPending)
+
+        fixture.viewModel.confirmOnlineConsent()
         advanceUntilIdle()
 
+        assertFalse(fixture.viewModel.state.value.onlineConsentPending)
         assertEquals(1, fixture.azure.voiceCalls)
         assertEquals(SpeechUiEvent.ShowMessage("Azure 连接成功"), fixture.viewModel.events.first())
+        fixture.viewModel.confirmOnlineConsent()
+        advanceUntilIdle()
+        assertEquals(1, fixture.azure.voiceCalls)
+    }
+
+    @Test
+    fun `cancelling test connection consent makes no Azure request`() = runTest(dispatcher) {
+        val fixture = fixture(credentials = AzureCredentials("secret", "eastasia"))
+
+        fixture.viewModel.testConnection()
+        assertEquals(SpeechUiEvent.RequestOnlineConsent, fixture.viewModel.events.first())
+        fixture.viewModel.cancelOnlineConsent()
+        fixture.viewModel.confirmOnlineConsent()
+        advanceUntilIdle()
+
+        assertEquals(0, fixture.azure.voiceCalls)
+        assertFalse(fixture.viewModel.state.value.onlineConsentPending)
     }
 
     @Test

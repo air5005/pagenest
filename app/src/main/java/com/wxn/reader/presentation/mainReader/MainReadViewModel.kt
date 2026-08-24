@@ -449,7 +449,7 @@ class MainReadViewModel @Inject constructor(
     /***
      * 滑动切换界面，或者跳转切换界面时，通知进度刷新
      */
-    override fun onPageChange() {
+    override fun onPageChange(origin: PageViewController.PageChangeOrigin) {
         val curChapter = pageController.textChapter(0) ?: return
         val curChapterIndex = pageController.durChapterIndex
         val curPageInChpaterIndex = pageController.durPageIndex
@@ -464,7 +464,7 @@ class MainReadViewModel @Inject constructor(
         _isBookmarked.value = (pageController.textChapter(0)?.pages?.getOrNull(pageController.durPageIndex)?.bookmarkId ?: -1) > 0
         _enableTts.value = !pageController.currentPage()?.text.isNullOrEmpty()
 
-        if (readerSpeechManager.isActive) {
+        if (origin == PageViewController.PageChangeOrigin.USER && readerSpeechManager.isActive) {
             val snapshot = pageController.speechPageSnapshot()
             snapshot.lines.firstOrNull { !it.isImage && !it.isLine && it.text.isNotBlank() }?.let { line ->
                 readerSpeechManager.seek(

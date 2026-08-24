@@ -4,6 +4,7 @@ import com.air5005.pagenest.speech.model.SpeechError
 import com.air5005.pagenest.speech.model.SpeechPlaybackState
 import com.air5005.pagenest.speech.model.SpeechPosition
 import com.air5005.pagenest.speech.model.SpeechSegment
+import com.air5005.pagenest.speech.settings.SpeechUiEvent
 import com.wxn.base.bean.Locator
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -44,6 +45,23 @@ class SpeechControlPolicyTest {
         assertTrue(policy.requiresPreparation(SpeechPlaybackState.Error(SpeechError.NetworkTimeout, segment())))
         assertTrue(policy.requiresPreparation(SpeechPlaybackState.Idle))
         assertFalse(policy.requiresPreparation(SpeechPlaybackState.Paused(segment())))
+    }
+
+    @Test fun `settings event policy renders consent as dialog and exact messages as snackbar`() {
+        assertEquals(
+            SpeechSettingsEventPresentation.OnlineConsentDialog,
+            SpeechSettingsEventPolicy.presentationFor(SpeechUiEvent.RequestOnlineConsent),
+        )
+        assertEquals(
+            SpeechSettingsEventPresentation.Snackbar("Azure 连接成功"),
+            SpeechSettingsEventPolicy.presentationFor(SpeechUiEvent.ShowMessage("Azure 连接成功")),
+        )
+        assertEquals(
+            SpeechSettingsEventPresentation.Snackbar("网络连接超时，请检查网络后重试"),
+            SpeechSettingsEventPolicy.presentationFor(
+                SpeechUiEvent.ShowFallbackMessage("网络连接超时，请检查网络后重试"),
+            ),
+        )
     }
 
     private fun segment() = SpeechSegment(
