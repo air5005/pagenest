@@ -50,9 +50,16 @@ class FileSpeechAudioCache(
         require(expiryMillis >= 0) { "expiryMillis must not be negative" }
     }
 
+    override suspend fun retainScope(request: SpeechRequest): Unit = withContext(ioDispatcher) {
+        mutex.withLock {
+            retainScopeOnDisk(request)
+            Unit
+        }
+    }
+
     override suspend fun get(request: SpeechRequest, nowMillis: Long): ByteArray? = withContext(ioDispatcher) {
         mutex.withLock {
-            val scope = retainScope(request)
+            val scope = retainScopeOnDisk(request)
             removeExpiredAndCorrupt(scope, nowMillis)
             val file = entryFile(scope, request)
             val entry = readEntry(file) ?: return@withLock null
@@ -68,15 +75,16 @@ class FileSpeechAudioCache(
 
     override suspend fun put(request: SpeechRequest, audio: ByteArray, nowMillis: Long) = withContext(ioDispatcher) {
         mutex.withLock {
-            val scope = retainScope(request)
+            val scope = retainScopeOnDisk(request)
             removeExpiredAndCorrupt(scope, nowMillis)
-            if (audio.size.toLong() > maxBytes) {
+            val entryBytes = HEADER_BYTES + audio.size.toLong()
+            if (entryBytes > maxBytes) {
                 enforceCapacity(scope, maxBytes)
                 return@withLock
             }
 
             val destination = entryFile(scope, request)
-            enforceCapacity(scope, maxBytes - audio.size, destination)
+            enforceCapacity(scope, maxBytes - entryBytes, destination)
             scope.mkdirs()
             val temporary = File(scope, ".${UUID.randomUUID()}.tmp")
             try {
@@ -90,11 +98,20 @@ class FileSpeechAudioCache(
         }
     }
 
+    override suspend fun remove(request: SpeechRequest) = withContext(ioDispatcher) {
+        mutex.withLock {
+            val scope = retainScopeOnDisk(request)
+            val file = entryFile(scope, request)
+            file.delete()
+            removeEmptyParents(file.parentFile)
+        }
+    }
+
     override suspend fun clear() = withContext(ioDispatcher) {
         mutex.withLock { deleteRecursively(rootDirectory) }
     }
 
-    private fun retainScope(request: SpeechRequest): File {
+    private fun retainScopeOnDisk(request: SpeechRequest): File {
         val bookDirectory = File(rootDirectory, request.segment.position.bookId.toString())
         val scope = File(bookDirectory, "chapter-${request.segment.position.chapterIndex}")
         if (rootDirectory.exists()) {
@@ -152,7 +169,13 @@ class FileSpeechAudioCache(
                 if (input.readInt() != MAGIC || input.readInt() != VERSION) return corrupt(file)
                 val createdAtMillis = input.readLong()
                 val length = input.readInt()
-                if (createdAtMillis < 0 || length < 0 || length.toLong() > maxBytes) return corrupt(file)
+                val expectedFileBytes = HEADER_BYTES + length.toLong()
+                if (
+                    createdAtMillis < 0 ||
+                    length < 0 ||
+                    expectedFileBytes != file.length() ||
+                    expectedFileBytes > maxBytes
+                ) return corrupt(file)
                 val expectedHash = ByteArray(HASH_BYTES)
                 input.readFully(expectedHash)
                 val audio = ByteArray(length)
@@ -186,13 +209,12 @@ class FileSpeechAudioCache(
     private fun enforceCapacity(scope: File, allowedBytes: Long, except: File? = null) {
         val entries = scope.listFiles().orEmpty().mapNotNull { file ->
             if (file == except || file.extension != CACHE_EXTENSION) return@mapNotNull null
-            val entry = readEntry(file) ?: return@mapNotNull null
-            CacheFile(file, entry.audio.size.toLong()).also { entry.audio.fill(0) }
+            CacheFile(file, file.length())
         }.sortedWith(compareBy<CacheFile> { it.file.lastModified() }.thenBy { it.file.name })
-        var total = entries.sumOf(CacheFile::audioBytes)
+        var total = entries.sumOf(CacheFile::entryBytes)
         entries.forEach { entry ->
             if (total <= allowedBytes.coerceAtLeast(0)) return
-            if (entry.file.delete()) total -= entry.audioBytes
+            if (entry.file.delete()) total -= entry.entryBytes
         }
     }
 
@@ -220,7 +242,7 @@ class FileSpeechAudioCache(
     private fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 
     private data class CacheEntry(val createdAtMillis: Long, val audio: ByteArray)
-    private data class CacheFile(val file: File, val audioBytes: Long)
+    private data class CacheFile(val file: File, val entryBytes: Long)
 
     companion object {
         const val DEFAULT_MAX_BYTES = 128L * 1024 * 1024
@@ -228,6 +250,7 @@ class FileSpeechAudioCache(
         private const val MAGIC = 0x504E5343
         private const val VERSION = 1
         private const val HASH_BYTES = 32
+        private const val HEADER_BYTES = 4L + 4L + 8L + 4L + HASH_BYTES
         private const val CACHE_EXTENSION = "cache"
     }
 }

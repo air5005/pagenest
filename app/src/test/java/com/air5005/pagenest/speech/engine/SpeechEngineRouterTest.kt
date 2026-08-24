@@ -1,6 +1,7 @@
 package com.air5005.pagenest.speech.engine
 
 import com.air5005.pagenest.speech.cache.SpeechAudioCache
+import com.air5005.pagenest.speech.cache.FileSpeechAudioCache
 import com.air5005.pagenest.speech.model.SpeechError
 import com.air5005.pagenest.speech.model.SpeechMode
 import com.air5005.pagenest.speech.model.SpeechPosition
@@ -14,12 +15,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SpeechEngineRouterTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
     @Test
-    fun `offline speaks unchanged segment without touching Azure or cache`() = runTest {
+    fun `offline retains cache scope and speaks unchanged segment without touching Azure or cache entries`() = runTest {
         val system = RecordingSpeechEngine("system")
         val azure = RecordingOnlineEngine()
         val cache = RecordingCache()
@@ -33,22 +40,90 @@ class SpeechEngineRouterTest {
         assertSame(request.segment, system.requests.single().segment)
         assertTrue(azure.synthesisRequests.isEmpty())
         assertEquals(0, cache.getCalls)
+        assertEquals(1, cache.retainCalls)
     }
 
     @Test
-    fun `online cache hit plays cached bytes without synthesizing and never falls back`() = runTest {
+    fun `online evicts an undecodable cache hit and synthesizes the segment again`() = runTest {
         val system = RecordingSpeechEngine("system")
-        val azure = RecordingOnlineEngine(playResults = ArrayDeque(listOf(SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure))))
+        val azure = RecordingOnlineEngine(
+            synthesisResults = ArrayDeque(listOf(OnlineSynthesisResult.Audio(byteArrayOf(9, 10)))),
+            playResults = ArrayDeque(
+                listOf(
+                    SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure),
+                    SpeechEngineResult.Completed,
+                ),
+            ),
+        )
         val cache = RecordingCache(hit = byteArrayOf(7, 8))
         val router = router(system, azure, cache)
 
         val routed = router.speak(request("cached"), SpeechMode.ONLINE)
 
-        assertEquals(SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure), routed.result)
+        assertEquals(SpeechEngineResult.Completed, routed.result)
         assertEquals("azure", routed.engineId)
-        assertTrue(azure.synthesisRequests.isEmpty())
+        assertEquals(1, azure.synthesisRequests.size)
         assertTrue(system.requests.isEmpty())
-        assertEquals(listOf(byteArrayOf(7, 8).toList()), azure.playedAudio.map(ByteArray::toList))
+        assertEquals(
+            listOf(byteArrayOf(7, 8).toList(), byteArrayOf(9, 10).toList()),
+            azure.playedAudio.map(ByteArray::toList),
+        )
+        assertEquals(1, cache.removeCalls)
+    }
+
+    @Test
+    fun `auto evicts an undecodable cache hit then applies online retry policy`() = runTest {
+        val system = RecordingSpeechEngine("system")
+        val azure = RecordingOnlineEngine(
+            synthesisResults = ArrayDeque(
+                listOf(
+                    OnlineSynthesisResult.Failed(SpeechError.NetworkTimeout),
+                    OnlineSynthesisResult.Audio(byteArrayOf(9)),
+                ),
+            ),
+            playResults = ArrayDeque(
+                listOf(
+                    SpeechEngineResult.Failed(SpeechError.AudioDecodeFailure),
+                    SpeechEngineResult.Completed,
+                ),
+            ),
+        )
+        val cache = RecordingCache(hit = byteArrayOf(7, 8))
+        val delays = mutableListOf<Long>()
+        val router = router(system, azure, cache, delays)
+
+        val routed = router.speak(request("cached-auto"), SpeechMode.AUTO)
+
+        assertEquals(SpeechEngineResult.Completed, routed.result)
+        assertEquals(listOf(500L), delays)
+        assertEquals(1, cache.removeCalls)
+        assertEquals(2, azure.synthesisRequests.size)
+        assertTrue(system.requests.isEmpty())
+    }
+
+    @Test
+    fun `offline request for another book clears the previous online cache scope`() = runTest {
+        val root = File(temporaryFolder.root, "speech-cache")
+        val cache = FileSpeechAudioCache(root)
+        val system = RecordingSpeechEngine("system")
+        val azure = RecordingOnlineEngine(
+            synthesisResults = ArrayDeque(listOf(OnlineSynthesisResult.Audio(byteArrayOf(1, 2, 3)))),
+        )
+        val router = SpeechEngineRouter(
+            systemEngine = system,
+            onlineEngine = azure,
+            cache = cache,
+            nowMillis = { 42L },
+            delayMillis = {},
+        )
+
+        router.speak(request("online-a", bookId = 11, chapterIndex = 2), SpeechMode.ONLINE)
+        assertTrue(root.walkTopDown().any { it.extension == "cache" })
+
+        router.speak(request("offline-b", bookId = 12, chapterIndex = 4), SpeechMode.OFFLINE)
+
+        assertTrue(root.walkTopDown().none { it.extension == "cache" })
+        assertFalse(File(root, "11/chapter-2").exists())
     }
 
     @Test
@@ -192,11 +267,15 @@ class SpeechEngineRouterTest {
         delayMillis = { delays += it },
     )
 
-    private fun request(id: String) = SpeechRequest(
+    private fun request(
+        id: String,
+        bookId: Long = 11,
+        chapterIndex: Int = 2,
+    ) = SpeechRequest(
         generationId = 7,
         segment = SpeechSegment(
             id = id,
-            position = SpeechPosition(11, 2, null, 3, 0),
+            position = SpeechPosition(bookId, chapterIndex, null, 3, 0),
             partIndex = 0,
             text = "private-$id",
             locator = Locator(text = "", progression = 0.25),
@@ -245,18 +324,32 @@ private class RecordingOnlineEngine(
 }
 
 private class RecordingCache(
-    private val hit: ByteArray? = null,
+    hit: ByteArray? = null,
 ) : SpeechAudioCache {
+    private var stored = hit?.copyOf()
     var getCalls = 0
+    var retainCalls = 0
+    var removeCalls = 0
     val putAudio = mutableListOf<ByteArray>()
+
+    override suspend fun retainScope(request: SpeechRequest) {
+        retainCalls++
+    }
 
     override suspend fun get(request: SpeechRequest, nowMillis: Long): ByteArray? {
         getCalls++
-        return hit?.copyOf()
+        return stored?.copyOf()
     }
 
     override suspend fun put(request: SpeechRequest, audio: ByteArray, nowMillis: Long) {
         putAudio += audio.copyOf()
+        stored = audio.copyOf()
+    }
+
+    override suspend fun remove(request: SpeechRequest) {
+        removeCalls++
+        stored?.fill(0)
+        stored = null
     }
 
     override suspend fun clear() = Unit

@@ -31,10 +31,13 @@ class SpeechEngineRouter(
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val delayMillis: suspend (Long) -> Unit = { delay(it) },
 ) {
-    suspend fun speak(request: SpeechRequest, mode: SpeechMode): RoutedSpeechResult = when (mode) {
-        SpeechMode.OFFLINE -> routeOffline(request, fellBack = false)
-        SpeechMode.ONLINE -> routeOnlineOnly(request)
-        SpeechMode.AUTO -> routeAutomatically(request)
+    suspend fun speak(request: SpeechRequest, mode: SpeechMode): RoutedSpeechResult {
+        retainCacheScope(request)
+        return when (mode) {
+            SpeechMode.OFFLINE -> routeOffline(request, fellBack = false)
+            SpeechMode.ONLINE -> routeOnlineOnly(request)
+            SpeechMode.AUTO -> routeAutomatically(request)
+        }
     }
 
     private suspend fun routeOffline(request: SpeechRequest, fellBack: Boolean): RoutedSpeechResult =
@@ -42,10 +45,18 @@ class SpeechEngineRouter(
 
     private suspend fun routeOnlineOnly(request: SpeechRequest): RoutedSpeechResult {
         cachedAudio(request)?.let { audio ->
-            return RoutedSpeechResult(playAndWipe(audio), onlineEngine.id)
+            val result = playAndWipe(audio)
+            if (result !is SpeechEngineResult.Failed) {
+                return RoutedSpeechResult(result, onlineEngine.id)
+            }
+            removeCached(request)
         }
+        return synthesizeOnlineOnly(request)
+    }
+
+    private suspend fun synthesizeOnlineOnly(request: SpeechRequest): RoutedSpeechResult {
         return when (val synthesis = onlineEngine.synthesize(request)) {
-            is OnlineSynthesisResult.Audio -> RoutedSpeechResult(cachePlayAndWipe(request, synthesis.bytes), onlineEngine.id)
+            is OnlineSynthesisResult.Audio -> RoutedSpeechResult(playCacheAndWipe(request, synthesis.bytes), onlineEngine.id)
             OnlineSynthesisResult.Cancelled -> RoutedSpeechResult(SpeechEngineResult.Cancelled, onlineEngine.id)
             is OnlineSynthesisResult.Failed -> RoutedSpeechResult(SpeechEngineResult.Failed(synthesis.error), onlineEngine.id)
         }
@@ -54,15 +65,17 @@ class SpeechEngineRouter(
     private suspend fun routeAutomatically(request: SpeechRequest): RoutedSpeechResult {
         cachedAudio(request)?.let { audio ->
             val result = playAndWipe(audio)
-            return if (result is SpeechEngineResult.Failed) routeOffline(request, fellBack = true)
-            else RoutedSpeechResult(result, onlineEngine.id)
+            if (result !is SpeechEngineResult.Failed) {
+                return RoutedSpeechResult(result, onlineEngine.id)
+            }
+            removeCached(request)
         }
 
         var retryIndex = 0
         while (true) {
             when (val synthesis = onlineEngine.synthesize(request)) {
                 is OnlineSynthesisResult.Audio -> {
-                    val result = cachePlayAndWipe(request, synthesis.bytes)
+                    val result = playCacheAndWipe(request, synthesis.bytes)
                     return if (result is SpeechEngineResult.Failed) routeOffline(request, fellBack = true)
                     else RoutedSpeechResult(result, onlineEngine.id)
                 }
@@ -81,6 +94,16 @@ class SpeechEngineRouter(
         }
     }
 
+    private suspend fun retainCacheScope(request: SpeechRequest) {
+        try {
+            cache.retainScope(request)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Cache maintenance is best-effort and cannot block speech availability.
+        }
+    }
+
     private suspend fun cachedAudio(request: SpeechRequest): ByteArray? = try {
         cache.get(request, nowMillis())
     } catch (cancelled: CancellationException) {
@@ -89,17 +112,32 @@ class SpeechEngineRouter(
         null
     }
 
-    private suspend fun cachePlayAndWipe(request: SpeechRequest, audio: ByteArray): SpeechEngineResult = try {
+    private suspend fun playCacheAndWipe(request: SpeechRequest, audio: ByteArray): SpeechEngineResult = try {
+        val result = onlineEngine.playEncoded(audio)
+        if (result == SpeechEngineResult.Completed) {
+            try {
+                cache.put(request, audio, nowMillis())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // A private cache failure must not turn successful speech into a failure.
+            }
+        } else if (result is SpeechEngineResult.Failed) {
+            removeCached(request)
+        }
+        result
+    } finally {
+        audio.fill(0)
+    }
+
+    private suspend fun removeCached(request: SpeechRequest) {
         try {
-            cache.put(request, audio, nowMillis())
+            cache.remove(request)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            // A private cache failure must not prevent immediate speech playback.
+            // A failed eviction is non-fatal; the next playback will retry eviction.
         }
-        onlineEngine.playEncoded(audio)
-    } finally {
-        audio.fill(0)
     }
 
     private suspend fun playAndWipe(audio: ByteArray): SpeechEngineResult = try {

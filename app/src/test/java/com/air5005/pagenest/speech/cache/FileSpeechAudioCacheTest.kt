@@ -21,22 +21,24 @@ class FileSpeechAudioCacheTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
-    fun `cache evicts least recently used audio beyond capacity and expires after 24 hours`() = runTest {
-        val cache = cache(maxBytes = 128, expiryMillis = 86_400_000)
+    fun `cache evicts least recently used entries by real disk bytes and expires after 24 hours`() = runTest {
+        val maxBytes = 180L
+        val cache = cache(maxBytes = maxBytes, expiryMillis = 86_400_000)
         val first = request(text = "first", segmentId = "segment-a")
         val second = request(text = "second", segmentId = "segment-b")
-        cache.put(first, ByteArray(80) { 1 }, nowMillis = 0)
-        cache.put(second, ByteArray(60) { 2 }, nowMillis = 1)
+        cache.put(first, ByteArray(50) { 1 }, nowMillis = 0)
+        cache.put(second, ByteArray(50) { 2 }, nowMillis = 1)
 
         assertNull(cache.get(first, nowMillis = 2))
-        assertArrayEquals(ByteArray(60) { 2 }, cache.get(second, nowMillis = 2)!!)
+        assertArrayEquals(ByteArray(50) { 2 }, cache.get(second, nowMillis = 2)!!)
+        assertTrue(cacheFiles().sumOf(File::length) <= maxBytes)
         assertNull(cache.get(second, nowMillis = 86_400_002))
         assertTrue(cacheFiles().isEmpty())
     }
 
     @Test
     fun `reading an item refreshes its LRU position`() = runTest {
-        val cache = cache(maxBytes = 130)
+        val cache = cache(maxBytes = 224)
         val first = request(text = "first", segmentId = "segment-a")
         val second = request(text = "second", segmentId = "segment-b")
         val third = request(text = "third", segmentId = "segment-c")
@@ -66,6 +68,19 @@ class FileSpeechAudioCacheTest {
         assertEquals(listOf("12/chapter-3"), cachedScopePaths())
         assertArrayEquals(byteArrayOf(3), cache.get(newChapter, nowMillis = 2)!!)
         assertEquals(listOf("12", "chapter-3"), cacheFiles().single().relativeTo(cacheRoot()).parentFile!!.path.split(File.separator))
+    }
+
+    @Test
+    fun `retaining a scope without reading or writing removes every other scope`() = runTest {
+        val cache = cache()
+        val old = request(bookId = 11, chapterIndex = 2, text = "old")
+        val next = request(bookId = 12, chapterIndex = 4, text = "next")
+        cache.put(old, byteArrayOf(1), nowMillis = 0)
+
+        cache.retainScope(next)
+
+        assertTrue(cacheFiles().isEmpty())
+        assertFalse(File(cacheRoot(), "11/chapter-2").exists())
     }
 
     @Test
