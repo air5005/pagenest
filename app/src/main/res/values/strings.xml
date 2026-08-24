@@ -187,6 +187,7 @@
     <string name="you_can_edit_this_later">You can edit this later in settings</string>
     <string name="online_books">Online Books</string>
     <string name="stop">Stop</string>
+    <string name="speech_playback_channel_name" translatable="false">Speech playback</string>
     <string name="pitch">Pitch</string>
     <string name="speed">Speed</string>
     <string name="pitch_x">Pitch: %1$s</string>
