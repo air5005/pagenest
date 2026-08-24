@@ -573,6 +573,7 @@ class PageViewControllerSpeechSnapshotTest {
         currentBuilt.await()
         adjacentBuilt.await()
         awaitCurrentChapterText(controller, "manual-1")
+        awaitNextChapterText(controller, "manual-2")
         val candidate = requireNotNull(controller.loadSpeechPage(chapterIndex = 1, pageIndex = 0))
 
         assertEquals("manual-1", currentChapterText(controller))
@@ -945,6 +946,15 @@ class PageViewControllerSpeechSnapshotTest {
         expected: String,
     ) = withTimeout(5_000) {
         while (currentChapterText(controller) != expected) {
+            yield()
+        }
+    }
+
+    private suspend fun awaitNextChapterText(
+        controller: PageViewController,
+        expected: String,
+    ) = withTimeout(5_000) {
+        while (controller.nextTextChapter?.pages?.single()?.textLines?.single()?.text != expected) {
             yield()
         }
     }
