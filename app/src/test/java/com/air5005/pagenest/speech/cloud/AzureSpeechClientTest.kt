@@ -432,6 +432,21 @@ class AzureSpeechClientTest {
         assertEquals(1, service.closeCalls)
     }
 
+    @Test
+    fun `engine close preserves a failure shared by player and service`() {
+        val sharedFailure = IllegalStateException("shared close failed")
+        val player = CloseFailurePlayer(sharedFailure)
+        val service = FixedAzureService(byteArrayOf(1), closeFailure = sharedFailure)
+        val engine = AzureSpeechEngine(FixedCredentialStore(credentials()), service, player)
+
+        val thrown = assertThrows(IllegalStateException::class.java) { engine.close() }
+
+        assertSame(sharedFailure, thrown)
+        assertTrue(thrown.suppressed.isEmpty())
+        assertEquals(1, player.closeCalls)
+        assertEquals(1, service.closeCalls)
+    }
+
     private fun azureClient(engine: MockEngine): AzureSpeechClient =
         AzureSpeechClient(engine)
 

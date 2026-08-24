@@ -58,7 +58,7 @@ class AzureSpeechEngine(
             try {
                 client.close()
             } catch (secondary: Throwable) {
-                primary.addSuppressed(secondary)
+                if (primary !== secondary) primary.addSuppressed(secondary)
             }
             throw primary
         }

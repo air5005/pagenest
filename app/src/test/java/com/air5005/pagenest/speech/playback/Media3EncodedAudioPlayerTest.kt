@@ -18,9 +18,15 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
+
+private const val HANDSHAKE_TIMEOUT_MILLIS = 1_000L
+private const val THREAD_TIMEOUT_MILLIS = 2_000L
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class Media3EncodedAudioPlayerTest {
@@ -176,35 +182,63 @@ class Media3EncodedAudioPlayerTest {
         val first = async { player.playMp3(byteArrayOf(1)) }
         runCurrent()
         backend.firstStarted.await()
-        val replacement = CompletableDeferred<SpeechEngineResult>()
+        val replacement = CompletableFuture<SpeechEngineResult>()
         backend.startOverlap = {
             thread(name = "replacement-playback") {
-                replacement.complete(runBlocking { player.playMp3(byteArrayOf(2)) })
+                backend.markOverlapAttempted()
+                runCatching { runBlocking { player.playMp3(byteArrayOf(2)) } }
+                    .onSuccess(replacement::complete)
+                    .onFailure(replacement::completeExceptionally)
             }
         }
 
-        player.stop()
+        try {
+            player.stop()
 
-        assertEquals(SpeechEngineResult.Cancelled, first.await())
-        assertEquals(SpeechEngineResult.Completed, replacement.await())
-        player.close()
+            assertEquals(SpeechEngineResult.Cancelled, first.await())
+            assertEquals(
+                SpeechEngineResult.Completed,
+                replacement.get(THREAD_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS),
+            )
+        } finally {
+            backend.forceUnblock()
+            try {
+                player.close()
+            } finally {
+                backend.joinOverlap()
+            }
+        }
     }
 
     @Test
     fun `idle stop cannot stop a playback admitted concurrently`() = runTest {
         val backend = OverlappingStopBackend()
         val player = Media3EncodedAudioPlayer(maxAudioBytes = 16, backend = backend)
-        val replacement = CompletableDeferred<SpeechEngineResult>()
+        val replacement = CompletableFuture<SpeechEngineResult>()
         backend.startOverlap = {
             thread(name = "idle-stop-replacement") {
-                replacement.complete(runBlocking { player.playMp3(byteArrayOf(2)) })
+                backend.markOverlapAttempted()
+                runCatching { runBlocking { player.playMp3(byteArrayOf(2)) } }
+                    .onSuccess(replacement::complete)
+                    .onFailure(replacement::completeExceptionally)
             }
         }
 
-        player.stop()
+        try {
+            player.stop()
 
-        assertEquals(SpeechEngineResult.Completed, replacement.await())
-        player.close()
+            assertEquals(
+                SpeechEngineResult.Completed,
+                replacement.get(THREAD_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS),
+            )
+        } finally {
+            backend.forceUnblock()
+            try {
+                player.close()
+            } finally {
+                backend.joinOverlap()
+            }
+        }
     }
 
     @Test
@@ -223,19 +257,29 @@ class Media3EncodedAudioPlayerTest {
     fun `terminal close cannot release backend while reusable stop is in progress`() = runTest {
         val backend = StopCloseOverlapBackend()
         val player = Media3EncodedAudioPlayer(maxAudioBytes = 16, backend = backend)
-        val closeFinished = CompletableDeferred<Unit>()
+        val closeFinished = CompletableFuture<Unit>()
         backend.startClose = {
             thread(name = "terminal-close") {
-                player.close()
-                closeFinished.complete(Unit)
+                backend.markCloseAttempted()
+                runCatching { player.close() }
+                    .onSuccess { closeFinished.complete(Unit) }
+                    .onFailure(closeFinished::completeExceptionally)
             }
         }
 
-        player.stop()
-        closeFinished.await()
+        try {
+            player.stop()
+            closeFinished.get(THREAD_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
 
-        assertFalse(backend.releasedDuringFirstStop.get())
-        assertEquals(1, backend.releaseCalls)
+            assertFalse(backend.releasedDuringFirstStop.get())
+            assertEquals(1, backend.releaseCalls)
+        } finally {
+            try {
+                player.close()
+            } finally {
+                backend.joinClose()
+            }
+        }
     }
 
     private class FirstPlaybackWaitsBackend : EncodedAudioBackend {
@@ -311,11 +355,12 @@ class Media3EncodedAudioPlayerTest {
 
     private class OverlappingStopBackend : EncodedAudioBackend {
         val firstStarted = CompletableDeferred<Unit>()
-        private val overlapStarted = AtomicBoolean(false)
+        private val overlapAttempted = CountDownLatch(1)
         lateinit var startOverlap: () -> Thread
         private val current = AtomicReference<CompletableDeferred<SpeechEngineResult>?>()
-        private val stopBegan = AtomicBoolean(false)
         private val stopFinished = AtomicBoolean(false)
+        @Volatile
+        private var overlapThread: Thread? = null
         private var playCalls = 0
         private var stopCalls = 0
 
@@ -324,7 +369,6 @@ class Media3EncodedAudioPlayerTest {
             val completion = CompletableDeferred<SpeechEngineResult>()
             current.set(completion)
             if (playCalls == 1) firstStarted.complete(Unit)
-            if (stopBegan.get()) overlapStarted.set(true)
             if (stopFinished.get()) return SpeechEngineResult.Completed
             return completion.await()
         }
@@ -332,16 +376,28 @@ class Media3EncodedAudioPlayerTest {
         override fun stop() {
             stopCalls++
             if (stopCalls != 1) return
-            stopBegan.set(true)
-            val overlappingThread = startOverlap()
-            while (!overlapStarted.get() && overlappingThread.state != Thread.State.BLOCKED) {
-                Thread.yield()
+            overlapThread = startOverlap()
+            check(overlapAttempted.await(HANDSHAKE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                "overlap playback did not start"
             }
             current.getAndSet(null)?.complete(SpeechEngineResult.Cancelled)
             stopFinished.set(true)
         }
 
         override fun release() = Unit
+
+        fun markOverlapAttempted() {
+            overlapAttempted.countDown()
+        }
+
+        fun forceUnblock() {
+            stopFinished.set(true)
+            current.getAndSet(null)?.complete(SpeechEngineResult.Cancelled)
+        }
+
+        fun joinOverlap() {
+            overlapThread?.joinOrFail("overlap playback")
+        }
     }
 
     private class StopCloseOverlapBackend : EncodedAudioBackend {
@@ -350,6 +406,9 @@ class Media3EncodedAudioPlayerTest {
         @Volatile
         var releaseCalls = 0
         private val firstStopInProgress = AtomicBoolean(false)
+        private val closeAttempted = CountDownLatch(1)
+        @Volatile
+        private var closeThread: Thread? = null
         private var stopCalls = 0
 
         override suspend fun play(bytes: ByteArray): SpeechEngineResult = SpeechEngineResult.Completed
@@ -358,16 +417,27 @@ class Media3EncodedAudioPlayerTest {
             stopCalls++
             if (stopCalls != 1) return
             firstStopInProgress.set(true)
-            val closeThread = startClose()
-            while (releaseCalls == 0 && closeThread.state != Thread.State.BLOCKED) {
-                Thread.yield()
+            try {
+                closeThread = startClose()
+                check(closeAttempted.await(HANDSHAKE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                    "terminal close did not start"
+                }
+            } finally {
+                firstStopInProgress.set(false)
             }
-            firstStopInProgress.set(false)
         }
 
         override fun release() {
             if (firstStopInProgress.get()) releasedDuringFirstStop.set(true)
             releaseCalls++
+        }
+
+        fun markCloseAttempted() {
+            closeAttempted.countDown()
+        }
+
+        fun joinClose() {
+            closeThread?.joinOrFail("terminal close")
         }
     }
 
@@ -390,4 +460,13 @@ class Media3EncodedAudioPlayerTest {
             queued.clear()
         }
     }
+}
+
+private fun Thread.joinOrFail(operation: String) {
+    join(THREAD_TIMEOUT_MILLIS)
+    if (isAlive) {
+        interrupt()
+        join(THREAD_TIMEOUT_MILLIS)
+    }
+    check(!isAlive) { "$operation thread did not terminate" }
 }
