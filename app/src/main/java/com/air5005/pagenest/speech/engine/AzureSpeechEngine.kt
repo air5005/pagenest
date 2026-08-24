@@ -13,7 +13,7 @@ class AzureSpeechEngine(
     private val credentialStore: SpeechCredentialStore,
     private val client: AzureSpeechService,
     private val encodedAudioPlayer: EncodedAudioPlayer,
-) : SpeechEngine {
+) : OnlineSpeechEngine {
     override val id: String = "azure"
     private val closed = AtomicBoolean(false)
 
@@ -25,17 +25,27 @@ class AzureSpeechEngine(
         }
     }
 
-    override suspend fun speak(request: SpeechRequest): SpeechEngineResult = try {
+    override suspend fun synthesize(request: SpeechRequest): OnlineSynthesisResult {
         val credentials = credentialStore.loadAzure()
-            ?: return SpeechEngineResult.Failed(SpeechError.InvalidCredentials)
+            ?: return OnlineSynthesisResult.Failed(SpeechError.InvalidCredentials)
         val synthesis = client.synthesize(credentials, request)
-        synthesis.error?.let { return SpeechEngineResult.Failed(it) }
+        synthesis.error?.let { return OnlineSynthesisResult.Failed(it) }
         val audio = synthesis.value
-            ?: return SpeechEngineResult.Failed(SpeechError.ServiceUnavailable)
-        try {
-            encodedAudioPlayer.playMp3(audio)
-        } finally {
-            audio.fill(0)
+            ?: return OnlineSynthesisResult.Failed(SpeechError.ServiceUnavailable)
+        return OnlineSynthesisResult.Audio(audio)
+    }
+
+    override suspend fun playEncoded(audio: ByteArray): SpeechEngineResult = encodedAudioPlayer.playMp3(audio)
+
+    override suspend fun speak(request: SpeechRequest): SpeechEngineResult = try {
+        when (val synthesis = synthesize(request)) {
+            is OnlineSynthesisResult.Audio -> try {
+                playEncoded(synthesis.bytes)
+            } finally {
+                synthesis.bytes.fill(0)
+            }
+            OnlineSynthesisResult.Cancelled -> SpeechEngineResult.Cancelled
+            is OnlineSynthesisResult.Failed -> SpeechEngineResult.Failed(synthesis.error)
         }
     } catch (cancelled: CancellationException) {
         try {

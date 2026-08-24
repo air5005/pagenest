@@ -3,9 +3,12 @@ package com.wxn.reader.di
 import android.app.Application
 import android.content.Context
 import androidx.room.Room
+import com.air5005.pagenest.speech.cache.FileSpeechAudioCache
+import com.air5005.pagenest.speech.cache.SpeechAudioCache
 import com.air5005.pagenest.speech.engine.AndroidTextToSpeechFactory
 import com.air5005.pagenest.speech.engine.AzureSpeechEngine
 import com.air5005.pagenest.speech.engine.SpeechEngine
+import com.air5005.pagenest.speech.engine.SpeechEngineRouter
 import com.air5005.pagenest.speech.engine.SystemTtsEngine
 import com.air5005.pagenest.speech.cloud.AzureSpeechClient
 import com.air5005.pagenest.speech.cloud.AzureSpeechService
@@ -134,6 +137,20 @@ object AppModule {
         client: AzureSpeechService,
         encodedAudioPlayer: EncodedAudioPlayer,
     ): AzureSpeechEngine = AzureSpeechEngine(credentialStore, client, encodedAudioPlayer)
+
+    @Provides
+    @Singleton
+    fun provideSpeechAudioCache(
+        @ApplicationContext context: Context,
+    ): SpeechAudioCache = FileSpeechAudioCache(context.filesDir.resolve("speech-cache"))
+
+    @Provides
+    @Singleton
+    fun provideSpeechEngineRouter(
+        systemTtsEngine: SystemTtsEngine,
+        azureSpeechEngine: AzureSpeechEngine,
+        speechAudioCache: SpeechAudioCache,
+    ): SpeechEngineRouter = SpeechEngineRouter(systemTtsEngine, azureSpeechEngine, speechAudioCache)
 
     @Provides
     @Singleton
