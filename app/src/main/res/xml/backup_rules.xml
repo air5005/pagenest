@@ -8,5 +8,6 @@
 <full-backup-content>
     <exclude domain="file" path="speech-secrets/" />
     <exclude domain="file" path="speech-cache/" />
+    <exclude domain="file" path="speech-cache-staging/" />
     <exclude domain="file" path="datastore/speech_preferences.preferences_pb" />
 </full-backup-content>

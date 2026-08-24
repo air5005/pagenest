@@ -26,13 +26,13 @@ class FileSpeechAudioCacheTest {
         val cache = cache(maxBytes = maxBytes, expiryMillis = 86_400_000)
         val first = request(text = "first", segmentId = "segment-a")
         val second = request(text = "second", segmentId = "segment-b")
-        cache.put(first, ByteArray(50) { 1 }, nowMillis = 0)
-        cache.put(second, ByteArray(50) { 2 }, nowMillis = 1)
+        cache.putCurrent(first, ByteArray(50) { 1 }, nowMillis = 0)
+        cache.putCurrent(second, ByteArray(50) { 2 }, nowMillis = 1)
 
-        assertNull(cache.get(first, nowMillis = 2))
-        assertArrayEquals(ByteArray(50) { 2 }, cache.get(second, nowMillis = 2)!!)
-        assertTrue(cacheFiles().sumOf(File::length) <= maxBytes)
-        assertNull(cache.get(second, nowMillis = 86_400_002))
+        assertNull(cache.getCurrent(first, nowMillis = 2))
+        assertArrayEquals(ByteArray(50) { 2 }, cache.getCurrent(second, nowMillis = 2)!!)
+        assertTrue(cacheDirectoryBytes() <= maxBytes)
+        assertNull(cache.getCurrent(second, nowMillis = 86_400_002))
         assertTrue(cacheFiles().isEmpty())
     }
 
@@ -42,15 +42,15 @@ class FileSpeechAudioCacheTest {
         val first = request(text = "first", segmentId = "segment-a")
         val second = request(text = "second", segmentId = "segment-b")
         val third = request(text = "third", segmentId = "segment-c")
-        cache.put(first, ByteArray(60) { 1 }, nowMillis = 0)
-        cache.put(second, ByteArray(60) { 2 }, nowMillis = 1)
-        assertArrayEquals(ByteArray(60) { 1 }, cache.get(first, nowMillis = 2)!!)
+        cache.putCurrent(first, ByteArray(60) { 1 }, nowMillis = 0)
+        cache.putCurrent(second, ByteArray(60) { 2 }, nowMillis = 1)
+        assertArrayEquals(ByteArray(60) { 1 }, cache.getCurrent(first, nowMillis = 2)!!)
 
-        cache.put(third, ByteArray(60) { 3 }, nowMillis = 3)
+        cache.putCurrent(third, ByteArray(60) { 3 }, nowMillis = 3)
 
-        assertNull(cache.get(second, nowMillis = 4))
-        assertArrayEquals(ByteArray(60) { 1 }, cache.get(first, nowMillis = 4)!!)
-        assertArrayEquals(ByteArray(60) { 3 }, cache.get(third, nowMillis = 4)!!)
+        assertNull(cache.getCurrent(second, nowMillis = 4))
+        assertArrayEquals(ByteArray(60) { 1 }, cache.getCurrent(first, nowMillis = 4)!!)
+        assertArrayEquals(ByteArray(60) { 3 }, cache.getCurrent(third, nowMillis = 4)!!)
     }
 
     @Test
@@ -59,14 +59,14 @@ class FileSpeechAudioCacheTest {
         val oldBook = request(bookId = 11, chapterIndex = 2, text = "old-book")
         val newBook = request(bookId = 12, chapterIndex = 2, text = "new-book")
         val newChapter = request(bookId = 12, chapterIndex = 3, text = "new-chapter")
-        cache.put(oldBook, byteArrayOf(1), nowMillis = 0)
+        cache.putCurrent(oldBook, byteArrayOf(1), nowMillis = 0)
 
-        cache.put(newBook, byteArrayOf(2), nowMillis = 1)
+        cache.putCurrent(newBook, byteArrayOf(2), nowMillis = 1)
         assertEquals(listOf("12/chapter-2"), cachedScopePaths())
 
-        cache.put(newChapter, byteArrayOf(3), nowMillis = 2)
+        cache.putCurrent(newChapter, byteArrayOf(3), nowMillis = 2)
         assertEquals(listOf("12/chapter-3"), cachedScopePaths())
-        assertArrayEquals(byteArrayOf(3), cache.get(newChapter, nowMillis = 2)!!)
+        assertArrayEquals(byteArrayOf(3), cache.getCurrent(newChapter, nowMillis = 2)!!)
         assertEquals(listOf("12", "chapter-3"), cacheFiles().single().relativeTo(cacheRoot()).parentFile!!.path.split(File.separator))
     }
 
@@ -75,7 +75,7 @@ class FileSpeechAudioCacheTest {
         val cache = cache()
         val old = request(bookId = 11, chapterIndex = 2, text = "old")
         val next = request(bookId = 12, chapterIndex = 4, text = "next")
-        cache.put(old, byteArrayOf(1), nowMillis = 0)
+        cache.putCurrent(old, byteArrayOf(1), nowMillis = 0)
 
         cache.retainScope(next)
 
@@ -84,14 +84,31 @@ class FileSpeechAudioCacheTest {
     }
 
     @Test
+    fun `late operations from an older scope token cannot replace the latest scope`() = runTest {
+        val cache = cache()
+        val old = request(bookId = 11, chapterIndex = 2, text = "old")
+        val latest = request(bookId = 12, chapterIndex = 4, text = "latest")
+        val oldToken = cache.retainScope(old)
+        val latestToken = cache.retainScope(latest)
+        cache.put(latestToken, latest, byteArrayOf(2), nowMillis = 1)
+
+        cache.put(oldToken, old, byteArrayOf(1), nowMillis = 2)
+        cache.remove(oldToken, old)
+
+        assertNull(cache.get(oldToken, old, nowMillis = 3))
+        assertArrayEquals(byteArrayOf(2), cache.get(latestToken, latest, nowMillis = 3)!!)
+        assertEquals(listOf("12/chapter-4"), cachedScopePaths())
+    }
+
+    @Test
     fun `corrupt cache entry is deleted instead of returned`() = runTest {
         val cache = cache()
         val request = request(text = "private chapter text")
-        cache.put(request, byteArrayOf(1, 2, 3), nowMillis = 10)
+        cache.putCurrent(request, byteArrayOf(1, 2, 3), nowMillis = 10)
         val published = cacheFiles().single()
         published.writeBytes(byteArrayOf(9, 8))
 
-        assertNull(cache.get(request, nowMillis = 11))
+        assertNull(cache.getCurrent(request, nowMillis = 11))
         assertFalse(published.exists())
     }
 
@@ -99,13 +116,55 @@ class FileSpeechAudioCacheTest {
     fun `failed atomic publication keeps the previous entry and deletes temporary data`() = runTest {
         val request = request(text = "private chapter text")
         val normal = cache()
-        normal.put(request, byteArrayOf(1, 2, 3), nowMillis = 10)
+        normal.putCurrent(request, byteArrayOf(1, 2, 3), nowMillis = 10)
         val failing = cache(publisher = CacheFilePublisher { _, _ -> throw IOException("disk full") })
 
-        runCatching { failing.put(request, byteArrayOf(4, 5, 6), nowMillis = 11) }
+        runCatching { failing.putCurrent(request, byteArrayOf(4, 5, 6), nowMillis = 11) }
 
-        assertArrayEquals(byteArrayOf(1, 2, 3), normal.get(request, nowMillis = 12)!!)
-        assertTrue(cacheRoot().walkTopDown().none { it.name.endsWith(".tmp") })
+        assertArrayEquals(byteArrayOf(1, 2, 3), normal.getCurrent(request, nowMillis = 12)!!)
+        assertTrue(temporaryFolder.root.walkTopDown().none { it.name.endsWith(".tmp") })
+    }
+
+    @Test
+    fun `same key replacement stages outside bounded directory and never exceeds real byte limit`() = runTest {
+        val maxBytes = 160L
+        val request = request(text = "replacement")
+        val observedTotals = mutableListOf<Long>()
+        var publications = 0
+        val cache = cache(
+            maxBytes = maxBytes,
+            publisher = CacheFilePublisher { temporary, destination ->
+                assertFalse(temporary.toPath().startsWith(cacheRoot().toPath()))
+                observedTotals += cacheDirectoryBytes()
+                assertTrue(cacheDirectoryBytes() <= maxBytes)
+                publications++
+                if (publications == 2) assertTrue(destination.exists())
+                AtomicCacheFilePublisher.publish(temporary, destination)
+                observedTotals += cacheDirectoryBytes()
+            },
+        )
+        cache.putCurrent(request, ByteArray(80) { 1 }, nowMillis = 1)
+
+        cache.putCurrent(request, ByteArray(100) { 2 }, nowMillis = 2)
+
+        assertTrue(observedTotals.all { it <= maxBytes })
+        assertTrue(cacheDirectoryBytes() <= maxBytes)
+        assertArrayEquals(ByteArray(100) { 2 }, cache.getCurrent(request, nowMillis = 3)!!)
+    }
+
+    @Test
+    fun `retaining current scope removes orphan temporary files before admitting work`() = runTest {
+        val maxBytes = 160L
+        val request = request(text = "orphan")
+        val cache = cache(maxBytes = maxBytes)
+        cache.putCurrent(request, ByteArray(50) { 1 }, nowMillis = 1)
+        val orphan = File(cacheFiles().single().parentFile, ".abandoned.tmp")
+        orphan.writeBytes(ByteArray(200) { 9 })
+
+        cache.retainScope(request)
+
+        assertFalse(orphan.exists())
+        assertTrue(cacheDirectoryBytes() <= maxBytes)
     }
 
     @Test
@@ -113,7 +172,7 @@ class FileSpeechAudioCacheTest {
         val privateText = "secret novel sentence"
         val privateVoice = "private-voice-name"
         val cache = cache()
-        cache.put(request(text = privateText, voiceId = privateVoice), byteArrayOf(1), nowMillis = 0)
+        cache.putCurrent(request(text = privateText, voiceId = privateVoice), byteArrayOf(1), nowMillis = 0)
 
         val relative = cacheFiles().single().relativeTo(cacheRoot()).invariantSeparatorsPath
 
@@ -131,6 +190,8 @@ class FileSpeechAudioCacheTest {
     private fun cacheRoot() = File(temporaryFolder.root, "speech-cache")
 
     private fun cacheFiles() = cacheRoot().walkTopDown().filter { it.isFile && it.extension == "cache" }.toList()
+
+    private fun cacheDirectoryBytes() = cacheRoot().walkTopDown().filter(File::isFile).sumOf(File::length)
 
     private fun cachedScopePaths() = cacheFiles().map {
         it.parentFile!!.relativeTo(cacheRoot()).invariantSeparatorsPath
@@ -156,4 +217,21 @@ class FileSpeechAudioCacheTest {
         rate = 1f,
         pitch = 1f,
     )
+
+    private suspend fun FileSpeechAudioCache.putCurrent(
+        request: SpeechRequest,
+        audio: ByteArray,
+        nowMillis: Long,
+    ) {
+        val token = retainScope(request)
+        put(token, request, audio, nowMillis)
+    }
+
+    private suspend fun FileSpeechAudioCache.getCurrent(
+        request: SpeechRequest,
+        nowMillis: Long,
+    ): ByteArray? {
+        val token = retainScope(request)
+        return get(token, request, nowMillis)
+    }
 }

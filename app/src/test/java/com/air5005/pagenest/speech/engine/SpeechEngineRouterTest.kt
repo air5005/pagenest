@@ -2,13 +2,16 @@ package com.air5005.pagenest.speech.engine
 
 import com.air5005.pagenest.speech.cache.SpeechAudioCache
 import com.air5005.pagenest.speech.cache.FileSpeechAudioCache
+import com.air5005.pagenest.speech.cache.SpeechCacheScopeToken
 import com.air5005.pagenest.speech.model.SpeechError
 import com.air5005.pagenest.speech.model.SpeechMode
 import com.air5005.pagenest.speech.model.SpeechPosition
 import com.air5005.pagenest.speech.model.SpeechSegment
 import com.wxn.base.bean.Locator
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -124,6 +127,44 @@ class SpeechEngineRouterTest {
 
         assertTrue(root.walkTopDown().none { it.extension == "cache" })
         assertFalse(File(root, "11/chapter-2").exists())
+    }
+
+    @Test
+    fun `late online request cannot reactivate or publish over the latest cache scope`() = runTest {
+        val root = File(temporaryFolder.root, "speech-cache")
+        val delegate = FileSpeechAudioCache(root)
+        val old = request("old-a", bookId = 11, chapterIndex = 2)
+        val latest = request("latest-b", bookId = 12, chapterIndex = 4)
+        val cache = BlockingOldReadCache(delegate, old.segment.id)
+        val azure = RecordingOnlineEngine(
+            synthesisResults = ArrayDeque(
+                listOf(
+                    OnlineSynthesisResult.Audio(byteArrayOf(2)),
+                    OnlineSynthesisResult.Audio(byteArrayOf(1)),
+                ),
+            ),
+        )
+        val router = SpeechEngineRouter(
+            systemEngine = RecordingSpeechEngine("system"),
+            onlineEngine = azure,
+            cache = cache,
+            nowMillis = { 42L },
+            delayMillis = {},
+        )
+        val oldPlayback = async { router.speak(old, SpeechMode.ONLINE) }
+        cache.oldReadEntered.await()
+
+        assertEquals(SpeechEngineResult.Completed, router.speak(latest, SpeechMode.ONLINE).result)
+        cache.allowOldRead.complete(Unit)
+        assertEquals(SpeechEngineResult.Completed, oldPlayback.await().result)
+
+        val latestToken = delegate.retainScope(latest)
+        assertEquals(listOf(2.toByte()), delegate.get(latestToken, latest, 43L)!!.toList())
+        assertEquals(listOf("12/chapter-4"), root.walkTopDown()
+            .filter { it.isFile && it.extension == "cache" }
+            .map { it.parentFile!!.relativeTo(root).invariantSeparatorsPath }
+            .distinct()
+            .toList())
     }
 
     @Test
@@ -327,30 +368,83 @@ private class RecordingCache(
     hit: ByteArray? = null,
 ) : SpeechAudioCache {
     private var stored = hit?.copyOf()
+    private var generation = 0L
+    private var activeToken: SpeechCacheScopeToken? = null
     var getCalls = 0
     var retainCalls = 0
     var removeCalls = 0
     val putAudio = mutableListOf<ByteArray>()
 
-    override suspend fun retainScope(request: SpeechRequest) {
+    override suspend fun retainScope(request: SpeechRequest): SpeechCacheScopeToken {
         retainCalls++
+        return SpeechCacheScopeToken(
+            generation = ++generation,
+            bookId = request.segment.position.bookId,
+            chapterIndex = request.segment.position.chapterIndex,
+        ).also { activeToken = it }
     }
 
-    override suspend fun get(request: SpeechRequest, nowMillis: Long): ByteArray? {
+    override suspend fun get(
+        token: SpeechCacheScopeToken,
+        request: SpeechRequest,
+        nowMillis: Long,
+    ): ByteArray? {
         getCalls++
-        return stored?.copyOf()
+        return stored?.takeIf { token == activeToken }?.copyOf()
     }
 
-    override suspend fun put(request: SpeechRequest, audio: ByteArray, nowMillis: Long) {
+    override suspend fun put(
+        token: SpeechCacheScopeToken,
+        request: SpeechRequest,
+        audio: ByteArray,
+        nowMillis: Long,
+    ) {
+        if (token != activeToken) return
         putAudio += audio.copyOf()
         stored = audio.copyOf()
     }
 
-    override suspend fun remove(request: SpeechRequest) {
+    override suspend fun remove(token: SpeechCacheScopeToken, request: SpeechRequest) {
+        if (token != activeToken) return
         removeCalls++
         stored?.fill(0)
         stored = null
     }
 
     override suspend fun clear() = Unit
+}
+
+private class BlockingOldReadCache(
+    private val delegate: SpeechAudioCache,
+    private val oldSegmentId: String,
+) : SpeechAudioCache {
+    val oldReadEntered = CompletableDeferred<Unit>()
+    val allowOldRead = CompletableDeferred<Unit>()
+
+    override suspend fun retainScope(request: SpeechRequest): SpeechCacheScopeToken =
+        delegate.retainScope(request)
+
+    override suspend fun get(
+        token: SpeechCacheScopeToken,
+        request: SpeechRequest,
+        nowMillis: Long,
+    ): ByteArray? {
+        if (request.segment.id == oldSegmentId) {
+            oldReadEntered.complete(Unit)
+            allowOldRead.await()
+        }
+        return delegate.get(token, request, nowMillis)
+    }
+
+    override suspend fun put(
+        token: SpeechCacheScopeToken,
+        request: SpeechRequest,
+        audio: ByteArray,
+        nowMillis: Long,
+    ) = delegate.put(token, request, audio, nowMillis)
+
+    override suspend fun remove(token: SpeechCacheScopeToken, request: SpeechRequest) =
+        delegate.remove(token, request)
+
+    override suspend fun clear() = delegate.clear()
 }

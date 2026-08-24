@@ -1,6 +1,7 @@
 package com.air5005.pagenest.speech.engine
 
 import com.air5005.pagenest.speech.cache.SpeechAudioCache
+import com.air5005.pagenest.speech.cache.SpeechCacheScopeToken
 import com.air5005.pagenest.speech.model.SpeechError
 import com.air5005.pagenest.speech.model.SpeechMode
 import kotlinx.coroutines.CancellationException
@@ -32,50 +33,62 @@ class SpeechEngineRouter(
     private val delayMillis: suspend (Long) -> Unit = { delay(it) },
 ) {
     suspend fun speak(request: SpeechRequest, mode: SpeechMode): RoutedSpeechResult {
-        retainCacheScope(request)
+        val cacheScope = retainCacheScope(request)
         return when (mode) {
             SpeechMode.OFFLINE -> routeOffline(request, fellBack = false)
-            SpeechMode.ONLINE -> routeOnlineOnly(request)
-            SpeechMode.AUTO -> routeAutomatically(request)
+            SpeechMode.ONLINE -> routeOnlineOnly(cacheScope, request)
+            SpeechMode.AUTO -> routeAutomatically(cacheScope, request)
         }
     }
 
     private suspend fun routeOffline(request: SpeechRequest, fellBack: Boolean): RoutedSpeechResult =
         RoutedSpeechResult(systemEngine.speak(request), systemEngine.id, fellBack)
 
-    private suspend fun routeOnlineOnly(request: SpeechRequest): RoutedSpeechResult {
-        cachedAudio(request)?.let { audio ->
+    private suspend fun routeOnlineOnly(
+        cacheScope: SpeechCacheScopeToken?,
+        request: SpeechRequest,
+    ): RoutedSpeechResult {
+        cachedAudio(cacheScope, request)?.let { audio ->
             val result = playAndWipe(audio)
             if (result !is SpeechEngineResult.Failed) {
                 return RoutedSpeechResult(result, onlineEngine.id)
             }
-            removeCached(request)
+            removeCached(cacheScope, request)
         }
-        return synthesizeOnlineOnly(request)
+        return synthesizeOnlineOnly(cacheScope, request)
     }
 
-    private suspend fun synthesizeOnlineOnly(request: SpeechRequest): RoutedSpeechResult {
+    private suspend fun synthesizeOnlineOnly(
+        cacheScope: SpeechCacheScopeToken?,
+        request: SpeechRequest,
+    ): RoutedSpeechResult {
         return when (val synthesis = onlineEngine.synthesize(request)) {
-            is OnlineSynthesisResult.Audio -> RoutedSpeechResult(playCacheAndWipe(request, synthesis.bytes), onlineEngine.id)
+            is OnlineSynthesisResult.Audio -> RoutedSpeechResult(
+                playCacheAndWipe(cacheScope, request, synthesis.bytes),
+                onlineEngine.id,
+            )
             OnlineSynthesisResult.Cancelled -> RoutedSpeechResult(SpeechEngineResult.Cancelled, onlineEngine.id)
             is OnlineSynthesisResult.Failed -> RoutedSpeechResult(SpeechEngineResult.Failed(synthesis.error), onlineEngine.id)
         }
     }
 
-    private suspend fun routeAutomatically(request: SpeechRequest): RoutedSpeechResult {
-        cachedAudio(request)?.let { audio ->
+    private suspend fun routeAutomatically(
+        cacheScope: SpeechCacheScopeToken?,
+        request: SpeechRequest,
+    ): RoutedSpeechResult {
+        cachedAudio(cacheScope, request)?.let { audio ->
             val result = playAndWipe(audio)
             if (result !is SpeechEngineResult.Failed) {
                 return RoutedSpeechResult(result, onlineEngine.id)
             }
-            removeCached(request)
+            removeCached(cacheScope, request)
         }
 
         var retryIndex = 0
         while (true) {
             when (val synthesis = onlineEngine.synthesize(request)) {
                 is OnlineSynthesisResult.Audio -> {
-                    val result = playCacheAndWipe(request, synthesis.bytes)
+                    val result = playCacheAndWipe(cacheScope, request, synthesis.bytes)
                     return if (result is SpeechEngineResult.Failed) routeOffline(request, fellBack = true)
                     else RoutedSpeechResult(result, onlineEngine.id)
                 }
@@ -94,45 +107,53 @@ class SpeechEngineRouter(
         }
     }
 
-    private suspend fun retainCacheScope(request: SpeechRequest) {
+    private suspend fun retainCacheScope(request: SpeechRequest): SpeechCacheScopeToken? =
         try {
             cache.retainScope(request)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             // Cache maintenance is best-effort and cannot block speech availability.
+            null
         }
-    }
 
-    private suspend fun cachedAudio(request: SpeechRequest): ByteArray? = try {
-        cache.get(request, nowMillis())
+    private suspend fun cachedAudio(
+        cacheScope: SpeechCacheScopeToken?,
+        request: SpeechRequest,
+    ): ByteArray? = if (cacheScope == null) null else try {
+        cache.get(cacheScope, request, nowMillis())
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Exception) {
         null
     }
 
-    private suspend fun playCacheAndWipe(request: SpeechRequest, audio: ByteArray): SpeechEngineResult = try {
+    private suspend fun playCacheAndWipe(
+        cacheScope: SpeechCacheScopeToken?,
+        request: SpeechRequest,
+        audio: ByteArray,
+    ): SpeechEngineResult = try {
         val result = onlineEngine.playEncoded(audio)
         if (result == SpeechEngineResult.Completed) {
             try {
-                cache.put(request, audio, nowMillis())
+                if (cacheScope != null) cache.put(cacheScope, request, audio, nowMillis())
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 // A private cache failure must not turn successful speech into a failure.
             }
         } else if (result is SpeechEngineResult.Failed) {
-            removeCached(request)
+            removeCached(cacheScope, request)
         }
         result
     } finally {
         audio.fill(0)
     }
 
-    private suspend fun removeCached(request: SpeechRequest) {
+    private suspend fun removeCached(cacheScope: SpeechCacheScopeToken?, request: SpeechRequest) {
+        if (cacheScope == null) return
         try {
-            cache.remove(request)
+            cache.remove(cacheScope, request)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {

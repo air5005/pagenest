@@ -42,24 +42,42 @@ class FileSpeechAudioCache(
     private val expiryMillis: Long = DEFAULT_EXPIRY_MILLIS,
     private val publisher: CacheFilePublisher = AtomicCacheFilePublisher,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val stagingDirectory: File = File(
+        rootDirectory.parentFile ?: rootDirectory,
+        "${rootDirectory.name}-staging",
+    ),
 ) : SpeechAudioCache {
     private val mutex = Mutex()
+    private var scopeGeneration = 0L
+    private var activeToken: SpeechCacheScopeToken? = null
 
     init {
         require(maxBytes >= 0) { "maxBytes must not be negative" }
         require(expiryMillis >= 0) { "expiryMillis must not be negative" }
     }
 
-    override suspend fun retainScope(request: SpeechRequest): Unit = withContext(ioDispatcher) {
+    override suspend fun retainScope(request: SpeechRequest): SpeechCacheScopeToken = withContext(ioDispatcher) {
         mutex.withLock {
-            retainScopeOnDisk(request)
-            Unit
+            cleanupOrphanTemps(rootDirectory)
+            cleanupOrphanTemps(stagingDirectory)
+            val scope = retainScopeOnDisk(request)
+            enforceCapacity(scope, maxBytes)
+            SpeechCacheScopeToken(
+                generation = ++scopeGeneration,
+                bookId = request.segment.position.bookId,
+                chapterIndex = request.segment.position.chapterIndex,
+            ).also { activeToken = it }
         }
     }
 
-    override suspend fun get(request: SpeechRequest, nowMillis: Long): ByteArray? = withContext(ioDispatcher) {
+    override suspend fun get(
+        token: SpeechCacheScopeToken,
+        request: SpeechRequest,
+        nowMillis: Long,
+    ): ByteArray? = withContext(ioDispatcher) {
         mutex.withLock {
-            val scope = retainScopeOnDisk(request)
+            if (!isActive(token, request)) return@withLock null
+            val scope = scopeDirectory(request)
             removeExpiredAndCorrupt(scope, nowMillis)
             val file = entryFile(scope, request)
             val entry = readEntry(file) ?: return@withLock null
@@ -73,9 +91,15 @@ class FileSpeechAudioCache(
         }
     }
 
-    override suspend fun put(request: SpeechRequest, audio: ByteArray, nowMillis: Long) = withContext(ioDispatcher) {
+    override suspend fun put(
+        token: SpeechCacheScopeToken,
+        request: SpeechRequest,
+        audio: ByteArray,
+        nowMillis: Long,
+    ) = withContext(ioDispatcher) {
         mutex.withLock {
-            val scope = retainScopeOnDisk(request)
+            if (!isActive(token, request)) return@withLock
+            val scope = scopeDirectory(request)
             removeExpiredAndCorrupt(scope, nowMillis)
             val entryBytes = HEADER_BYTES + audio.size.toLong()
             if (entryBytes > maxBytes) {
@@ -86,21 +110,25 @@ class FileSpeechAudioCache(
             val destination = entryFile(scope, request)
             enforceCapacity(scope, maxBytes - entryBytes, destination)
             scope.mkdirs()
-            val temporary = File(scope, ".${UUID.randomUUID()}.tmp")
+            stagingDirectory.mkdirs()
+            val temporary = File(stagingDirectory, ".${UUID.randomUUID()}.tmp")
             try {
                 writeEntry(temporary, nowMillis, audio)
+                if (!isActive(token, request)) return@withLock
                 publisher.publish(temporary, destination)
                 destination.setLastModified(nowMillis)
             } finally {
                 temporary.delete()
+                removeEmptyStagingDirectory()
             }
             enforceCapacity(scope, maxBytes)
         }
     }
 
-    override suspend fun remove(request: SpeechRequest) = withContext(ioDispatcher) {
+    override suspend fun remove(token: SpeechCacheScopeToken, request: SpeechRequest) = withContext(ioDispatcher) {
         mutex.withLock {
-            val scope = retainScopeOnDisk(request)
+            if (!isActive(token, request)) return@withLock
+            val scope = scopeDirectory(request)
             val file = entryFile(scope, request)
             file.delete()
             removeEmptyParents(file.parentFile)
@@ -108,12 +136,17 @@ class FileSpeechAudioCache(
     }
 
     override suspend fun clear() = withContext(ioDispatcher) {
-        mutex.withLock { deleteRecursively(rootDirectory) }
+        mutex.withLock {
+            activeToken = null
+            scopeGeneration++
+            deleteRecursively(rootDirectory)
+            deleteRecursively(stagingDirectory)
+        }
     }
 
     private fun retainScopeOnDisk(request: SpeechRequest): File {
-        val bookDirectory = File(rootDirectory, request.segment.position.bookId.toString())
-        val scope = File(bookDirectory, "chapter-${request.segment.position.chapterIndex}")
+        val scope = scopeDirectory(request)
+        val bookDirectory = scope.parentFile!!
         if (rootDirectory.exists()) {
             rootDirectory.listFiles().orEmpty().forEach { child ->
                 if (child.name != bookDirectory.name) deleteRecursively(child)
@@ -124,6 +157,16 @@ class FileSpeechAudioCache(
         }
         return scope
     }
+
+    private fun scopeDirectory(request: SpeechRequest): File = File(
+        File(rootDirectory, request.segment.position.bookId.toString()),
+        "chapter-${request.segment.position.chapterIndex}",
+    )
+
+    private fun isActive(token: SpeechCacheScopeToken, request: SpeechRequest): Boolean =
+        token == activeToken &&
+            token.bookId == request.segment.position.bookId &&
+            token.chapterIndex == request.segment.position.chapterIndex
 
     private fun entryFile(scope: File, request: SpeechRequest): File =
         File(scope, "${cacheDigest(request)}.cache")
@@ -231,6 +274,20 @@ class FileSpeechAudioCache(
         while (current != null && current != rootDirectory && current.listFiles().orEmpty().isEmpty()) {
             current.delete()
             current = current.parentFile
+        }
+    }
+
+    private fun cleanupOrphanTemps(directory: File) {
+        if (!directory.exists()) return
+        directory.walkBottomUp().forEach { file ->
+            if (file.isFile && file.name.endsWith(".tmp")) file.delete()
+        }
+        removeEmptyStagingDirectory()
+    }
+
+    private fun removeEmptyStagingDirectory() {
+        if (stagingDirectory.isDirectory && stagingDirectory.listFiles().orEmpty().isEmpty()) {
+            stagingDirectory.delete()
         }
     }
 

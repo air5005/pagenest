@@ -7,11 +7,13 @@
     <cloud-backup>
         <exclude domain="file" path="speech-secrets/" />
         <exclude domain="file" path="speech-cache/" />
+        <exclude domain="file" path="speech-cache-staging/" />
         <exclude domain="file" path="datastore/speech_preferences.preferences_pb" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="speech-secrets/" />
         <exclude domain="file" path="speech-cache/" />
+        <exclude domain="file" path="speech-cache-staging/" />
         <exclude domain="file" path="datastore/speech_preferences.preferences_pb" />
     </device-transfer>
 </data-extraction-rules>
