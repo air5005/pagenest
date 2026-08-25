@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
@@ -47,11 +48,17 @@ fun SpeechControlSheet(
     onRateChange: (Float) -> Unit,
     onPitchChange: (Float) -> Unit,
     onTimerChange: (Int?) -> Unit,
+    onDismiss: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier.fillMaxWidth().padding(12.dp)) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(state.activeEngineLabel, style = MaterialTheme.typography.labelLarge)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(state.activeEngineLabel, style = MaterialTheme.typography.labelLarge)
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, stringResource(R.string.reader_speech_collapse))
+                }
+            }
             (state.playback as? SpeechPlaybackState.Error)?.let { failure ->
                 Text(SpeechControlPolicy.messageFor(failure.error), color = MaterialTheme.colorScheme.error)
             }

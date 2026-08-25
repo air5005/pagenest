@@ -4,9 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.FrameLayout
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -25,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,7 +33,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -74,10 +72,11 @@ import com.wxn.reader.presentation.bookReader.components.modals.FontSettings
 import com.wxn.reader.presentation.bookReader.components.modals.PageSettings
 import com.wxn.reader.presentation.bookReader.components.modals.ReaderSettings
 import com.wxn.reader.presentation.bookReader.components.modals.UiSettings
-import com.wxn.reader.presentation.bookReader.components.toolbars.BottomToolbar
-import com.wxn.reader.presentation.bookReader.components.toolbars.TopToolbar
+import com.wxn.reader.presentation.mainReader.chrome.ReaderChrome
+import com.wxn.reader.presentation.mainReader.chrome.ReaderChromeReducer
 import com.wxn.reader.util.LogCompositions
 import com.wxn.reader.util.TopPopupPositionProvider
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 
@@ -104,9 +103,14 @@ fun ReaderView(
     }
     LogCompositions("Composition:ReaderView")
     val navController = LocalNavController.current
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     val book by viewModel.book.collectAsStateWithLifecycle()
-    val areToolbarsVisible by viewModel.showMenu.collectAsStateWithLifecycle()
+    val chromeState by viewModel.readerChromeState.collectAsStateWithLifecycle()
     val appPreferences by viewModel.appPreferences.collectAsStateWithLifecycle()
+    val readProgression by viewModel.readProgression.collectAsStateWithLifecycle()
+    var progressExpanded by remember { mutableStateOf(false) }
+    var showMoreTools by remember { mutableStateOf(false) }
+    var showDisplayTools by remember { mutableStateOf(false) }
 
     val isChaptersDrawerOpen by viewModel.isChaptersDrawerOpen.collectAsStateWithLifecycle()
     val isNotesDrawerOpen by viewModel.isNotesDrawerOpen.collectAsStateWithLifecycle()
@@ -146,6 +150,61 @@ fun ReaderView(
     val outHref by viewModel.outHref.collectAsStateWithLifecycle()
     val showOutHrefDialog by viewModel.showOutHrefDialog.collectAsStateWithLifecycle()
 
+    val hasBlockingOverlay =
+        isChaptersDrawerOpen ||
+            isNotesDrawerOpen ||
+            isBookmarksDrawerOpen ||
+            isHighlightsDrawerOpen ||
+            showTextToolbar ||
+            showColorSelectionPanel ||
+            showUISettings ||
+            showFontSettings ||
+            showPageSettings ||
+            showReaderSettings ||
+            showNoteDialog ||
+            selectedNote != null ||
+            clickedLinkContent != null ||
+            showOutHrefDialog ||
+            showMoreTools ||
+            showDisplayTools ||
+            chromeState.speechPanelExpanded ||
+            SpeechSettingsEventPolicy.shouldShowOnlineConsent(speechState) ||
+            speechEvent != null
+
+    LaunchedEffect(hasBlockingOverlay) {
+        viewModel.setBlockingOverlayVisible(hasBlockingOverlay)
+    }
+
+    LaunchedEffect(
+        chromeState.controlsVisible,
+        chromeState.interactionGeneration,
+        chromeState.blockingOverlayVisible,
+        chromeState.speechPanelExpanded,
+    ) {
+        if (ReaderChromeReducer.shouldScheduleAutoHide(chromeState)) {
+            val generation = chromeState.interactionGeneration
+            delay(ReaderChromeReducer.AUTO_HIDE_MILLIS)
+            viewModel.onChromeAutoHide(generation)
+        }
+    }
+
+    LaunchedEffect(chromeState.controlsVisible) {
+        if (!chromeState.controlsVisible) progressExpanded = false
+    }
+
+    val speechControlState = SpeechControlUiState(
+        playback = speechSnapshot.playbackState,
+        mode = speechState.preferences.mode,
+        activeEngineLabel = SpeechControlPolicy.engineLabel(
+            routeIndicator.engineId,
+            routeIndicator.fellBack,
+        ),
+        rate = speechState.preferences.rate,
+        pitch = speechState.preferences.pitch,
+        voiceId = speechState.preferences.voiceId,
+        sleepTimerMinutes = null,
+    )
+
 
     fun navigateToHref(href: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(href))
@@ -182,54 +241,50 @@ fun ReaderView(
 
             val curChapterName by viewModel.curChapterName.collectAsStateWithLifecycle()
 
-            AnimatedVisibility(
-                visible = areToolbarsVisible,
-                enter = slideInVertically(initialOffsetY = { -it }),
-                exit = slideOutVertically(targetOffsetY = { -it })
-            ) {
-                TopToolbar(
-                    isBookmarked = isBookmarked,
-                    navController = navController,
-                    book = book,
-                    bookTitle = book?.title,
-                    currentChapter = curChapterName,
-                    onChaptersClick = { viewModel.chaptersDrawerOpen() },
-                    onNotesDrawerToggle = { viewModel.notesDrawerOpen() },
-                    onBookmarkDrawerToggle = { viewModel.bookmarksDrawerOpen() },
-                    onHighlightsDrawerToggle = { viewModel.highlightsDrawerOpen() },
-                    bookmark = {
-                        if (isBookmarked) {
-                            viewModel.deleteBookmark()
-                        } else {
-                            viewModel.addBookmark()
-                        }
-                    },
-                    textToSpeech = {
+            ReaderChrome(
+                state = chromeState,
+                bookTitle = book?.title.orEmpty(),
+                chapterTitle = curChapterName,
+                progression = readProgression,
+                isBookmarked = isBookmarked,
+                speech = speechControlState,
+                progressExpanded = progressExpanded,
+                onBack = { backDispatcher?.onBackPressed() },
+                onBookmark = {
+                    if (isBookmarked) viewModel.deleteBookmark() else viewModel.addBookmark()
+                },
+                onMore = { showMoreTools = true },
+                onChapters = { viewModel.chaptersDrawerOpen() },
+                onProgressToggle = { progressExpanded = !progressExpanded },
+                onProgressChange = { viewModel.changePageByProgress(it) },
+                onPreviousPage = { viewModel.pageController.pageFactory?.moveToPrev(true) },
+                onNextPage = { viewModel.pageController.pageFactory?.moveToNext(true) },
+                onSpeech = {
+                    if (isTtsOn) {
+                        viewModel.setSpeechPanelExpanded(true)
+                    } else if (enableTts) {
                         viewModel.prepareSpeech()
                         speechSettings.start()
-                    },
-                    enableTts = enableTts,
-                    isTtsOn = isTtsOn,
-                )
-            }
+                    }
+                },
+                onDisplay = { showDisplayTools = true },
+                onPlaySpeech = {
+                    if (SpeechControlPolicy.requiresPreparation(speechSnapshot.playbackState)) {
+                        viewModel.prepareSpeech()
+                    }
+                    speechSettings.start()
+                },
+                onPauseSpeech = speechSettings::pause,
+                onPreviousSpeech = speechSettings::previous,
+                onNextSpeech = speechSettings::next,
+                onStopSpeech = speechSettings::stop,
+                onExpandSpeech = { viewModel.setSpeechPanelExpanded(true) },
+                onInteraction = viewModel::onReaderInteraction,
+            )
 
-            LaunchedEffect(isTtsOn) {
-                if (isTtsOn) {
-                    viewModel.onToolbarsVisibilityChanged()
-                }
-            }
-
-            if (isTtsOn) {
+            if (chromeState.speechPanelExpanded) {
                 SpeechControlSheet(
-                    state = SpeechControlUiState(
-                        playback = speechSnapshot.playbackState,
-                        mode = speechState.preferences.mode,
-                        activeEngineLabel = SpeechControlPolicy.engineLabel(routeIndicator.engineId, routeIndicator.fellBack),
-                        rate = speechState.preferences.rate,
-                        pitch = speechState.preferences.pitch,
-                        voiceId = speechState.preferences.voiceId,
-                        sleepTimerMinutes = null,
-                    ),
+                    state = speechControlState,
                     onPlay = {
                         if (SpeechControlPolicy.requiresPreparation(speechSnapshot.playbackState)) viewModel.prepareSpeech()
                         speechSettings.start()
@@ -241,6 +296,7 @@ fun ReaderView(
                     onRateChange = speechSettings::setRate,
                     onPitchChange = speechSettings::setPitch,
                     onTimerChange = speechSettings::setSleepTimer,
+                    onDismiss = { viewModel.setSpeechPanelExpanded(false) },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
@@ -289,24 +345,6 @@ fun ReaderView(
                             viewModel.showColorSelectionPanel(false)
                         }
                 )
-            }
-
-            Column(
-                modifier = Modifier.align(Alignment.BottomCenter)
-            ) {
-                AnimatedVisibility(
-                    visible = !showUISettings && !showFontSettings && !showPageSettings && !showReaderSettings,
-                ) {
-                    BottomToolbar(
-                        textPageFactory = viewModel.pageController.pageFactory,
-                        showToolbar = areToolbarsVisible,
-                        viewModel = viewModel,
-                        onToggleFontSettings = { viewModel.fontSettingsOpen() },
-                        onTogglePageSettings = { viewModel.pageSettingsOpen() },
-                        onToggleReaderSettings = { viewModel.readerSettingsOpen() },
-                        onToggleUISettings = { viewModel.uiSettingsOpen() }
-                    )
-                }
             }
 
             ChaptersDrawer2(
@@ -375,6 +413,101 @@ fun ReaderView(
                 isOpen = isHighlightsDrawerOpen,
                 onClose = { viewModel.highlightsDrawerOpen(false) }
             )
+
+            if (showMoreTools) {
+                AlertDialog(
+                    onDismissRequest = { showMoreTools = false },
+                    title = { Text(stringResource(R.string.reader_more)) },
+                    text = {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            TextButton(
+                                onClick = {
+                                    showMoreTools = false
+                                    viewModel.notesDrawerOpen()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.notes)) }
+                            TextButton(
+                                onClick = {
+                                    showMoreTools = false
+                                    viewModel.highlightsDrawerOpen()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.highlights)) }
+                            TextButton(
+                                onClick = {
+                                    showMoreTools = false
+                                    viewModel.bookmarksDrawerOpen()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.bookmarks)) }
+                            TextButton(
+                                onClick = {
+                                    showMoreTools = false
+                                    book?.let { openedBook ->
+                                        navController.navigate(
+                                            Screens.BookDetailsScreen.route +
+                                                "/${openedBook.id}/${Uri.encode(openedBook.filePath)}",
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.about)) }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { showMoreTools = false }) {
+                            Text(stringResource(R.string.cancel))
+                        }
+                    },
+                )
+            }
+
+            if (showDisplayTools) {
+                AlertDialog(
+                    onDismissRequest = { showDisplayTools = false },
+                    title = { Text(stringResource(R.string.reader_display)) },
+                    text = {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            TextButton(
+                                onClick = {
+                                    showDisplayTools = false
+                                    viewModel.uiSettingsOpen()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.theme)) }
+                            TextButton(
+                                onClick = {
+                                    showDisplayTools = false
+                                    viewModel.fontSettingsOpen()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.font_settings)) }
+                            TextButton(
+                                onClick = {
+                                    showDisplayTools = false
+                                    viewModel.pageSettingsOpen()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.page_settings)) }
+                            TextButton(
+                                onClick = {
+                                    showDisplayTools = false
+                                    viewModel.readerSettingsOpen()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.reader_settings)) }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { showDisplayTools = false }) {
+                            Text(stringResource(R.string.cancel))
+                        }
+                    },
+                )
+            }
 
             if (showNoteDialog) {
                 NoteDialog(

@@ -47,7 +47,7 @@ fun MainReadScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val readerPreferences by viewModel.readerPreferences.collectAsStateWithLifecycle()
     val book by viewModel.book.collectAsStateWithLifecycle()
-    var areToolbarsVisible by remember { mutableStateOf(false) }
+    val chromeState by viewModel.readerChromeState.collectAsStateWithLifecycle()
     var showState by remember { mutableStateOf(0) }
 
     KeepScreenOn(readerPreferences.keepScreenOn)
@@ -75,7 +75,10 @@ fun MainReadScreen(
         }
     }
 
-    SetFullScreen(context, showSystemBars = areToolbarsVisible)
+    SetFullScreen(
+        context,
+        showSystemBars = chromeState.controlsVisible || chromeState.blockingOverlayVisible,
+    )
 
     Box(
         modifier = Modifier.fillMaxSize(),

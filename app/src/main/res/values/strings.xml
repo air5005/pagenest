@@ -360,4 +360,5 @@
     <string name="reader_speech_play">继续朗读</string>
     <string name="reader_speech_next">下一段朗读</string>
     <string name="reader_speech_stop">停止朗读</string>
+    <string name="reader_speech_collapse">收起语音设置</string>
 </resources>
