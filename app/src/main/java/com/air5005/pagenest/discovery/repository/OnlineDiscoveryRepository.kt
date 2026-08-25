@@ -27,12 +27,12 @@ class OnlineDiscoveryRepository(
     private val fusion: ReciprocalRankFusion = ReciprocalRankFusion(),
     private val nowEpochMillis: () -> Long = System::currentTimeMillis,
     private val sourceTimeoutMillis: Long = DEFAULT_SOURCE_TIMEOUT_MILLIS,
-) {
+) : DiscoveryCatalogRepository {
     init {
         require(sourceTimeoutMillis > 0) { "Source timeout must be positive" }
     }
 
-    suspend fun discover(request: CatalogRequest): DiscoveryResult {
+    override suspend fun discover(request: CatalogRequest): DiscoveryResult {
         val key = CatalogCacheKey.from(request)
         val cached = safeCacheGet(key)
         if (cached != null && isFresh(cached, request.kind)) {
