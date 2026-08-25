@@ -25,6 +25,10 @@ class DiscoveryModuleContractTest {
             File("private-files", "discovery-cache"),
             DiscoveryModule.cacheDirectory(File("private-files")),
         )
+        assertEquals(
+            File("private-files", "openlibrary-metadata-cache"),
+            DiscoveryModule.openLibraryCacheDirectory(File("private-files")),
+        )
     }
 
     @Test

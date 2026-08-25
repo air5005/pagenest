@@ -4,6 +4,11 @@ import android.content.Context
 import com.air5005.pagenest.discovery.cache.CatalogCache
 import com.air5005.pagenest.discovery.cache.FileCatalogCache
 import com.air5005.pagenest.discovery.config.DiscoverySourceRegistry
+import com.air5005.pagenest.discovery.openlibrary.FileOpenLibraryMetadataCache
+import com.air5005.pagenest.discovery.openlibrary.OnlineBookEnricher
+import com.air5005.pagenest.discovery.openlibrary.OpenLibraryEnricher
+import com.air5005.pagenest.discovery.openlibrary.OpenLibraryMetadataCache
+import com.air5005.pagenest.discovery.openlibrary.OpenLibraryRateLimiter
 import com.air5005.pagenest.discovery.repository.DiscoveryCatalogRepository
 import com.air5005.pagenest.discovery.repository.OnlineDiscoveryRepository
 import com.air5005.pagenest.discovery.source.gutendex.GutendexCatalogSource
@@ -53,6 +58,26 @@ object DiscoveryModule {
 
     @Provides
     @Singleton
+    fun provideOpenLibraryRateLimiter(): OpenLibraryRateLimiter = OpenLibraryRateLimiter()
+
+    @Provides
+    @Singleton
+    fun provideOpenLibraryMetadataCache(
+        @ApplicationContext context: Context,
+    ): OpenLibraryMetadataCache = FileOpenLibraryMetadataCache(
+        openLibraryCacheDirectory(context.filesDir),
+    )
+
+    @Provides
+    @Singleton
+    fun provideOnlineBookEnricher(
+        @DiscoveryNetworkClient client: HttpClient,
+        cache: OpenLibraryMetadataCache,
+        limiter: OpenLibraryRateLimiter,
+    ): OnlineBookEnricher = OpenLibraryEnricher(client, cache, limiter)
+
+    @Provides
+    @Singleton
     fun provideDiscoveryRepository(
         registry: DiscoverySourceRegistry,
         cache: CatalogCache,
@@ -62,4 +87,7 @@ object DiscoveryModule {
     )
 
     fun cacheDirectory(filesDirectory: File): File = File(filesDirectory, "discovery-cache")
+
+    fun openLibraryCacheDirectory(filesDirectory: File): File =
+        File(filesDirectory, "openlibrary-metadata-cache")
 }
