@@ -87,8 +87,9 @@ class FileParserImpl @Inject constructor(
         }
 
         file.rawFile(context)?.absoluteFile?.absolutePath?.let { filePath ->
-            val crc = MobiParser.getFileCrc(filePath)
-            book?.crc = crc?.crc ?: 0
+            book?.crc = bestEffortBookCrc(filePath) { path ->
+                MobiParser.getFileCrc(path)?.crc
+            }
         }
         return book
     }
@@ -139,8 +140,9 @@ class FileParserImpl @Inject constructor(
         }
 
         cachedFile.rawFile?.absoluteFile?.absolutePath?.let { filePath ->
-            val crc = MobiParser.getFileCrc(filePath)
-            book?.crc = crc?.crc ?: 0
+            book?.crc = bestEffortBookCrc(filePath) { path ->
+                MobiParser.getFileCrc(path)?.crc
+            }
         }
 
         return book
