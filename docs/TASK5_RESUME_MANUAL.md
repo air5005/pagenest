@@ -38,6 +38,13 @@ Get-Content .\docs\superpowers\plans\2026-08-23-voice-reading.md | Select-String
 - Task 8 的两个阅读器语音控制、Azure 设置、首次联网同意、PDF 提示和旧 Edge TTS 清理已经提交。
 - 计划里 Task 9 涉及到的 Android 自动化、HyperOS 3 真机和 60 分钟验收矩阵与你要执行的测试一致。
 
+### 当前 Task9 检查点
+
+- 电脑端 JVM 测试、Debug APK、AndroidTest APK 和 lint 已通过。
+- Android 仪器测试与 `docs/testing/voice-reading-hyperos3.md` 已提交。
+- 尚未完成：连接目标手机后的 connected tests、APK 安装、真实 force-stop 恢复和 HyperOS 3 60 分钟矩阵。
+- 继续前先运行 `adb devices -l`；只有出现状态为 `device` 的目标手机后，才能完成剩余验收。
+
 ## 4. 开发执行原则（必须遵守）
 
 1. 每个阶段：`代码改动 -> 提交 -> 推送`，且推送到 `master`。
