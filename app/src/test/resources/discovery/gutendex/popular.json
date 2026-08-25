@@ -1,0 +1,29 @@
+{
+  "count": 1,
+  "next": "https://gutendex.com/books/?page=2&sort=popular",
+  "previous": null,
+  "results": [
+    {
+      "id": 123,
+      "title": "The Example Book",
+      "authors": [
+        { "name": "Example, Author", "birth_year": 1870, "death_year": 1940 }
+      ],
+      "summaries": ["A compact fixture for catalog tests."],
+      "subjects": ["Fiction", "Technology"],
+      "languages": ["zh"],
+      "copyright": false,
+      "media_type": "Text",
+      "formats": {
+        "application/epub+zip": "https://files.example/123.epub3.images",
+        "text/plain; charset=us-ascii": "https://files.example/123.txt",
+        "text/html": "https://files.example/123.html",
+        "application/x-mobipocket-ebook": "https://files.example/123.mobi",
+        "image/jpeg": "https://covers.example/123.jpg",
+        "application/epub+zip; insecure": "http://files.example/123-insecure.epub"
+      },
+      "download_count": 9876,
+      "unknown_future_field": "ignored"
+    }
+  ]
+}
