@@ -2,7 +2,7 @@
 
 > Execute task-by-task with test-driven development. Work directly on `master`; commit and push every completed task.
 
-**Goal:** Restore TXT and EPUB imports on ABI targets where the optional MOBI CRC native library is unavailable, then verify the immersive reader with a real imported book.
+**Goal:** Stop an optional MOBI CRC failure from invalidating otherwise parseable imports, restore TXT import on x86_64, and verify the immersive reader with a real imported book while recording EPUB ABI limits separately.
 
 **Architecture:** Keep every format parser and the SHA-256 import pipeline unchanged. Introduce one pure best-effort legacy CRC boundary in `bookparser`, route both `DocumentFile` and `CachedFile` parsing through it, and treat only ordinary failures plus `LinkageError` as an unavailable optional enhancement.
 
@@ -32,6 +32,8 @@
 5. Open an imported book and verify正文、中央点击控制区、目录、进度、显示和听书入口。
 6. Run the two Phase 3 Compose device suites again and check AndroidRuntime fatal count.
 7. Record evidence in `docs/testing/import-compatibility-phase4.md`; commit and push.
+
+**Execution correction:** The post-fix device run proved that EPUB metadata parsing itself calls `NativeLib.loadEpub`; it is not only affected by the optional CRC step. Phase 4 therefore verifies TXT end-to-end on x86_64 and reserves EPUB compatibility for the ARM64 HyperOS 3 device instead of expanding scope into an EPUB engine rewrite.
 
 ## Task 3: Full gate and release
 
