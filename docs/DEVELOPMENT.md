@@ -243,3 +243,27 @@ Android 11 及以上设备可以使用无线调试：
 - 全局 Gradle：使用项目的 Gradle Wrapper。
 - 数据库服务器或后端服务：首版是完整离线阅读器。
 - Docker：首版开发不需要。
+
+## 9. 语音阅读真机发布门禁
+
+HyperOS 3 / Android 16 的设备准备、USB/无线调试、Azure 安全配置、自动化命令和连续 60 分钟验收矩阵统一记录在：
+
+- [语音阅读 HyperOS 3 真机发布门禁](testing/voice-reading-hyperos3.md)
+
+提交语音阅读阶段前，先执行桌面门禁：
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
+adb devices -l
+```
+
+只有 `adb devices -l` 出现目标手机的 `device` 行后才能运行真机门禁：
+
+```powershell
+.\gradlew.bat :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.package=com.air5005.pagenest.speech
+.\gradlew.bat :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.wxn.reader.data.source.local.AppDatabaseMigrationTest
+adb install -r .\app\build\outputs\apk\debug\app-debug.apk
+```
+
+没有连接设备时必须记录 `NOT RUN (no connected device)`，不得写成测试通过。
