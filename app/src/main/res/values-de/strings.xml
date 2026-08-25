@@ -283,4 +283,23 @@
 
     <string name="speech_settings">Voice reading</string><string name="speech_back">Back</string><string name="speech_mode">Reading mode</string><string name="speech_mode_offline">Offline</string><string name="speech_mode_online">Online</string><string name="speech_mode_auto">Automatic</string><string name="speech_key">Azure Speech Key</string><string name="speech_key_replace">Replace Azure Speech Key</string><string name="speech_region">Azure Region</string><string name="speech_save">Save</string><string name="speech_test_connection">Test connection</string><string name="speech_delete_key">Delete key</string><string name="speech_previous">Previous paragraph</string><string name="speech_pause">Pause</string><string name="speech_play">Play</string><string name="speech_next">Next paragraph</string><string name="speech_stop">Stop</string><string name="speech_rate">Speed: %1$.2f</string><string name="speech_pitch">Pitch: %1$.2f</string><string name="speech_timer_off">Timer off</string><string name="speech_timer_minutes">%1$d min</string>
     <string name="speech_locale">Language locale</string>
+    <string name="dashboard_title">Heute schon gelesen?</string>
+    <string name="dashboard_reading_summary">Leseübersicht</string>
+    <string name="dashboard_today_reading">Heute gelesen</string>
+    <string name="dashboard_reading_streak">Leseserie</string>
+    <string name="dashboard_minutes_format">%1$d Minuten</string>
+    <string name="dashboard_days_format">%1$d Tage</string>
+    <string name="dashboard_week_progress">Diese Woche %1$d / %2$d Minuten</string>
+    <string name="dashboard_recent_reading">Zuletzt gelesen</string>
+    <string name="dashboard_continue_reading">Weiterlesen</string>
+    <string name="dashboard_last_reading">%1$s · %2$s</string>
+    <string name="dashboard_book_cover">Cover von „%1$s“</string>
+    <string name="dashboard_empty_title">Dein Regal ist noch leer</string>
+    <string name="dashboard_empty_description">Importiere ein Buch und beginne noch heute mit deiner Lesespur.</string>
+    <string name="dashboard_import_books">Bücher importieren</string>
+    <string name="dashboard_import_short">Importieren</string>
+    <string name="dashboard_no_recent_title">Wähle ein Buch zum Lesen</string>
+    <string name="dashboard_no_recent_description">Deine Bücher sind bereit. Geöffnete Bücher erscheinen hier.</string>
+    <string name="dashboard_all_books">Alle Bücher %1$d</string>
+    <string name="dashboard_back_to_summary">Leseübersicht %1$d</string>
 </resources>

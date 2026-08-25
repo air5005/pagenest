@@ -283,4 +283,23 @@
 
     <string name="speech_settings">Voice reading</string><string name="speech_back">Back</string><string name="speech_mode">Reading mode</string><string name="speech_mode_offline">Offline</string><string name="speech_mode_online">Online</string><string name="speech_mode_auto">Automatic</string><string name="speech_key">Azure Speech Key</string><string name="speech_key_replace">Replace Azure Speech Key</string><string name="speech_region">Azure Region</string><string name="speech_save">Save</string><string name="speech_test_connection">Test connection</string><string name="speech_delete_key">Delete key</string><string name="speech_previous">Previous paragraph</string><string name="speech_pause">Pause</string><string name="speech_play">Play</string><string name="speech_next">Next paragraph</string><string name="speech_stop">Stop</string><string name="speech_rate">Speed: %1$.2f</string><string name="speech_pitch">Pitch: %1$.2f</string><string name="speech_timer_off">Timer off</string><string name="speech_timer_minutes">%1$d min</string>
     <string name="speech_locale">Language locale</string>
+    <string name="dashboard_title">هل قرأت اليوم؟</string>
+    <string name="dashboard_reading_summary">ملخص القراءة</string>
+    <string name="dashboard_today_reading">قراءة اليوم</string>
+    <string name="dashboard_reading_streak">أيام القراءة المتتالية</string>
+    <string name="dashboard_minutes_format">%1$d دقيقة</string>
+    <string name="dashboard_days_format">%1$d يوم</string>
+    <string name="dashboard_week_progress">هذا الأسبوع %1$d / %2$d دقيقة</string>
+    <string name="dashboard_recent_reading">القراءة الأخيرة</string>
+    <string name="dashboard_continue_reading">متابعة القراءة</string>
+    <string name="dashboard_last_reading">%1$s · %2$s</string>
+    <string name="dashboard_book_cover">غلاف «%1$s»</string>
+    <string name="dashboard_empty_title">مكتبتك فارغة</string>
+    <string name="dashboard_empty_description">استورد كتابًا وابدأ تسجيل قراءتك اليوم.</string>
+    <string name="dashboard_import_books">استيراد الكتب</string>
+    <string name="dashboard_import_short">استيراد</string>
+    <string name="dashboard_no_recent_title">اختر كتابًا للقراءة</string>
+    <string name="dashboard_no_recent_description">كتبك جاهزة. ستظهر الكتب المفتوحة هنا.</string>
+    <string name="dashboard_all_books">كل الكتب %1$d</string>
+    <string name="dashboard_back_to_summary">ملخص القراءة %1$d</string>
 </resources>

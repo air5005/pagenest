@@ -280,4 +280,23 @@
 
     <string name="speech_settings">语音朗读</string><string name="speech_back">返回</string><string name="speech_mode">朗读模式</string><string name="speech_mode_offline">离线</string><string name="speech_mode_online">在线</string><string name="speech_mode_auto">自动</string><string name="speech_key">Azure Speech Key</string><string name="speech_key_replace">覆盖 Azure Speech Key</string><string name="speech_region">Azure Region</string><string name="speech_save">保存</string><string name="speech_test_connection">测试连接</string><string name="speech_delete_key">删除密钥</string><string name="speech_previous">上一段</string><string name="speech_pause">暂停</string><string name="speech_play">播放</string><string name="speech_next">下一段</string><string name="speech_stop">停止</string><string name="speech_rate">语速：%1$.2f</string><string name="speech_pitch">音调：%1$.2f</string><string name="speech_timer_off">关闭定时</string><string name="speech_timer_minutes">%1$d 分钟</string>
     <string name="speech_locale">语言区域</string>
+    <string name="dashboard_title">今天读书了吗</string>
+    <string name="dashboard_reading_summary">阅读概览</string>
+    <string name="dashboard_today_reading">今日阅读</string>
+    <string name="dashboard_reading_streak">连续阅读</string>
+    <string name="dashboard_minutes_format">%1$d 分钟</string>
+    <string name="dashboard_days_format">%1$d 天</string>
+    <string name="dashboard_week_progress">本周 %1$d / %2$d 分钟</string>
+    <string name="dashboard_recent_reading">最近阅读</string>
+    <string name="dashboard_continue_reading">继续阅读</string>
+    <string name="dashboard_last_reading">%1$s · %2$s</string>
+    <string name="dashboard_book_cover">《%1$s》封面</string>
+    <string name="dashboard_empty_title">书架还没有书</string>
+    <string name="dashboard_empty_description">导入一本喜欢的书，从今天开始留下阅读足迹。</string>
+    <string name="dashboard_import_books">一键导入书籍</string>
+    <string name="dashboard_import_short">导入</string>
+    <string name="dashboard_no_recent_title">选择一本书开始阅读</string>
+    <string name="dashboard_no_recent_description">你的书已经准备好了，打开后会出现在最近阅读。</string>
+    <string name="dashboard_all_books">全部书籍 %1$d</string>
+    <string name="dashboard_back_to_summary">阅读概览 %1$d</string>
 </resources>
