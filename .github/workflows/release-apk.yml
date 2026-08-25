@@ -36,8 +36,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || test "${PIPESTATUS[1]}" -eq 0
-          sdkmanager \
+          sdkmanager_path="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          test -x "${sdkmanager_path}"
+          yes | "${sdkmanager_path}" --licenses >/dev/null || test "${PIPESTATUS[1]}" -eq 0
+          "${sdkmanager_path}" \
             "ndk;27.0.12077973" \
             "ndk;29.0.13599879"
 

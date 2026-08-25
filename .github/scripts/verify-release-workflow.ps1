@@ -17,7 +17,8 @@ $requirements = [ordered]@{
     'pinned artifact upload'      = 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
     'pinned artifact download'    = 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
     'JDK 17'                      = "java-version: '17'"
-    'Android SDK licenses'        = 'yes | sdkmanager --licenses'
+    'Android SDK manager path'    = 'sdkmanager_path="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"'
+    'Android SDK licenses'        = 'yes | "${sdkmanager_path}" --licenses'
     'app NDK version'             = 'ndk;27.0.12077973'
     'native library NDK version'  = 'ndk;29.0.13599879'
     'portable Gradle invocation'  = 'bash ./gradlew :app:assembleDebug --no-daemon'
