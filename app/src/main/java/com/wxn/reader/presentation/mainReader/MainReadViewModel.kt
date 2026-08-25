@@ -56,6 +56,9 @@ import com.wxn.reader.domain.use_case.reading_progress.GetReadingProgressUseCase
 import com.wxn.reader.domain.use_case.reading_progress.SetReadingProgressUseCase
 import com.wxn.reader.presentation.bookReader.BookReaderUiState
 import com.wxn.reader.presentation.bookReader.BookReaderUiState.LOAD_CHAPTER_SUCCESS
+import com.wxn.reader.presentation.mainReader.chrome.ReaderChromeEvent
+import com.wxn.reader.presentation.mainReader.chrome.ReaderChromeReducer
+import com.wxn.reader.presentation.mainReader.chrome.ReaderChromeState
 import com.wxn.reader.ui.theme.stringResource
 import com.wxn.reader.util.LanguageInfo
 import com.wxn.reader.util.LanguageUtil
@@ -67,9 +70,11 @@ import com.air5005.pagenest.speech.model.SpeechPlaybackState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -137,9 +142,11 @@ class MainReadViewModel @Inject constructor(
     private val _currentBookId = MutableStateFlow<Long?>(null)
     val currentBookId: StateFlow<Long?> = _currentBookId.asStateFlow()
 
-    //显示总的菜单弹窗
-    private val _showMenu = MutableStateFlow<Boolean>(false)
-    val showMenu: StateFlow<Boolean> = _showMenu.asStateFlow()
+    private val _readerChromeState = MutableStateFlow(ReaderChromeState())
+    val readerChromeState: StateFlow<ReaderChromeState> = _readerChromeState.asStateFlow()
+    val showMenu: StateFlow<Boolean> = _readerChromeState
+        .map { state -> state.controlsVisible }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     //显示章节列表
     private val _isChaptersDrawerOpen = MutableStateFlow<Boolean>(false)
@@ -298,7 +305,9 @@ class MainReadViewModel @Inject constructor(
 
         viewModelScope.launch {
             readerSpeechManager.playbackSnapshot.collect { snapshot ->
-                _isTtsOn.value = snapshot.playbackState !is SpeechPlaybackState.Idle
+                val isSpeechActive = snapshot.playbackState !is SpeechPlaybackState.Idle
+                _isTtsOn.value = isSpeechActive
+                dispatchChrome(ReaderChromeEvent.SpeechSessionChanged(isSpeechActive))
             }
         }
 
@@ -380,7 +389,7 @@ class MainReadViewModel @Inject constructor(
     }
 
     override fun onCenterClick() {
-        _showMenu.value = !_showMenu.value
+        dispatchChrome(ReaderChromeEvent.CenterTapped)
     }
 
     fun onChapterClick(chapter: BookChapter) {
@@ -887,7 +896,31 @@ class MainReadViewModel @Inject constructor(
     }
 
     fun onToolbarsVisibilityChanged() {
-        _showMenu.value = !_showMenu.value
+        dispatchChrome(ReaderChromeEvent.CenterTapped)
+    }
+
+    fun setToolbarsVisible(visible: Boolean) {
+        dispatchChrome(ReaderChromeEvent.ControlsVisibilityChanged(visible))
+    }
+
+    fun onReaderInteraction() {
+        dispatchChrome(ReaderChromeEvent.Interacted)
+    }
+
+    fun setBlockingOverlayVisible(visible: Boolean) {
+        dispatchChrome(ReaderChromeEvent.BlockingOverlayChanged(visible))
+    }
+
+    fun setSpeechPanelExpanded(expanded: Boolean) {
+        dispatchChrome(ReaderChromeEvent.SpeechPanelChanged(expanded))
+    }
+
+    fun onChromeAutoHide(generation: Long) {
+        dispatchChrome(ReaderChromeEvent.AutoHide(generation))
+    }
+
+    private fun dispatchChrome(event: ReaderChromeEvent) {
+        _readerChromeState.update { state -> ReaderChromeReducer.reduce(state, event) }
     }
 
     fun noteDialogOpen(open: Boolean = true) {

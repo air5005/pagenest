@@ -90,4 +90,19 @@ class ReaderChromeReducerTest {
         assertFalse(stopped.speechPanelExpanded)
         assertFalse(stopped.speechMiniPlayerVisible)
     }
+
+    @Test
+    fun `explicit visibility update is idempotent and refreshes a shown menu`() {
+        val shown = ReaderChromeReducer.reduce(
+            initial,
+            ReaderChromeEvent.ControlsVisibilityChanged(visible = true),
+        )
+        val refreshed = ReaderChromeReducer.reduce(
+            shown,
+            ReaderChromeEvent.ControlsVisibilityChanged(visible = true),
+        )
+
+        assertTrue(refreshed.controlsVisible)
+        assertTrue(refreshed.interactionGeneration > shown.interactionGeneration)
+    }
 }

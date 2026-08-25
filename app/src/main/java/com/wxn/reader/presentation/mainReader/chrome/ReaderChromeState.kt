@@ -14,6 +14,7 @@ data class ReaderChromeState(
 sealed interface ReaderChromeEvent {
     data object CenterTapped : ReaderChromeEvent
     data object Interacted : ReaderChromeEvent
+    data class ControlsVisibilityChanged(val visible: Boolean) : ReaderChromeEvent
     data class BlockingOverlayChanged(val visible: Boolean) : ReaderChromeEvent
     data class SpeechSessionChanged(val active: Boolean) : ReaderChromeEvent
     data class SpeechPanelChanged(val expanded: Boolean) : ReaderChromeEvent
@@ -33,6 +34,11 @@ object ReaderChromeReducer {
         )
 
         ReaderChromeEvent.Interacted -> state.copy(
+            interactionGeneration = state.interactionGeneration + 1,
+        )
+
+        is ReaderChromeEvent.ControlsVisibilityChanged -> state.copy(
+            controlsVisible = event.visible,
             interactionGeneration = state.interactionGeneration + 1,
         )
 
