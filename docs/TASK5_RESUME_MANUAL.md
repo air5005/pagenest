@@ -17,6 +17,8 @@ git status --short
 f7842a178a9285cec5c2a10dfbe45f0c6ca0ae49
 ```
 
+Phase 1 发布提交为 `f828e6dbe5aecb4e0ccfca0d2dad4e6a10ca7760`，对应 GitHub Release `pagenest-v1.6.260825`。续接时始终以最新的 `origin/master` 为准。
+
 ## 2. 已完成的 UI Refresh Phase 1
 
 - PageNest 蓝绿设计令牌与主题基础。
@@ -24,6 +26,7 @@ f7842a178a9285cec5c2a10dfbe45f0c6ca0ae49
 - 中文无状态首次启动引导及设备端 Compose UI 测试。
 - 可选示例书解析故障边界；x86_64 缺少 `libappmobi.so` 时首页不再崩溃。
 - API 36 模拟器明暗模式、目录选择返回、跳过和重启恢复验收。
+- GitHub Release `PageNest 1.6.260825` 已发布，APK 与远端校验清单一致。
 
 设计与执行依据：
 

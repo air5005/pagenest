@@ -66,4 +66,16 @@ API 36 x86_64 复验中，首次跳过、强制停止和重新启动后 `MainAct
 - MOBI 原生解析目前仅随 ARM64/ARMv7 架构交付；x86_64 模拟器只验证安全降级，不验证 MOBI 正常解析。
 - 小米 HyperOS 3 真机安装、后台语音阅读和 60 分钟矩阵仍需目标手机补证。
 - 下一开发入口：**UI Refresh Phase 2：阅读仪表盘首页**。
-- 当前版本具备发布资格：新图标和中文引导已安装验证，API 36 首页崩溃回归已修复。
+- 新图标和中文引导已安装验证，API 36 首页崩溃回归已修复。
+
+## GitHub Release
+
+- Release：`PageNest 1.6.260825`。
+- 标签：`pagenest-v1.6.260825`。
+- 发布源提交：`f828e6dbe5aecb4e0ccfca0d2dad4e6a10ca7760`。
+- GitHub Actions：`Archive Android APK Release` 成功。
+- 远端 APK：`PageNest-pagenest-v1.6.260825-debug.apk`，124,982,566 字节。
+- 包内版本：`versionCode=7`，`versionName=1.6.260825`。
+- 远端 APK SHA-256：`4486549B5B15377AF7B953776AEE808A27C3CE32F0F3410A1D1ACBCEA4D25114`。
+- `SHA256SUMS.txt` 声明值与下载后实算值一致。
+- Release 页面：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.6.260825>
