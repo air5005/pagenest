@@ -1,6 +1,6 @@
 # PageNest 续接手册（重启或换机）
 
-本仓库直接在 `master` 开发。UI Refresh Phase 4 的功能、模拟器真实阅读验收与 Release 已经完成，下一优先入口是 **UI Refresh Phase 5：HyperOS 3 真机兼容性验收与剩余格式验证**。
+本仓库直接在 `master` 开发。UI Refresh Phase 4 的功能、模拟器真实阅读验收与 Release 已经完成；Online Discovery Phase 1 的多来源目录核心也已完成。当前优先入口是 **Online Discovery Phase 2：发现页面、详情页面、Open Library 丰富信息与四项底部导航**。HyperOS 3 真机验收在目标手机连接后继续。
 
 ## 1. 恢复工作区
 
@@ -45,6 +45,9 @@ Phase 4 已发布为 GitHub Release `pagenest-v1.9.260825`。完整验证与远�
 - EPUB 核心解析仍依赖旧原生库；x86_64 失败已明确记录，ARM64 HyperOS 3 真机结论保留待验。
 - 发布树的 431 个 JVM 测试、5 个 API 36 设备测试、APK 构建与 Lint 门禁已通过。
 - GitHub Release `PageNest 1.9.260825` 已发布，GitHub 资产摘要与 `SHA256SUMS.txt` 一致。
+- Online Discovery Phase 1 已建立 Gutendex、Project Gutenberg OPDS、Standard Ebooks OPDS、安全 XML 解析、跨源去重/RRF、4 MiB 原子缓存和来源级容错。
+- 在线发现新增 44 个测试；完整工程 469 个 JVM 测试、调试 APK、测试 APK和 Lint 门禁通过。
+- Standard Ebooks 完整 OPDS 可能需要会员身份或开源项目授权；未配置凭据时按可用性降级，不阻断其他来源。
 
 设计与执行依据：
 
@@ -60,8 +63,24 @@ Phase 4 已发布为 GitHub Release `pagenest-v1.9.260825`。完整验证与远�
 - `docs/superpowers/specs/2026-08-25-pagenest-import-compatibility-design.md`
 - `docs/superpowers/plans/2026-08-25-pagenest-import-compatibility-phase4.md`
 - `docs/testing/import-compatibility-phase4.md`
+- `docs/superpowers/specs/2026-08-25-pagenest-online-discovery-design.md`
+- `docs/superpowers/plans/2026-08-25-pagenest-online-discovery-phase1-catalog-core.md`
+- `docs/testing/online-discovery-phase1.md`
 
 ## 3. 下一开发入口
+
+继续 **Online Discovery Phase 2**。按 Superpower 流程先写独立实施计划，再按 TDD 分任务推进：
+
+1. Open Library 仅用于低频元数据丰富，并遵守缓存及限速要求；没有明确免费全文时只显示“查看来源”。
+2. 增加“书架 / 发现 / 听书 / 我的”四项底部导航。
+3. 实现蓝绿渐变发现首页、推荐/热门/最新/来源标签、中英文筛选、分类快捷入口、横向精选和纵向榜单。
+4. 实现书籍详情页，显示来源、版权、格式和可用性。
+5. Phase 2 不直接下载在线书籍；“加入书架/开始阅读”的安全下载与私有书库导入留到独立 Phase 3。
+6. 每个任务红灯、绿灯、回归验证后分别提交并推送 `origin/master`。
+
+Phase 1 的证据与限制见 `docs/testing/online-discovery-phase1.md`。
+
+## 4. HyperOS 3 真机入口（设备连接后）
 
 继续 **UI Refresh Phase 5：HyperOS 3 真机兼容性验收与剩余格式验证**。优先完成：
 
@@ -85,7 +104,7 @@ Phase 5 Task 1 已完成：真机预检模块、命令包装器和 7 个快照�
 $env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
 ```
 
-## 4. 仍待真机完成的独立事项
+## 5. 仍待真机完成的独立事项
 
 语音阅读 Task 9 的电脑端门禁和文档已经完成，但目标 HyperOS 3 手机的后台朗读与 60 分钟矩阵仍需要真机：
 
@@ -94,7 +113,7 @@ $env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
 
 连接手机后先运行 `adb devices -l`。只有目标手机显示为 `device`，才记录 HyperOS 3 真机结论。
 
-## 5. 阶段交付规则
+## 6. 阶段交付规则
 
 ```powershell
 git diff --check
