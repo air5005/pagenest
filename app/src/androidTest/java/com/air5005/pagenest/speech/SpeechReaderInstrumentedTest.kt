@@ -79,24 +79,29 @@ class SpeechReaderInstrumentedTest {
             addTextPage("second PDF page")
         }
         val readable = PdfSpeechContentSource(11, PdfSpeechDocument(readableDocument), SpeechSegmenter())
-
-        assertEquals(0, readable.current()?.position?.pageIndex)
-        assertEquals(1, readable.next()?.position?.pageIndex)
-        assertNull(readable.next())
-        readable.close()
+        try {
+            assertEquals(0, readable.current()?.position?.pageIndex)
+            assertEquals(1, readable.next()?.position?.pageIndex)
+            assertNull(readable.next())
+        } finally {
+            readable.close()
+        }
 
         val scannedDocument = PDDocument().apply {
             addPage(PDPage())
             addPage(PDPage())
         }
         val scanned = PdfSpeechContentSource(12, PdfSpeechDocument(scannedDocument), SpeechSegmenter())
-        assertEquals(PdfSpeechAvailability.SCANNED, scanned.availability())
-        assertNull(scanned.current())
-        assertEquals(
-            "此 PDF 为扫描版，暂不支持语音朗读",
-            SpeechControlPolicy.messageFor(SpeechError.NoExtractableText),
-        )
-        scanned.close()
+        try {
+            assertEquals(PdfSpeechAvailability.SCANNED, scanned.availability())
+            assertNull(scanned.current())
+            assertEquals(
+                "此 PDF 为扫描版，暂不支持语音朗读",
+                SpeechControlPolicy.messageFor(SpeechError.NoExtractableText),
+            )
+        } finally {
+            scanned.close()
+        }
     }
 
     private fun PDDocument.addTextPage(text: String) {

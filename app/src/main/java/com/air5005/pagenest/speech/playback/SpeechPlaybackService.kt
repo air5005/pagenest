@@ -89,7 +89,9 @@ class SpeechPlaybackService : MediaSessionService() {
         setPlaybackActive(false)
         if (::mediaSession.isInitialized) mediaSession.release()
         if (::player.isInitialized) player.release()
-        if (::controller.isInitialized) controller.stop()
+        // Explicit Stop already terminates the session. Unexpected service destruction pauses
+        // the process-wide session so recreation never auto-speaks or loses its position.
+        if (::controller.isInitialized) controller.pause()
         super.onDestroy()
     }
 
