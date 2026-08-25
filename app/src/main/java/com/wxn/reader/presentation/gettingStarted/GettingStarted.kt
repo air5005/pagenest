@@ -4,12 +4,15 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -51,32 +54,34 @@ fun GettingStartedScreen(
                 navController.popBackStack()
                 navController.navigate(Screens.HomeScreen.route)
             }
-        }
+    }
 
     Scaffold { innerPadding ->
-        GettingStartedContent(
-            buttonsEnabled = isButtonsEnabled,
-            onSelectDirectory = { showSelectDirectoryDialog = true },
-            onSkip = {
-                viewModel.skipGettingStarted()
-                navController.popBackStack()
-                navController.navigate(Screens.HomeScreen.route)
-            },
-        )
-
-        if (showSelectDirectoryDialog) {
-            StorageAccessDialog(
-                title = stringResource(R.string.select_scan_directory),
-                message = stringResource(R.string.please_select_a_directory_where_your_ebooks_are_stored_you_can_edit_this_later_in_settings),
-                confirmButtonText = stringResource(R.string.select),
-                onConfirm = {
-                    if (appPreferences != null) {
-                        showSelectDirectoryDialog = false
-                        getDirectoryPermissionLauncher.launch(null)
-                    }
+        Box(modifier = Modifier.padding(innerPadding)) {
+            GettingStartedContent(
+                buttonsEnabled = isButtonsEnabled,
+                onSelectDirectory = { showSelectDirectoryDialog = true },
+                onSkip = {
+                    viewModel.skipGettingStarted()
+                    navController.popBackStack()
+                    navController.navigate(Screens.HomeScreen.route)
                 },
-                onDismiss = { showSelectDirectoryDialog = false },
             )
+
+            if (showSelectDirectoryDialog) {
+                StorageAccessDialog(
+                    title = stringResource(R.string.select_scan_directory),
+                    message = stringResource(R.string.please_select_a_directory_where_your_ebooks_are_stored_you_can_edit_this_later_in_settings),
+                    confirmButtonText = stringResource(R.string.select),
+                    onConfirm = {
+                        if (appPreferences != null) {
+                            showSelectDirectoryDialog = false
+                            getDirectoryPermissionLauncher.launch(null)
+                        }
+                    },
+                    onDismiss = { showSelectDirectoryDialog = false },
+                )
+            }
         }
     }
 }
