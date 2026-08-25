@@ -56,7 +56,19 @@ $env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
 - Open Library 的全文/借阅字段只作为描述，不生成获取动作。
 - 所有来源跳转均由受信任 ID 生成 HTTPS 白名单页面，不打开服务响应携带的任意 URL。
 
-## 5. 下一续接入口
+## 5. GitHub Release 归档
+
+- Release：`pagenest-v1.10.260826`
+- 发布页：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.10.260826>
+- GitHub Actions：<https://github.com/air5005/pagenest/actions/runs/32877547956>，构建与发布任务均成功。
+- 远端 APK：`PageNest-pagenest-v1.10.260826-debug.apk`，125,819,982 字节。
+- 远端 SHA-256：`4046e6dfabd0c91490916a1102f8ca29b015732aa32c72fc3cad530c0f005430`。
+- 下载后的实际摘要与远端 `SHA256SUMS.txt` 完全一致，GitHub 资产摘要也一致。
+- 远端 APK 元数据再次确认为包名 `com.air5005.pagenest`、versionCode 11、versionName `1.10.260826`、minSdk 29、targetSdk 36。
+
+本机和 GitHub Actions 使用不同构建环境，调试签名 APK 的字节大小及摘要可以不同；发布归档以 Release 内 APK 与同一 Release 的 `SHA256SUMS.txt` 匹配为验收依据。
+
+## 6. 下一续接入口
 
 下一阶段是 **Online Discovery Phase 3：安全下载、导入书架并打开阅读器**。进入实现前先完成独立设计与 TDD 计划，至少覆盖：
 
@@ -71,4 +83,3 @@ $env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
 
 - `docs/superpowers/specs/2026-08-25-pagenest-online-discovery-design.md`
 - `docs/superpowers/plans/2026-08-26-pagenest-online-discovery-phase2-ui.md`
-
