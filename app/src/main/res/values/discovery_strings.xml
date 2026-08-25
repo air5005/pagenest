@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="discovery_title">在线发现</string>
+    <string name="discovery_subtitle">发现值得读的开放好书</string>
+    <string name="discovery_search_hint">搜索书名或作者</string>
+    <string name="discovery_search">搜索</string>
+    <string name="discovery_tab_recommended">推荐</string>
+    <string name="discovery_tab_popular">热门</string>
+    <string name="discovery_tab_latest">最新</string>
+    <string name="discovery_tab_sources">来源</string>
+    <string name="discovery_language_all">全部</string>
+    <string name="discovery_language_chinese">中文</string>
+    <string name="discovery_language_english">English</string>
+    <string name="discovery_stale_cache">当前显示离线缓存</string>
+    <string name="discovery_partial_sources">部分在线来源暂时不可用</string>
+    <string name="discovery_empty">暂时没有找到书籍</string>
+    <string name="discovery_retry">重试</string>
+    <string name="discovery_inspiration">今日灵感</string>
+    <string name="discovery_inspiration_body">从公共领域经典开始，让阅读自然发生</string>
+    <string name="discovery_curated">编辑推荐</string>
+    <string name="discovery_curated_subtitle">适合现在开始阅读</string>
+    <string name="discovery_ranking">热门榜单</string>
+    <string name="discovery_ranking_subtitle">来自可信开放书库</string>
+    <string name="discovery_online_sources">在线来源</string>
+    <string name="discovery_source_available">可用</string>
+    <string name="discovery_source_authorization_required">需要授权</string>
+    <string name="discovery_source_unavailable">不可用</string>
+    <string name="discovery_detail_title">图书详情</string>
+    <string name="discovery_back">返回</string>
+    <string name="discovery_cover_description">%1$s封面</string>
+    <string name="discovery_first_published">首次出版：%1$d</string>
+    <string name="discovery_phase_three_notice">安全下载与导入将在下一阶段开放</string>
+    <string name="discovery_view_source">查看来源</string>
+    <string name="discovery_rights_public_domain">公共领域</string>
+    <string name="discovery_rights_free_full">免费全文</string>
+    <string name="discovery_rights_preview">仅预览</string>
+    <string name="discovery_rights_borrow">可借阅</string>
+    <string name="discovery_rights_unknown">版权未知</string>
+</resources>
+

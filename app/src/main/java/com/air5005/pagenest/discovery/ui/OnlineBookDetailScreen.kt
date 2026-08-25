@@ -28,11 +28,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.air5005.pagenest.discovery.model.OnlineBook
 import com.air5005.pagenest.discovery.model.RightsStatus
 import com.air5005.pagenest.discovery.openlibrary.OpenLibraryMetadata
+import com.wxn.reader.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,10 +53,11 @@ fun OnlineBookDetailScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                title = { Text("图书详情") },
+                title = { Text(stringResource(R.string.discovery_detail_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = stringResource(R.string.discovery_back))
                     }
                 },
             )
@@ -89,7 +92,7 @@ fun OnlineBookDetailScreen(
             }
             metadata?.firstPublishYear?.let {
                 Spacer(Modifier.height(14.dp))
-                Text("首次出版：$it")
+                Text(stringResource(R.string.discovery_first_published, it))
             }
             book.summary?.takeIf(String::isNotBlank)?.let {
                 Spacer(Modifier.height(22.dp))
@@ -97,7 +100,7 @@ fun OnlineBookDetailScreen(
             }
             Spacer(Modifier.height(24.dp))
             Text(
-                "安全下载与导入将在下一阶段开放",
+                stringResource(R.string.discovery_phase_three_notice),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -109,16 +112,17 @@ fun OnlineBookDetailScreen(
                 },
             ) {
                 Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null)
-                Text("查看来源", Modifier.padding(start = 8.dp))
+                Text(stringResource(R.string.discovery_view_source), Modifier.padding(start = 8.dp))
             }
         }
     }
 }
 
+@Composable
 private fun RightsStatus.label() = when (this) {
-    RightsStatus.PUBLIC_DOMAIN -> "公共领域"
-    RightsStatus.FREE_FULL -> "免费全文"
-    RightsStatus.PREVIEW_ONLY -> "仅预览"
-    RightsStatus.BORROW_ONLY -> "可借阅"
-    RightsStatus.UNKNOWN -> "版权未知"
+    RightsStatus.PUBLIC_DOMAIN -> stringResource(R.string.discovery_rights_public_domain)
+    RightsStatus.FREE_FULL -> stringResource(R.string.discovery_rights_free_full)
+    RightsStatus.PREVIEW_ONLY -> stringResource(R.string.discovery_rights_preview)
+    RightsStatus.BORROW_ONLY -> stringResource(R.string.discovery_rights_borrow)
+    RightsStatus.UNKNOWN -> stringResource(R.string.discovery_rights_unknown)
 }

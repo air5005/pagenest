@@ -25,11 +25,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.air5005.pagenest.discovery.model.OnlineBook
+import com.wxn.reader.R
 
 internal val DiscoveryGradient = Brush.linearGradient(
     listOf(Color(0xFF2478F2), Color(0xFF13B8A6)),
@@ -56,7 +58,7 @@ internal fun DiscoveryCover(
         if (coverUrl != null) {
             AsyncImage(
                 model = coverUrl,
-                contentDescription = "${book.title}封面",
+                contentDescription = stringResource(R.string.discovery_cover_description, book.title),
                 modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
             )

@@ -319,4 +319,5 @@
     <string name="reader_speech_next">Nächster Absatz</string>
     <string name="reader_speech_stop">Vorlesen beenden</string>
     <string name="reader_speech_collapse">Spracheinstellungen einklappen</string>
+    <string name="discovery">Entdecken</string>
 </resources>

@@ -16,11 +16,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.filled.Headset
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.ModeEdit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
@@ -55,6 +57,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.collectAsLazyPagingItems
 import coil3.compose.rememberAsyncImagePainter
+import com.air5005.pagenest.discovery.ui.DiscoveryRoute
 import com.wxn.base.util.Logger
 import com.wxn.reader.R
 import com.wxn.reader.navigation.LocalNavController
@@ -87,6 +90,8 @@ fun HomeScreen(
     val snackbarState by viewModel.snackbarState.collectAsStateWithLifecycle()
 
     val selectedTabRow by viewModel.selectedTabRow.collectAsStateWithLifecycle()
+    val currentDestination = HomeTopLevelDestination.fromIndex(selectedTabRow)
+        ?: HomeTopLevelDestination.SHELF
     var selectedTab by viewModel.selectedTab
 
 //    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -108,7 +113,8 @@ fun HomeScreen(
     val lastOpenBookRoute by viewModel.openLastBookRoute.collectAsStateWithLifecycle()
 
     BackHandler(
-        enabled = showAllBooks && selectedTabRow == 0 && !selectionMode && !searchMode,
+        enabled = showAllBooks && currentDestination == HomeTopLevelDestination.SHELF &&
+            !selectionMode && !searchMode,
     ) {
         showAllBooks = false
         selectedTab = 0
@@ -158,7 +164,10 @@ fun HomeScreen(
             Scaffold(
                 topBar = {
                     AnimatedVisibility(
-                        visible = searchMode && (showAllBooks || selectedTabRow != 0),
+                        visible = searchMode && (
+                            currentDestination == HomeTopLevelDestination.AUDIO ||
+                                currentDestination == HomeTopLevelDestination.SHELF && showAllBooks
+                            ),
                         enter = slideInHorizontally(initialOffsetX = { it }),
                         exit = slideOutHorizontally(targetOffsetX = { it })
                     ) {
@@ -177,7 +186,10 @@ fun HomeScreen(
                         )
                     }
                     AnimatedVisibility(
-                        visible = !searchMode && (showAllBooks || selectedTabRow != 0),
+                        visible = !searchMode && (
+                            currentDestination == HomeTopLevelDestination.AUDIO ||
+                                currentDestination == HomeTopLevelDestination.SHELF && showAllBooks
+                            ),
                         enter = slideInHorizontally(initialOffsetX = { -it }),
                         exit = slideOutHorizontally(targetOffsetX = { -it })
                     ) {
@@ -225,41 +237,18 @@ fun HomeScreen(
                         enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
                         exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
                     ) {
-                        NavigationBar {
-                            NavigationBarItem(
-                                icon = { Icon(Icons.AutoMirrored.Rounded.MenuBook, contentDescription = "Ebooks") },
-                                label = { Text(
-                                    stringResource(R.string.ebooks),
-                                    textAlign = TextAlign.Center
-                                ) },
-                                selected = selectedTabRow == 0,
-                                onClick = {
-                                    viewModel.updateCurrentTabRow(0)
+                        HomeNavigationBar(currentDestination) { destination ->
+                            viewModel.updateCurrentTabRow(destination.index)
+                            when (destination) {
+                                HomeTopLevelDestination.SHELF -> {
                                     showAllBooks = false
                                     selectedTab = 0
                                 }
-                            )
-                            NavigationBarItem(
-                                icon = { Icon(Icons.Default.Headset, contentDescription = "AudioBooks") },
-                                label = { Text(stringResource(R.string.audio_books),
-                                    textAlign = TextAlign.Center)
-                                        },
-                                selected = selectedTabRow == 1,
-                                onClick = {
-                                    viewModel.updateCurrentTabRow(1)
-                                    showAllBooks = true
-                                }
-                            )
-                            NavigationBarItem(
-                                icon = {
-                                    Icon(Icons.Default.Person, contentDescription = "Mine")
-                                },
-                                label = { Text(stringResource(R.string.mine),
-                                    textAlign = TextAlign.Center)
-                                        },
-                                selected = selectedTabRow == 2,
-                                onClick = { viewModel.updateCurrentTabRow(2) }
-                            )
+                                HomeTopLevelDestination.AUDIO -> showAllBooks = true
+                                HomeTopLevelDestination.DISCOVERY,
+                                HomeTopLevelDestination.MINE,
+                                -> Unit
+                            }
                         }
                     }
 
@@ -308,13 +297,13 @@ fun HomeScreen(
                 containerColor = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.onBackground,
             ) { innerPadding ->
-                if (selectedTabRow == 0 || selectedTabRow == 1) {
+                if (currentDestination.showsLibraryContent) {
                     HomeShelfsPanel(
                         innerPadding = innerPadding,
                         pagerState = pagerState,
                         viewModel = viewModel,
                         dashboardModel = dashboardState,
-                        showAllBooks = showAllBooks || selectedTabRow != 0,
+                        showAllBooks = showAllBooks || currentDestination == HomeTopLevelDestination.AUDIO,
                         onShowAllBooks = {
                             showAllBooks = true
                             selectedTab = 0
@@ -322,7 +311,9 @@ fun HomeScreen(
                         onImportClick = { showSelectDirectoryDialog = true },
                         onRecentBookClick = viewModel::openDashboardBook,
                     )
-                } else if (selectedTabRow == 2) {
+                } else if (currentDestination == HomeTopLevelDestination.DISCOVERY) {
+                    DiscoveryRoute(Modifier.padding(innerPadding))
+                } else if (currentDestination == HomeTopLevelDestination.MINE) {
                     HomeMinePanel(innerPadding, viewModel)
                 }
             }

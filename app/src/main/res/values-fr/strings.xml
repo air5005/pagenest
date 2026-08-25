@@ -317,4 +317,5 @@
     <string name="reader_speech_next">Paragraphe suivant</string>
     <string name="reader_speech_stop">Arrêter la lecture</string>
     <string name="reader_speech_collapse">Réduire les réglages vocaux</string>
+    <string name="discovery">Découvrir</string>
 </resources>

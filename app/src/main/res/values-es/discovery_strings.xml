@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="discovery_title">Online discovery</string>
+    <string name="discovery_subtitle">Discover open books worth reading</string>
+    <string name="discovery_search_hint">Search by title or author</string>
+    <string name="discovery_search">Search</string>
+    <string name="discovery_tab_recommended">For you</string>
+    <string name="discovery_tab_popular">Popular</string>
+    <string name="discovery_tab_latest">Latest</string>
+    <string name="discovery_tab_sources">Sources</string>
+    <string name="discovery_language_all">All</string>
+    <string name="discovery_language_chinese">Chinese</string>
+    <string name="discovery_language_english">English</string>
+    <string name="discovery_stale_cache">Showing offline cache</string>
+    <string name="discovery_partial_sources">Some online sources are unavailable</string>
+    <string name="discovery_empty">No books found</string>
+    <string name="discovery_retry">Retry</string>
+    <string name="discovery_inspiration">Daily inspiration</string>
+    <string name="discovery_inspiration_body">Start with a public-domain classic</string>
+    <string name="discovery_curated">Editors picks</string>
+    <string name="discovery_curated_subtitle">Great books to start now</string>
+    <string name="discovery_ranking">Popular books</string>
+    <string name="discovery_ranking_subtitle">From trusted open libraries</string>
+    <string name="discovery_online_sources">Online sources</string>
+    <string name="discovery_source_available">Available</string>
+    <string name="discovery_source_authorization_required">Authorization required</string>
+    <string name="discovery_source_unavailable">Unavailable</string>
+    <string name="discovery_detail_title">Book details</string>
+    <string name="discovery_back">Back</string>
+    <string name="discovery_cover_description">Cover of %1$s</string>
+    <string name="discovery_first_published">First published: %1$d</string>
+    <string name="discovery_phase_three_notice">Secure download and import are coming in the next phase</string>
+    <string name="discovery_view_source">View source</string>
+    <string name="discovery_rights_public_domain">Public domain</string>
+    <string name="discovery_rights_free_full">Free full text</string>
+    <string name="discovery_rights_preview">Preview only</string>
+    <string name="discovery_rights_borrow">Borrowable</string>
+    <string name="discovery_rights_unknown">Rights unknown</string>
+</resources>
+

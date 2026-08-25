@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.wxn.reader.R
+import com.wxn.reader.presentation.home.HomeTopLevelDestination
 import com.wxn.reader.data.model.AppPreferences
 import com.wxn.base.bean.Book
 import com.wxn.reader.data.model.Layout
@@ -127,9 +128,10 @@ fun CustomTopAppBar(
                     Text(
                         text =
                           when(selectedTabRow) {
-                              0 -> stringResource(R.string.ebooks)
-                              1 -> stringResource(R.string.audio_books)
-                              2 -> stringResource(R.string.mine)
+                              HomeTopLevelDestination.SHELF.index -> stringResource(R.string.ebooks)
+                              HomeTopLevelDestination.DISCOVERY.index -> stringResource(R.string.discovery)
+                              HomeTopLevelDestination.AUDIO.index -> stringResource(R.string.audio_books)
+                              HomeTopLevelDestination.MINE.index -> stringResource(R.string.mine)
                               else -> stringResource(R.string.app_name)
                           }
 //                            when (selectedTab) {
@@ -141,7 +143,10 @@ fun CustomTopAppBar(
 //                        modifier = Modifier.weight(1f),
 //                        style = MaterialTheme.typography.titleMedium
                     )
-                    AnimatedVisibility(visible = appPreferences.showEntries && (selectedTabRow == 0 || selectedTabRow == 1)) {
+                    AnimatedVisibility(
+                        visible = appPreferences.showEntries &&
+                            HomeTopLevelDestination.fromIndex(selectedTabRow)?.showsLibraryContent == true,
+                    ) {
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -166,7 +171,7 @@ fun CustomTopAppBar(
             }
         },
         actions = {
-            if (selectedTabRow == 0 || selectedTabRow == 1) {
+            if (HomeTopLevelDestination.fromIndex(selectedTabRow)?.showsLibraryContent == true) {
                 if (selectionMode) {
                     IconButton(onClick = {
                         selectAll()

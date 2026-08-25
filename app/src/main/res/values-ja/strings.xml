@@ -317,4 +317,5 @@
     <string name="reader_speech_next">次の段落</string>
     <string name="reader_speech_stop">読み上げを停止</string>
     <string name="reader_speech_collapse">音声設定を閉じる</string>
+    <string name="discovery">見つける</string>
 </resources>

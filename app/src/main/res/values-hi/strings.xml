@@ -318,4 +318,5 @@
     <string name="reader_speech_next">अगला अनुच्छेद</string>
     <string name="reader_speech_stop">पठन बंद करें</string>
     <string name="reader_speech_collapse">वॉइस सेटिंग समेटें</string>
+    <string name="discovery">खोजें</string>
 </resources>

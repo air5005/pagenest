@@ -316,4 +316,5 @@
     <string name="reader_speech_next">Párrafo siguiente</string>
     <string name="reader_speech_stop">Detener lectura</string>
     <string name="reader_speech_collapse">Contraer ajustes de voz</string>
+    <string name="discovery">Descubrir</string>
 </resources>

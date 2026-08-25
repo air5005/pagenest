@@ -317,4 +317,5 @@
     <string name="reader_speech_next">Следующий абзац</string>
     <string name="reader_speech_stop">Остановить чтение</string>
     <string name="reader_speech_collapse">Свернуть настройки речи</string>
+    <string name="discovery">Обзор</string>
 </resources>

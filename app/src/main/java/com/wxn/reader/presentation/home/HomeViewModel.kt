@@ -279,7 +279,7 @@ class HomeViewModel
                 val matchesSearch =
                     query.isBlank() || book.title.contains(query, ignoreCase = true)
                 val matchesShelf = shelf == null || book.id in shelfBookIds
-                val matchesTab = if (selectedTabRow == 1) {
+                val matchesTab = if (selectedTabRow == HomeTopLevelDestination.AUDIO.index) {
                     stringToFileType(book.fileType) == FileType.AUDIOBOOK
                 } else {
                     stringToFileType(book.fileType) != FileType.AUDIOBOOK

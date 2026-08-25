@@ -319,4 +319,5 @@
     <string name="reader_speech_next">الفقرة التالية</string>
     <string name="reader_speech_stop">إيقاف القراءة</string>
     <string name="reader_speech_collapse">طي إعدادات الصوت</string>
+    <string name="discovery">اكتشف</string>
 </resources>
