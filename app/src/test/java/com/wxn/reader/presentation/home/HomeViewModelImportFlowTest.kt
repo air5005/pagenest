@@ -10,6 +10,7 @@ import com.air5005.pagenest.library.importing.BookImportService
 import com.air5005.pagenest.library.importing.ImportRejection
 import com.air5005.pagenest.library.importing.ImportRequest
 import com.air5005.pagenest.library.importing.ImportResult
+import com.wxn.base.bean.Book
 import com.wxn.bookparser.FileParser
 import com.wxn.reader.BookApplication
 import com.wxn.reader.data.model.AppPreferences
@@ -18,10 +19,12 @@ import com.wxn.reader.domain.repository.PermissionRepository
 import com.wxn.reader.domain.use_case.books.DeleteBookByUriUseCase
 import com.wxn.reader.domain.use_case.books.DeleteBookUseCase
 import com.wxn.reader.domain.use_case.books.GetBookByIdUseCase
+import com.wxn.reader.domain.use_case.books.GetAllBooksUseCase
 import com.wxn.reader.domain.use_case.books.GetBookUrisUseCase
 import com.wxn.reader.domain.use_case.books.GetBooksUseCase
 import com.wxn.reader.domain.use_case.books.InsertBookUseCase
 import com.wxn.reader.domain.use_case.books.UpdateBookUseCase
+import com.wxn.reader.domain.use_case.reading_activity.GetAllReadingActivitiesUseCase
 import com.wxn.reader.domain.use_case.shelves.AddBookToShelfUseCase
 import com.wxn.reader.domain.use_case.shelves.AddShelfUseCase
 import com.wxn.reader.domain.use_case.shelves.GetBooksForShelfUseCase
@@ -71,6 +74,7 @@ class HomeViewModelImportFlowTest {
     private lateinit var application: Application
     private lateinit var service: BookImportService
     private lateinit var requestFactory: AndroidImportRequestFactory
+    private lateinit var getBookByIdUseCase: GetBookByIdUseCase
     private lateinit var viewModel: HomeViewModel
 
     @Before
@@ -82,8 +86,13 @@ class HomeViewModelImportFlowTest {
         }
         service = mockk()
         requestFactory = mockk()
+        getBookByIdUseCase = mockk(relaxed = true)
         val preferencesUtil = mockk<AppPreferencesUtil>()
         every { preferencesUtil.appPrefsFlow } returns flow { awaitCancellation() }
+        val getAllBooksUseCase = mockk<GetAllBooksUseCase>()
+        val getAllReadingActivitiesUseCase = mockk<GetAllReadingActivitiesUseCase>()
+        every { getAllBooksUseCase() } returns flow { awaitCancellation() }
+        coEvery { getAllReadingActivitiesUseCase() } returns flow { awaitCancellation() }
         viewModel = HomeViewModel(
             getBooksUseCase = mockk(relaxed = true),
             getBookUrisUseCase = mockk(relaxed = true),
@@ -91,7 +100,9 @@ class HomeViewModelImportFlowTest {
             updateBookUseCase = mockk(relaxed = true),
             deleteBookUseCase = mockk(relaxed = true),
             deleteBookByUriUseCase = mockk(relaxed = true),
-            getBookByIdUseCase = mockk(relaxed = true),
+            getBookByIdUseCase = getBookByIdUseCase,
+            getAllBooksUseCase = getAllBooksUseCase,
+            getAllReadingActivitiesUseCase = getAllReadingActivitiesUseCase,
             addShelfUseCase = mockk(relaxed = true),
             removeShelfUseCase = mockk(relaxed = true),
             getShelvesUseCase = mockk(relaxed = true),
@@ -124,6 +135,23 @@ class HomeViewModelImportFlowTest {
             ?.any { it.isActive }
             ?: false
         assertTrue("The initializer must suspend instead of failing", initializerIsActive)
+    }
+
+    @Test
+    fun dashboardBookClickPublishesExistingReaderRoute() {
+        coEvery { getBookByIdUseCase(42L) } returns dashboardBook(
+            id = 42L,
+            fileType = "pdf",
+            filePath = "content://books/reading copy.pdf",
+        )
+
+        viewModel.openDashboardBook(42L)
+        mainDispatcher.scheduler.runCurrent()
+
+        assertEquals(
+            "pdf_reader_screen/42/content%3A%2F%2Fbooks%2Freading%20copy.pdf",
+            viewModel.openLastBookRoute.value,
+        )
     }
 
     @Test
@@ -275,6 +303,21 @@ class HomeViewModelImportFlowTest {
     private fun request(displayName: String) = ImportRequest(displayName) {
         error("The mocked service must not open the request")
     }
+
+    private fun dashboardBook(id: Long, fileType: String, filePath: String) = Book(
+        id = id,
+        title = "Dashboard Book",
+        author = "PageNest",
+        description = null,
+        filePath = filePath,
+        coverImage = null,
+        scrollIndex = 0,
+        scrollOffset = 0,
+        progress = 10f,
+        lastOpened = 1L,
+        category = null,
+        fileType = fileType,
+    )
 
     private suspend fun awaitState(predicate: () -> Boolean) {
         withTimeout(5_000L) {

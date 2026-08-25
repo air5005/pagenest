@@ -65,9 +65,16 @@ import java.util.concurrent.CancellationException
 import javax.inject.Inject
 import com.wxn.reader.domain.repository.PermissionRepository
 import com.wxn.reader.domain.use_case.books.GetBookByIdUseCase
+import com.wxn.reader.domain.use_case.books.GetAllBooksUseCase
+import com.wxn.reader.domain.use_case.reading_activity.GetAllReadingActivitiesUseCase
 import com.wxn.reader.navigation.Screens
 import com.wxn.reader.util.DocumentUtil
 import androidx.core.net.toUri
+import com.wxn.reader.presentation.home.dashboard.HomeDashboardCalculator
+import com.wxn.reader.presentation.home.dashboard.HomeDashboardModel
+import com.wxn.reader.presentation.home.dashboard.observeHomeDashboard
+import java.time.Clock
+import java.time.ZoneId
 
 @HiltViewModel
 class HomeViewModel
@@ -79,6 +86,8 @@ class HomeViewModel
     private val deleteBookUseCase: DeleteBookUseCase,
     private val deleteBookByUriUseCase: DeleteBookByUriUseCase,
     private val getBookByIdUseCase : GetBookByIdUseCase,
+    private val getAllBooksUseCase: GetAllBooksUseCase,
+    private val getAllReadingActivitiesUseCase: GetAllReadingActivitiesUseCase,
 
     private val addShelfUseCase: AddShelfUseCase,
     private val removeShelfUseCase: RemoveShelfUseCase,
@@ -146,6 +155,9 @@ class HomeViewModel
     private val _openLastBookRoute = MutableStateFlow<String>("")
     val openLastBookRoute :StateFlow<String> = _openLastBookRoute.asStateFlow()
 
+    private val _dashboardState = MutableStateFlow(HomeDashboardModel())
+    val dashboardState: StateFlow<HomeDashboardModel> = _dashboardState.asStateFlow()
+
     private var snackbarJob: Job? = null
 
     var showLayoutModal = mutableStateOf(false)
@@ -154,6 +166,29 @@ class HomeViewModel
 
     init {
         initializeApp()
+        observeDashboard()
+    }
+
+    private fun observeDashboard() {
+        viewModelScope.launch {
+            val readingActivities = try {
+                getAllReadingActivitiesUseCase()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                Logger.e("HomeViewModel: reading dashboard activity source unavailable")
+                kotlinx.coroutines.flow.flowOf(emptyList())
+            }
+            observeHomeDashboard(
+                books = getAllBooksUseCase(),
+                activities = readingActivities,
+                calculator = HomeDashboardCalculator(),
+                clock = Clock.systemDefaultZone(),
+                zoneId = ZoneId.systemDefault(),
+            ).collect { dashboard ->
+                _dashboardState.value = dashboard
+            }
+        }
     }
 
     private fun initializeApp() {
@@ -780,6 +815,14 @@ class HomeViewModel
             getBookByIdUseCase(lastOpenBookId)?.let { lastBook ->
                 Logger.d("HomeViewModel::openLastOpenBook::lastBook[$lastBook]")
                 openBook(lastBook, onRouteNav)
+            }
+        }
+    }
+
+    fun openDashboardBook(bookId: Long) {
+        viewModelScope.launch {
+            getBookByIdUseCase(bookId)?.let { book ->
+                openBook(book) { route -> _openLastBookRoute.value = route }
             }
         }
     }

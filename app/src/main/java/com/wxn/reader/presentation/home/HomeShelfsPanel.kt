@@ -42,9 +42,21 @@ import com.wxn.reader.data.dto.FileType
 import com.wxn.reader.data.dto.FileType.Companion.stringToFileType
 import com.wxn.reader.navigation.LocalNavController
 import com.wxn.reader.navigation.Screens
+import com.wxn.reader.presentation.home.dashboard.HomeDashboardContent
+import com.wxn.reader.presentation.home.dashboard.HomeDashboardModel
 
 
-@Composable fun HomeShelfsPanel(innerPadding: PaddingValues, pagerState: PagerState, viewModel: HomeViewModel) {
+@Composable
+fun HomeShelfsPanel(
+    innerPadding: PaddingValues,
+    pagerState: PagerState,
+    viewModel: HomeViewModel,
+    dashboardModel: HomeDashboardModel,
+    showAllBooks: Boolean,
+    onShowAllBooks: () -> Unit,
+    onImportClick: () -> Unit,
+    onRecentBookClick: (Long) -> Unit,
+) {
     var selectedTab by viewModel.selectedTab
     val shelves by viewModel.shelves.collectAsStateWithLifecycle()
     val books = viewModel.books.collectAsLazyPagingItems()
@@ -58,34 +70,45 @@ import com.wxn.reader.navigation.Screens
     var showMetadataModal by viewModel.showMetadataModal
 
     if (appPreferences != null) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            Shelves(
-                viewModel = viewModel,
-                appPreferences = appPreferences!!,
-                shelves = shelves,
-                selectedTab = selectedTab,
-                onTabSelected = { index ->
-                    selectedTab = index
-                },
-                onAddShelf = { newShelfName ->
-                    viewModel.addShelf(newShelfName)
-                },
-            )
-            val isAddingBook by viewModel.isAddingBooks.collectAsState()
-            HorizontalPager(
-                userScrollEnabled = !isAddingBook,
-                state = pagerState,
+        if (!showAllBooks) {
+            HomeDashboardContent(
+                model = dashboardModel,
+                expanded = false,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-    //                .background(color = MaterialTheme.colorScheme.background)
-            ) { index ->
-                Logger.d("HomeScreen:index=$index")
-                Box(modifier = Modifier.fillMaxSize()) {
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                onRecentBookClick = onRecentBookClick,
+                onImportClick = onImportClick,
+                onAllBooksClick = onShowAllBooks,
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                Shelves(
+                    viewModel = viewModel,
+                    appPreferences = appPreferences!!,
+                    shelves = shelves,
+                    selectedTab = selectedTab,
+                    onTabSelected = { index ->
+                        selectedTab = index
+                    },
+                    onAddShelf = { newShelfName ->
+                        viewModel.addShelf(newShelfName)
+                    },
+                )
+                val isAddingBook by viewModel.isAddingBooks.collectAsState()
+                HorizontalPager(
+                    userScrollEnabled = !isAddingBook,
+                    state = pagerState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) { index ->
+                    Logger.d("HomeScreen:index=$index")
+                    Box(modifier = Modifier.fillMaxSize()) {
     //                if (appPreferences.homeBackgroundImage.isNotEmpty()) { //自定义背景
     //                    Image(
     //                        painter = rememberAsyncImagePainter(appPreferences.homeBackgroundImage),
@@ -113,14 +136,15 @@ import com.wxn.reader.navigation.Screens
     //                        )
     //                )
 
-                    Column {
-                        when (index) {
-                            0 -> {
-                                HomeMainPanel(viewModel)
-                            }
+                        Column {
+                            when (index) {
+                                0 -> {
+                                    HomeMainPanel(viewModel)
+                                }
 
-                            1 -> {
-                                HomeVoiceBookPanel(1, viewModel)
+                                1 -> {
+                                    HomeVoiceBookPanel(1, viewModel)
+                                }
                             }
                         }
                     }

@@ -1,6 +1,7 @@
 package com.wxn.reader.presentation.home
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -41,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
@@ -79,6 +81,7 @@ fun HomeScreen(
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val booksInShelf by viewModel.booksInShelfSet.collectAsStateWithLifecycle()
     val books = viewModel.books.collectAsLazyPagingItems()
+    val dashboardState by viewModel.dashboardState.collectAsStateWithLifecycle()
 
     val importProgress by viewModel.importProgressState.collectAsStateWithLifecycle()
     val snackbarState by viewModel.snackbarState.collectAsStateWithLifecycle()
@@ -100,8 +103,16 @@ fun HomeScreen(
     var showMetadataModal by viewModel.showMetadataModal
 
     var showSelectDirectoryDialog by remember { mutableStateOf(false) }
+    var showAllBooks by rememberSaveable { mutableStateOf(false) }
 
     val lastOpenBookRoute by viewModel.openLastBookRoute.collectAsStateWithLifecycle()
+
+    BackHandler(
+        enabled = showAllBooks && selectedTabRow == 0 && !selectionMode && !searchMode,
+    ) {
+        showAllBooks = false
+        selectedTab = 0
+    }
 
     val getDirectoryPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
@@ -147,7 +158,7 @@ fun HomeScreen(
             Scaffold(
                 topBar = {
                     AnimatedVisibility(
-                        visible = searchMode,
+                        visible = searchMode && (showAllBooks || selectedTabRow != 0),
                         enter = slideInHorizontally(initialOffsetX = { it }),
                         exit = slideOutHorizontally(targetOffsetX = { it })
                     ) {
@@ -166,7 +177,7 @@ fun HomeScreen(
                         )
                     }
                     AnimatedVisibility(
-                        visible = !searchMode,
+                        visible = !searchMode && (showAllBooks || selectedTabRow != 0),
                         enter = slideInHorizontally(initialOffsetX = { -it }),
                         exit = slideOutHorizontally(targetOffsetX = { -it })
                     ) {
@@ -183,11 +194,18 @@ fun HomeScreen(
                                 viewModel.selectAllBooks(books.itemSnapshotList.items)
                             },
                             appPreferences = appPreferences!!,
-                            toggleLayoutModal = { showLayoutModal = true },
-                            toggleSortFilterModal = { showSortModal = true },
+                            toggleLayoutModal = {
+                                showAllBooks = true
+                                showLayoutModal = true
+                            },
+                            toggleSortFilterModal = {
+                                showAllBooks = true
+                                showSortModal = true
+                            },
                             totalBooks = books.itemCount,
                             currentShelfBookCount = booksInShelf.size,
                             toggleSearchMode = {
+                                showAllBooks = true
                                 searchMode = true
                             },
     //                        openDrawer = {
@@ -215,7 +233,11 @@ fun HomeScreen(
                                     textAlign = TextAlign.Center
                                 ) },
                                 selected = selectedTabRow == 0,
-                                onClick = { viewModel.updateCurrentTabRow(0) }
+                                onClick = {
+                                    viewModel.updateCurrentTabRow(0)
+                                    showAllBooks = false
+                                    selectedTab = 0
+                                }
                             )
                             NavigationBarItem(
                                 icon = { Icon(Icons.Default.Headset, contentDescription = "AudioBooks") },
@@ -223,7 +245,10 @@ fun HomeScreen(
                                     textAlign = TextAlign.Center)
                                         },
                                 selected = selectedTabRow == 1,
-                                onClick = { viewModel.updateCurrentTabRow(1) }
+                                onClick = {
+                                    viewModel.updateCurrentTabRow(1)
+                                    showAllBooks = true
+                                }
                             )
                             NavigationBarItem(
                                 icon = {
@@ -281,10 +306,22 @@ fun HomeScreen(
                     )
                 },
                 containerColor = Color.Transparent,
-                contentColor = Color.Transparent
+                contentColor = MaterialTheme.colorScheme.onBackground,
             ) { innerPadding ->
                 if (selectedTabRow == 0 || selectedTabRow == 1) {
-                    HomeShelfsPanel(innerPadding, pagerState, viewModel)
+                    HomeShelfsPanel(
+                        innerPadding = innerPadding,
+                        pagerState = pagerState,
+                        viewModel = viewModel,
+                        dashboardModel = dashboardState,
+                        showAllBooks = showAllBooks || selectedTabRow != 0,
+                        onShowAllBooks = {
+                            showAllBooks = true
+                            selectedTab = 0
+                        },
+                        onImportClick = { showSelectDirectoryDialog = true },
+                        onRecentBookClick = viewModel::openDashboardBook,
+                    )
                 } else if (selectedTabRow == 2) {
                     HomeMinePanel(innerPadding, viewModel)
                 }
