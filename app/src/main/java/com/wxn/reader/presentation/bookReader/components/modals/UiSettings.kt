@@ -45,6 +45,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import coil3.compose.AsyncImage
 import com.elixer.palette.Presets
 import com.elixer.palette.constraints.HorizontalAlignment
 import com.elixer.palette.constraints.VerticalAlignment
@@ -55,6 +56,7 @@ import com.wxn.reader.data.model.AppPreferences
 import com.wxn.reader.navigation.Screens
 import com.wxn.reader.presentation.mainReader.MainReadViewModel
 import com.wxn.reader.util.ColorPicker
+import java.io.File
 
 enum class ColorType(val displayName: String) {
     BACKGROUND("Background"),
@@ -467,7 +469,8 @@ private fun ImageSection(
     )
     Spacer(modifier = Modifier.height(6.dp))
     Text(
-        text = predefinedImages.entries.find { it.value == currentImage }?.key.orEmpty(), // ?: "Custom Color",
+        text = predefinedImages.entries.find { it.value == currentImage }?.key
+            ?: if (File(currentImage).isFile) stringResource(R.string.custom_image_skin) else "",
         style = MaterialTheme.typography.titleMedium,
         textAlign = TextAlign.Center
     )
@@ -481,6 +484,13 @@ private fun ImageSection(
                 image = image,
                 isSelected = image == currentImage,
                 onClick = { onImageSelected(image) }
+            )
+        }
+        if (File(currentImage).isFile && !predefinedImages.containsValue(currentImage)) {
+            ImageBox(
+                image = currentImage,
+                isSelected = true,
+                onClick = { onImageSelected(currentImage) },
             )
         }
     }
@@ -588,8 +598,16 @@ private fun ImageBox(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Image(
-                when(image) {
+        if (File(image).isFile) {
+            AsyncImage(
+                model = File(image),
+                contentDescription = image,
+                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(40.dp)),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Image(
+                when (image) {
                     "ic_read_bg1" -> painterResource(com.wxn.bookread.R.drawable.ic_read_bg1)
                     "ic_read_bg2" -> painterResource(com.wxn.bookread.R.drawable.ic_read_bg2)
                     "ic_read_bg3" -> painterResource(com.wxn.bookread.R.drawable.ic_read_bg3)
@@ -599,7 +617,8 @@ private fun ImageBox(
             contentDescription = image,
             modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(40.dp)),
             contentScale = ContentScale.FillBounds
-        )
+            )
+        }
     }
 }
 

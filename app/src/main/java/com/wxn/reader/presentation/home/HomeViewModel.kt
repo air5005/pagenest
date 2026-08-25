@@ -16,6 +16,9 @@ import com.air5005.pagenest.library.importing.AndroidImportRequestFactory
 import com.air5005.pagenest.library.importing.BookImportService
 import com.air5005.pagenest.library.importing.ImportRejection
 import com.air5005.pagenest.library.importing.ImportResult
+import com.air5005.pagenest.skin.SkinApplyFailure
+import com.air5005.pagenest.skin.SkinApplyResult
+import com.air5005.pagenest.skin.SkinService
 import com.wxn.reader.R
 import com.wxn.reader.data.model.AppPreferences
 import com.wxn.reader.data.dto.FileType
@@ -88,6 +91,7 @@ class HomeViewModel
     private val permissionRepository: PermissionRepository,
     private val bookImportService: BookImportService,
     private val importRequestFactory: AndroidImportRequestFactory,
+    private val skinService: SkinService,
     application: Application,
 ) : AndroidViewModel(application) {
 
@@ -154,7 +158,11 @@ class HomeViewModel
 
     private fun initializeApp() {
         viewModelScope.launch {
-            val preferences = appPreferencesUtil.appPrefsFlow.first()
+            skinService.reconcile()
+            val storedPreferences = appPreferencesUtil.appPrefsFlow.first()
+            val preferences = storedPreferences.copy(
+                homeBackgroundImage = skinService.effectiveHomeBackground(storedPreferences.homeBackgroundImage),
+            )
             coroutineScope {
                 launch { loadBooks(preferences) }
                 launch { loadShelves() }
@@ -269,7 +277,9 @@ class HomeViewModel
     private fun observeAppPreferences() {
         viewModelScope.launch {
             appPreferencesUtil.appPrefsFlow.collect { preferences ->
-                _appPreferences.value = preferences
+                _appPreferences.value = preferences.copy(
+                    homeBackgroundImage = skinService.effectiveHomeBackground(preferences.homeBackgroundImage),
+                )
                 // Optionally reload books if sort preferences change
                 loadBooks(preferences)
             }
@@ -410,6 +420,37 @@ class HomeViewModel
             appPreferencesUtil.updateAppPreferences(newPreferences)
             _appPreferences.value = newPreferences
         }
+    }
+
+    fun importAndApplySkin(source: String) {
+        viewModelScope.launch {
+            when (val result = skinService.importAndApply(source)) {
+                is SkinApplyResult.Success -> {
+                    _appPreferences.value = appPreferencesUtil.appPrefsFlow.first()
+                    showSnackbar(stringResource(R.string.skin_apply_success))
+                }
+                is SkinApplyResult.Failure -> showSnackbar(result.reason.localizedSkinError())
+            }
+        }
+    }
+
+    fun resetSkin() {
+        viewModelScope.launch {
+            when (val result = skinService.reset()) {
+                is SkinApplyResult.Success -> {
+                    _appPreferences.value = appPreferencesUtil.appPrefsFlow.first()
+                    showSnackbar(stringResource(R.string.skin_reset_success))
+                }
+                is SkinApplyResult.Failure -> showSnackbar(result.reason.localizedSkinError())
+            }
+        }
+    }
+
+    private fun SkinApplyFailure.localizedSkinError(): String = when (this) {
+        SkinApplyFailure.INVALID_IMAGE -> stringResource(R.string.skin_error_invalid_image)
+        SkinApplyFailure.IMAGE_TOO_LARGE -> stringResource(R.string.skin_error_too_large)
+        SkinApplyFailure.IO -> stringResource(R.string.skin_error_io)
+        SkinApplyFailure.PREFERENCES -> stringResource(R.string.skin_error_save)
     }
 
     fun resetLayoutPreferences() {

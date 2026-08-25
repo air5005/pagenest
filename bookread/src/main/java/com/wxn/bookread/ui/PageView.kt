@@ -12,7 +12,6 @@ import com.wxn.bookread.data.model.TextChapter
 import com.wxn.bookread.ui.delegate.PageDelegate
 import android.graphics.Paint
 import android.view.MotionEvent
-import androidx.appcompat.content.res.AppCompatResources
 import androidx.compose.ui.util.fastJoinToString
 import androidx.core.graphics.toColorInt
 import com.wxn.base.bean.Book
@@ -20,7 +19,6 @@ import com.wxn.base.ext.screenshot
 import com.wxn.base.ext.statusBarHeight
 import com.wxn.base.util.Coroutines
 import com.wxn.base.util.Logger
-import com.wxn.bookread.R
 import com.wxn.bookread.data.model.TextLine
 import com.wxn.bookread.provider.ChapterProvider
 import com.wxn.bookread.ui.delegate.CoverPageDelegate
@@ -30,7 +28,10 @@ import com.wxn.bookread.ui.delegate.SimulationPageDelegate
 import com.wxn.bookread.ui.delegate.SlidePageDelegate
 import com.wxn.bookread.ui.delegate.SlideVerticalPageDelegate
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 /****
@@ -48,6 +49,7 @@ class PageView : FrameLayout, IDataSource, PageCallback {
     }
 
     var dataProvider: PageViewDataProvider? = null
+    private var backgroundUpdateJob: Job? = null
 
     /***
      * 当前章节中正在显示的页面的索引
@@ -348,6 +350,8 @@ class PageView : FrameLayout, IDataSource, PageCallback {
 
     override fun onDetachedFromWindow() {
         Logger.d("PageView::onDetachedFromWindow")
+        backgroundUpdateJob?.cancel()
+        backgroundUpdateJob = null
         removeView(prevPage)
         removeView(curPage)
         removeView(nextPage)
@@ -735,14 +739,11 @@ class PageView : FrameLayout, IDataSource, PageCallback {
      * 更新背景
      */
     override fun upBg() {
-        Coroutines.mainScope().launch {
+        backgroundUpdateJob?.cancel()
+        backgroundUpdateJob = Coroutines.mainScope().launch {
             ChapterProvider.readerPreferencesUtil?.readerPrefsFlow?.firstOrNull()?.let { preference ->
-                val bgDrawable = when (preference.backgroundImage) {
-                    "ic_read_bg1" -> AppCompatResources.getDrawable(context, R.drawable.ic_read_bg1)
-                    "ic_read_bg2" -> AppCompatResources.getDrawable(context, R.drawable.ic_read_bg2)
-                    "ic_read_bg3" -> AppCompatResources.getDrawable(context, R.drawable.ic_read_bg3)
-                    "ic_read_bg4" -> AppCompatResources.getDrawable(context, R.drawable.ic_read_bg4)
-                    else -> null
+                val bgDrawable = withContext(Dispatchers.IO) {
+                    ReaderBackgroundResolver.resolve(context, preference.backgroundImage)
                 }
                 if (bgDrawable != null) {
                     curPage.setBg(bgDrawable)

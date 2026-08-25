@@ -103,6 +103,7 @@ class HomeViewModelImportFlowTest {
             permissionRepository = mockk(relaxed = true),
             bookImportService = service,
             importRequestFactory = requestFactory,
+            skinService = mockk(relaxed = true),
             application = application,
         )
     }

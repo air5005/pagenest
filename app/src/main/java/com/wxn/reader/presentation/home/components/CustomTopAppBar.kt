@@ -74,7 +74,6 @@ import com.wxn.reader.domain.model.Shelf
 import com.wxn.reader.presentation.home.HomeViewModel
 import com.wxn.reader.presentation.sharedComponents.dialogs.DeleteShelfDialog
 import com.wxn.reader.util.ImageUtils
-import com.wxn.reader.util.PermissionHandler
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -267,9 +266,11 @@ fun CustomTopAppBar(
                             )
                         }
 
-                        ImagePicker { path ->
-                            viewModel.updateAppPreferences(appPreferences.copy(homeBackgroundImage = path))
-                        }
+                        ImagePicker(
+                            hasCustomSkin = appPreferences.homeBackgroundImage.isNotBlank(),
+                            onImageSelected = viewModel::importAndApplySkin,
+                            onReset = viewModel::resetSkin,
+                        )
 
 
                         DropdownMenuItem(onClick = {
@@ -349,14 +350,16 @@ fun ImageSourceDialog(
     context: Context,
     onDismiss: () -> Unit,
     onSelectBookCover: (String) -> Unit,
-    onSelectImagePicker: () -> Unit
+    onSelectImagePicker: () -> Unit,
+    hasCustomSkin: Boolean,
+    onReset: () -> Unit,
 ) {
     val savedCovers = remember { ImageUtils.listSavedBookCovers(context) }
     var showGrid by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.change_home_background)) },
+        title = { Text(stringResource(R.string.one_tap_image_skin)) },
         text = {
             Column {
                 when {
@@ -381,6 +384,18 @@ fun ImageSourceDialog(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(stringResource(R.string.select_from_gallery))
+                            }
+                            if (hasCustomSkin) {
+                                Spacer(Modifier.height(16.dp))
+                                Button(
+                                    onClick = {
+                                        onReset()
+                                        onDismiss()
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(stringResource(R.string.restore_default_skin))
+                                }
                             }
                         }
                     }
@@ -447,7 +462,11 @@ fun ImageCard(file: File, onClick: () -> Unit) {
 }
 
 @Composable
-fun ImagePicker(onImageSelected: (String) -> Unit) {
+fun ImagePicker(
+    hasCustomSkin: Boolean,
+    onImageSelected: (String) -> Unit,
+    onReset: () -> Unit,
+) {
     val context = LocalContext.current
     var showDialog by remember { mutableStateOf(false) }
 
@@ -455,18 +474,7 @@ fun ImagePicker(onImageSelected: (String) -> Unit) {
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        uri?.let {
-            onImageSelected(ImageUtils.saveHomeBackgroundImage(context, it).orEmpty())
-        }
-    }
-
-    // Permission launcher
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        if (permissions.any { it.value }) {
-            imagePicker.launch("image/*")
-        }
+        uri?.let { onImageSelected(it.toString()) }
     }
 
     DropdownMenuItem(
@@ -477,7 +485,7 @@ fun ImagePicker(onImageSelected: (String) -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(stringResource(R.string.change_home_background))
+                Text(stringResource(R.string.one_tap_image_skin))
                 Icon(
                     imageVector = Icons.Default.ImageSearch,
                     contentDescription = "Select Image",
@@ -492,12 +500,10 @@ fun ImagePicker(onImageSelected: (String) -> Unit) {
             onDismiss = { showDialog = false },
             onSelectBookCover = onImageSelected,
             onSelectImagePicker = {
-                if (PermissionHandler.hasPermissions(context)) {
-                    imagePicker.launch("image/*")
-                } else {
-                    PermissionHandler.requestPermissions(permissionLauncher)
-                }
-            }
+                imagePicker.launch("image/*")
+            },
+            hasCustomSkin = hasCustomSkin,
+            onReset = onReset,
         )
     }
 }

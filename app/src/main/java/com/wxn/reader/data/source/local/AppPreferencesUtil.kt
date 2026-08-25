@@ -196,6 +196,12 @@ class AppPreferencesUtil @Inject constructor(context: Context) {
         }
     }
 
+    suspend fun updateHomeBackgroundImage(path: String) {
+        dataStore.edit { preferences ->
+            preferences[HOME_BACKGROUND_IMAGE] = path
+        }
+    }
+
     suspend fun resetLayoutPreferences() {
         dataStore.edit { preferences ->
             preferences[HOME_LAYOUT] = defaultPreferences.homeLayout.name

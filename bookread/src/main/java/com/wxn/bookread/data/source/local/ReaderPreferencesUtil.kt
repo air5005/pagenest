@@ -210,6 +210,12 @@ class ReaderPreferencesUtil @Inject constructor(context: Context) {
         }
     }
 
+    suspend fun updateBackgroundImage(path: String) {
+        dataStore.edit { preferences ->
+            preferences[BACKGROUND_IMAGE] = path
+        }
+    }
+
 
     suspend fun resetFontPreferences() {
         Logger.d("ReaderPreferencesUtil::resetFontPreferences")
