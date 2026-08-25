@@ -50,4 +50,29 @@ controls_visible_after_5s=False
 fatal_count=0
 ```
 
-完整 JVM、Lint、APK 与发布树门禁将在 Phase 4 Task 3 的版本提交和 Release 归档中记录。
+## 发布门禁与归档
+
+版本：`versionCode 10` / `versionName 1.9.260825`  
+发布源代码：`a60fad3ed4e35354c5c42dd1e46c531165fcebf4`  
+标签：`pagenest-v1.9.260825`
+
+发布前与版本变更后的精确发布树均执行完整门禁。最终发布树结果：
+
+```text
+app JVM tests:          425/425 passed
+bookparser JVM tests:     6/6 passed
+API 36 device tests:      5/5 passed
+Lint:                     0 errors, 148 warnings
+assembleDebug:            passed
+assembleDebugAndroidTest: passed
+APK metadata: versionCode 10, versionName 1.9.260825, targetSdk 36
+```
+
+GitHub Actions `Archive Android APK Release` 运行 `32862641105` 成功，生成正式 GitHub Release：
+
+- Release：`https://github.com/air5005/pagenest/releases/tag/pagenest-v1.9.260825`
+- APK：`PageNest-pagenest-v1.9.260825-debug.apk`
+- 远端大小：`125273858` bytes
+- GitHub 资产摘要：`f79902553accfdf1267785ff39a7308d5dba08a6bf4bdababa6974769e2d5fdf`
+- `SHA256SUMS.txt` 中的 APK 摘要与 GitHub 资产摘要完全一致。
+- `SHA256SUMS.txt` 自身的 SHA-256 为 `aa6191ff9b5dbaad979715dff6ce8d7d616eb24e9dd1a96d360a8bb2ad0ddf79`，同样与 GitHub 资产元数据一致。

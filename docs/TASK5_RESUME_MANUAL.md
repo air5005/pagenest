@@ -1,6 +1,6 @@
 # PageNest 续接手册（重启或换机）
 
-本仓库直接在 `master` 开发。UI Refresh Phase 3 的功能与发布前验证已经完成，当前优先入口是 **UI Refresh Phase 4：导入兼容性与真实阅读验收**。
+本仓库直接在 `master` 开发。UI Refresh Phase 4 的功能、模拟器真实阅读验收与 Release 已经完成，下一优先入口是 **UI Refresh Phase 5：HyperOS 3 真机兼容性验收与剩余格式验证**。
 
 ## 1. 恢复工作区
 
@@ -11,15 +11,15 @@ git pull origin master
 git status --short
 ```
 
-预期 `git status --short` 没有输出。Phase 3 发布源代码提交为：
+预期 `git status --short` 没有输出。Phase 4 发布源代码提交为：
 
 ```text
-6f9347316c02d87893a3802fd3ddd5a4bff04679
+a60fad3ed4e35354c5c42dd1e46c531165fcebf4
 ```
 
-Phase 3 已发布为 GitHub Release `pagenest-v1.8.260825`。完整验证与远端归档证据见 `docs/testing/ui-refresh-phase3.md`；续接时始终以最新的 `origin/master` 为准。
+Phase 4 已发布为 GitHub Release `pagenest-v1.9.260825`。完整验证与远端归档证据见 `docs/testing/import-compatibility-phase4.md`；续接时始终以最新的 `origin/master` 为准。
 
-## 2. 已完成的 UI Refresh Phase 1–3
+## 2. 已完成的 UI Refresh Phase 1–4
 
 - PageNest 蓝绿设计令牌与主题基础。
 - “阅读窗口”自适应桌面图标与页栖品牌资源。
@@ -39,6 +39,12 @@ Phase 3 已发布为 GitHub Release `pagenest-v1.8.260825`。完整验证与远�
 - 后台朗读会话可显示迷你播放器并展开或收起完整控制面板。
 - 阅读控制区的 424 个单元测试、5 个 API 36 设备测试、APK 构建和 Lint 发布门禁已通过。
 - GitHub Release `PageNest 1.8.260825` 已发布，GitHub 资产摘要与 `SHA256SUMS.txt` 一致。
+- 旧 MOBI CRC 已改为尽力补充字段，缺少 `libappmobi.so` 时不再推翻原本可解析的 TXT。
+- TXT 导入会保留原始文件名，不再在书架和阅读器显示私有 SHA-256 文件名。
+- API 36 x86_64 模拟器已真实完成 TXT 目录导入、书架展示、正文阅读、控制区唤出与 5 秒自动隐藏验收，运行期间无致命崩溃。
+- EPUB 核心解析仍依赖旧原生库；x86_64 失败已明确记录，ARM64 HyperOS 3 真机结论保留待验。
+- 发布树的 431 个 JVM 测试、5 个 API 36 设备测试、APK 构建与 Lint 门禁已通过。
+- GitHub Release `PageNest 1.9.260825` 已发布，GitHub 资产摘要与 `SHA256SUMS.txt` 一致。
 
 设计与执行依据：
 
@@ -51,18 +57,21 @@ Phase 3 已发布为 GitHub Release `pagenest-v1.8.260825`。完整验证与远�
 - `docs/superpowers/specs/2026-08-25-pagenest-immersive-reader-design.md`
 - `docs/superpowers/plans/2026-08-25-pagenest-immersive-reader-phase3.md`
 - `docs/testing/ui-refresh-phase3.md`
+- `docs/superpowers/specs/2026-08-25-pagenest-import-compatibility-design.md`
+- `docs/superpowers/plans/2026-08-25-pagenest-import-compatibility-phase4.md`
+- `docs/testing/import-compatibility-phase4.md`
 
 ## 3. 下一开发入口
 
-继续 **UI Refresh Phase 4：导入兼容性与真实阅读验收**。优先完成：
+继续 **UI Refresh Phase 5：HyperOS 3 真机兼容性验收与剩余格式验证**。优先完成：
 
-1. 为 TXT 与公开 EPUB 样书建立可重复的导入回归夹具；
-2. 定位全新 API 36 模拟器导入 0 本或无法解析的原因，并按 TDD 修复；
-3. 在真实正文中验收沉浸控制区、目录、进度保存、显示设置和语音入口；
-4. 在目标 HyperOS 3 手机安装最新 Release APK，完成真实设备阅读与后台语音检查；
-5. 保持 MOBI/AZW3、可提取文字 PDF 和图片换肤现有行为不回退。
+1. 在目标 HyperOS 3 手机安装 GitHub Release `pagenest-v1.9.260825`；
+2. 在 ARM64 真机分别验收 TXT、EPUB、MOBI/AZW3 和可提取文字 PDF；
+3. 验收目录、进度保存、显示设置、图片换肤与语音入口；
+4. 完成后台朗读、锁屏控制、来电/音频焦点恢复和 60 分钟运行矩阵；
+5. 将真机发现的问题逐项按 systematic-debugging 与 TDD 修复，不用 x86_64 模拟器替代 ARM64 结论。
 
-开始前先用 Superpower systematic-debugging 收集导入失败证据，再用 brainstorming 固化 Phase 4 边界，并按 TDD 编写实施计划。每个任务完成后提交并推送到 `origin/master`。
+开始前先用 Superpower brainstorming 固化 Phase 5 真机矩阵；遇到失败时用 systematic-debugging 收集证据，再按 TDD 编写修复计划。每个任务完成后提交并推送到 `origin/master`。
 
 命令行构建必须使用 JDK 17。当前 Android Studio 内置 JBR 为 Java 25，Gradle 8.11.1 会在启动阶段报 `25.0.2`；可在当前 PowerShell 会话设置：
 
