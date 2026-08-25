@@ -202,6 +202,23 @@ adb devices
 
 设备状态应显示为 `device`。如果显示 `unauthorized`，请解锁手机并确认 RSA 授权；如果没有设备，检查 USB 模式、数据线、接口及小米 OEM 驱动。
 
+### HyperOS 3 真机预检
+
+`adb devices -l` 可能同时列出模拟器和手机。复制目标手机第一列的序列号，显式运行预检：
+
+```powershell
+$adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
+.\tools\hyperos3-device-preflight.ps1 -Serial '<目标手机序列号>' -AdbPath $adb
+```
+
+只有输出 `preflight_passed=True` 才能继续安装和真机测试。预检会拒绝未授权/离线设备、模拟器、非 Android 16 / API 36、非 ARM64、小米厂商或 HyperOS 3 标识不符的设备。证据默认保存在 Windows 临时目录，输出中的 `evidence_root` 是具体位置；不要将包含设备序列号和构建指纹的证据直接提交到公开仓库。
+
+预检判定逻辑可在没有手机时独立回归：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tests\HyperOs3Preflight.Tests.ps1
+```
+
 ### 无线调试
 
 Android 11 及以上设备可以使用无线调试：
