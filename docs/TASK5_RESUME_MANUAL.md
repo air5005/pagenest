@@ -1,97 +1,67 @@
-# Task9 续接手册（重启/换机后继续开发）
+# PageNest 续接手册（重启或换机）
 
-本仓库已完成 Task1~Task8，并按你要求全部提交到 `master`。
-每次系统重启或在新电脑克隆后，按以下步骤可直接从 Task9 继续。
+本仓库直接在 `master` 开发。UI Refresh Phase 1 已完成，当前优先入口是 **UI Refresh Phase 2：阅读仪表盘首页**。
 
-## 1. 拉取最新版仓库
+## 1. 恢复工作区
 
 ```powershell
 cd D:\pagenest
 git checkout master
 git pull origin master
-git status
+git status --short
 ```
 
-要求：
+预期 `git status --short` 没有输出。本阶段验收代码提交为：
 
-- `git status` 应显示 `nothing to commit, working tree clean`
-- `git log --oneline -n 1` 最近提交应是 Task8 的归档提交
-
-## 2. Task9 继续入口
-
-- 设计/任务源文件：
-  - `D:\pagenest\docs\superpowers\plans\2026-08-23-voice-reading.md`
-  - `D:\pagenest\docs\superpowers\specs\2026-08-23-voice-reading-design.md`
-
-- 本次要继续的是：
-  - Task 9：完成 Android 生命周期自动化验证，并在目标 HyperOS 3 手机上执行安装、后台朗读和 60 分钟测试矩阵
-
-## 3. 开始开发前的最短检查
-
-```powershell
-Get-Content .\docs\superpowers\plans\2026-08-23-voice-reading.md | Select-String "Task 9" -Context 0,80
+```text
+f7842a178a9285cec5c2a10dfbe45f0c6ca0ae49
 ```
 
-确认：
+## 2. 已完成的 UI Refresh Phase 1
 
-- Task 9 仍是未勾选状态。
-- Task 8 的两个阅读器语音控制、Azure 设置、首次联网同意、PDF 提示和旧 Edge TTS 清理已经提交。
-- 计划里 Task 9 涉及到的 Android 自动化、HyperOS 3 真机和 60 分钟验收矩阵与你要执行的测试一致。
+- PageNest 蓝绿设计令牌与主题基础。
+- “阅读窗口”自适应桌面图标与页栖品牌资源。
+- 中文无状态首次启动引导及设备端 Compose UI 测试。
+- 可选示例书解析故障边界；x86_64 缺少 `libappmobi.so` 时首页不再崩溃。
+- API 36 模拟器明暗模式、目录选择返回、跳过和重启恢复验收。
 
-### 当前 Task9 检查点
+设计与执行依据：
 
-- 电脑端 JVM 测试、Debug APK、AndroidTest APK 和 lint 已通过。
-- Android 仪器测试与 `docs/testing/voice-reading-hyperos3.md` 已提交。
-- 尚未完成：连接目标手机后的 connected tests、APK 安装、真实 force-stop 恢复和 HyperOS 3 60 分钟矩阵。
-- 继续前先运行 `adb devices -l`；只有出现状态为 `device` 的目标手机后，才能完成剩余验收。
+- `docs/superpowers/specs/2026-08-25-pagenest-ui-refresh-design.md`
+- `docs/superpowers/plans/2026-08-25-pagenest-ui-refresh-phase1.md`
+- `docs/testing/ui-refresh-phase1.md`
 
-## 4. 开发执行原则（必须遵守）
+## 3. 下一开发入口
 
-1. 每个阶段：`代码改动 -> 提交 -> 推送`，且推送到 `master`。
-2. 每次提交信息建议沿用约定格式，如 `feat:`、`fix:`、`chore:`。
-3. 你已授权后，可直接用 `git push origin master`。
+继续 **UI Refresh Phase 2：阅读仪表盘首页**。按已确认的首页方案 B，实现：
 
-## 5. 任务分支/路径约定
+1. 蓝绿渐变阅读概览卡；
+2. 最近阅读与继续阅读入口；
+3. 空书架状态和导入 CTA；
+4. 与现有电子书、有声书、我的三个底部入口兼容；
+5. 保持图片换肤、语音阅读、PDF 和导入流程不变。
 
-- 主分支即用 `master`。
-- 建议继续在仓库主目录直接开发，不新增其它分支（按你当前要求）。
-- 若你愿意保留安全缓冲，也可以临时建本地分支，但最终必须 `commit + push` 到 `master`。
+开始前先用 Superpower brainstorming 固化 Phase 2 设计，再用 TDD 编写实施计划。每个任务完成后提交并推送到 `origin/master`。
 
-## 6. 建议日常命令
+## 4. 仍待真机完成的独立事项
 
-### 开始 Task9 之前
+语音阅读 Task 9 的电脑端门禁和文档已经完成，但目标 HyperOS 3 手机的后台朗读与 60 分钟矩阵仍需要真机：
+
+- `docs/superpowers/plans/2026-08-23-voice-reading.md`
+- `docs/testing/voice-reading-hyperos3.md`
+
+连接手机后先运行 `adb devices -l`。只有目标手机显示为 `device`，才记录 HyperOS 3 真机结论。
+
+## 5. 阶段交付规则
 
 ```powershell
-git clean -fd
-git status
-```
-
-### 每个开发阶段完成后
-
-```powershell
-git add .
-git commit -m "test: add HyperOS speech release gates"
+git diff --check
+git add <本阶段文件>
+git commit -m "feat: ..."
 git push origin master
-git status
-```
-
-### 远端核对
-
-```powershell
-git log --oneline --max-count 5
+git fetch origin master
 git rev-parse HEAD
 git rev-parse origin/master
 ```
 
-`git rev-parse HEAD` 与 `git rev-parse origin/master` 应一致时说明已同步。
-
-## 7. 你现在可直接操作
-
-这份文档目的就是让你重启或换电脑后不需要重新判断上下文，  
-直接执行：
-
-```powershell
-git pull origin master
-```
-
-然后从计划中的 `Task 9` 开始即可。若 `adb devices -l` 没有列出目标手机，可先完成桌面门禁和测试文档，再连接手机继续真机矩阵。
+两个提交号应一致。不要用 `git clean -fd` 清理未知文件；未跟踪内容可能属于使用者。
