@@ -1912,6 +1912,33 @@ class BookImportServiceTest {
         assertEquals(inspectedFile!!.nameWithoutExtension, catalog.inserted.single().second)
     }
 
+    @Test
+    fun txtImportPreservesOriginalDisplayNameInsteadOfPrivateHash() {
+        val root = File(temporaryFolder.root, "txt-display-name-books")
+        val catalog = RecordingCatalog()
+        val service = service(
+            root = root,
+            inspector = BookProtectionInspector { _, _ -> ProtectionVerdict.CLEAR },
+            parser = BookMetadataParser { file, format ->
+                book(file.toURI().toString(), fileType = format.extension).copy(
+                    title = file.nameWithoutExtension,
+                )
+            },
+            catalog = catalog,
+        )
+
+        val result = runSuspend {
+            service.execute(
+                ImportRequest("manual-reader-sample.txt") {
+                    "PageNest reader fixture".byteInputStream()
+                },
+            )
+        }
+
+        assertEquals(ImportResult.Imported(1L), result)
+        assertEquals("manual-reader-sample", catalog.inserted.single().first.title)
+    }
+
     private fun service(
         root: File,
         inspector: BookProtectionInspector,

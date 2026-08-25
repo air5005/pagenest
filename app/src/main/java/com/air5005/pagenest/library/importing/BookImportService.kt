@@ -49,7 +49,7 @@ class BookImportService(
             coordinator.withHashLock(storedBook.sha256) {
                 enteredLock = true
                 val result = try {
-                    executeLocked(publishedImport, input, format)
+                    executeLocked(publishedImport, input, format, request.displayName)
                 } catch (cancellation: CancellationException) {
                     cleanupForCancellationInsideLock(
                         storedBook,
@@ -77,6 +77,7 @@ class BookImportService(
         publishedImport: PublishedImport,
         input: InputStream,
         format: SupportedBookFormat,
+        displayName: String,
     ): ImportResult {
         val storedBook = publishedImport.storedBook
         val closeFailure = try {
@@ -183,7 +184,9 @@ class BookImportService(
             failure.promotedCancellation()?.let { throw it }
             return rejectAndCleanup(storedBook, ImportRejection.PARSE_FAILED)
         } ?: return rejectAndCleanup(storedBook, ImportRejection.PARSE_FAILED)
-        val privateBook = parsedBook.withPrivateFile(storedBook.file)
+        val privateBook = parsedBook
+            .withSourceDisplayName(format, displayName)
+            .withPrivateFile(storedBook.file)
 
         val writeResult = try {
             catalog.insertOrGet(privateBook, storedBook.sha256)
@@ -394,6 +397,15 @@ class BookImportService(
     }
 
     private fun Book.withPrivateFile(file: File): Book = copy(filePath = file.toURI().toString())
+
+    private fun Book.withSourceDisplayName(
+        format: SupportedBookFormat,
+        displayName: String,
+    ): Book {
+        if (format != SupportedBookFormat.TXT) return this
+        val sourceTitle = displayName.substringBeforeLast('.', displayName).trim()
+        return if (sourceTitle.isEmpty()) this else copy(title = sourceTitle)
+    }
 
     private data class PublishedImport(
         val storedBook: StoredBook,
