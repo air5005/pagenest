@@ -65,11 +65,17 @@ Phase 4 已发布为 GitHub Release `pagenest-v1.9.260825`。完整验证与远�
 
 继续 **UI Refresh Phase 5：HyperOS 3 真机兼容性验收与剩余格式验证**。优先完成：
 
-1. 在目标 HyperOS 3 手机安装 GitHub Release `pagenest-v1.9.260825`；
-2. 在 ARM64 真机分别验收 TXT、EPUB、MOBI/AZW3 和可提取文字 PDF；
-3. 验收目录、进度保存、显示设置、图片换肤与语音入口；
-4. 完成后台朗读、锁屏控制、来电/音频焦点恢复和 60 分钟运行矩阵；
-5. 将真机发现的问题逐项按 systematic-debugging 与 TDD 修复，不用 x86_64 模拟器替代 ARM64 结论。
+Phase 5 Task 1 已完成：真机预检模块、命令包装器和 7 个快照测试位于 `tools/`，提交为 `b801b157c4f2bd1c16cdb5a78f465fe0ea8cf5f2`。当前 ADB 只发现 x86_64 模拟器，预检已正确拒绝，尚未产生任何真机 PASS。
+
+下一步：
+
+1. 用 USB 或无线调试连接目标 HyperOS 3 手机，复制 `adb devices -l` 第一列序列号；
+2. 运行 `.\tools\hyperos3-device-preflight.ps1 -Serial '<目标手机序列号>'` 并要求 `preflight_passed=True`；
+3. 在目标手机安装 GitHub Release `pagenest-v1.9.260825`；
+4. 在 ARM64 真机分别验收 TXT、EPUB、MOBI/AZW3 和可提取文字 PDF；
+5. 验收目录、进度保存、显示设置、图片换肤与语音入口；
+6. 完成后台朗读、锁屏控制、来电/音频焦点恢复和 60 分钟运行矩阵；
+7. 将真机发现的问题逐项按 systematic-debugging 与 TDD 修复，不用 x86_64 模拟器替代 ARM64 结论。
 
 开始前先用 Superpower brainstorming 固化 Phase 5 真机矩阵；遇到失败时用 systematic-debugging 收集证据，再按 TDD 编写修复计划。每个任务完成后提交并推送到 `origin/master`。
 

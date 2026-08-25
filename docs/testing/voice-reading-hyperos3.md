@@ -4,12 +4,22 @@
 
 ## 当前状态
 
+- 目标截图：HyperOS `3.0.303.0.WNNCNXM.C11`、Android 16、认证型号 `2407FRK8EC`
+- 真机预检工具：`PASS`（提交 `b801b157c4f2bd1c16cdb5a78f465fe0ea8cf5f2`）
+- 最近预检：仅发现 `emulator-5554`；已按预期拒绝（`emulator,manufacturer,primary-abi,hyperos-version`）
 - 真机自动化：`NOT RUN (no connected device)`
 - APK 安装：`NOT RUN (no connected device)`
 - 60 分钟人工验收：`NOT RUN (no connected device)`
 - 发布结论：**未通过真机发布门禁**
 
 连接目标手机后，从“采集设备与 APK 证据”开始填写本页，不要把空白项改成 PASS。
+
+连接后先显式选择手机序列号运行硬门禁，只有 `preflight_passed=True` 才继续本页后续命令：
+
+```powershell
+$adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
+.\tools\hyperos3-device-preflight.ps1 -Serial '<目标手机序列号>' -AdbPath $adb
+```
 
 ## 1. 测试前准备
 
