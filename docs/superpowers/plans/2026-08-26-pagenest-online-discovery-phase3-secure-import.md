@@ -29,11 +29,11 @@
 - Test `DownloadUrlPolicyTest.kt`
 - Test `PublicAddressPolicyTest.kt`
 
-- [ ] RED tests bind each source to exact HTTPS hosts and port 443.
-- [ ] Reject credentials, fragments, control characters, unknown sources/hosts, protocol downgrade, excessive URLs and unsafe relative/absolute redirect targets.
-- [ ] RED tests reject loopback, any-local, link-local, site-local, multicast, IPv4 private/shared/documentation/benchmark/reserved and IPv6 unique-local/documentation ranges.
-- [ ] Reject the entire DNS answer if any address is not public; never silently drop unsafe members.
-- [ ] Add a production DNS adapter that returns only a fully accepted resolution to the same HTTP client that connects.
+- [x] RED tests bind each source to exact HTTPS hosts and port 443.
+- [x] Reject credentials, fragments, control characters, unknown sources/hosts, protocol downgrade, excessive URLs and unsafe relative/absolute redirect targets.
+- [x] RED tests reject loopback, any-local, link-local, site-local, multicast, IPv4 private/shared/documentation/benchmark/reserved and IPv6 unique-local/documentation ranges.
+- [x] Reject the entire DNS answer if any address is not public; never silently drop unsafe members.
+- [x] Add a production DNS adapter that returns only a fully accepted resolution to the same HTTP client that connects.
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests '*DownloadUrlPolicyTest' --tests '*PublicAddressPolicyTest'
@@ -49,12 +49,12 @@ git push origin master
 - Create production transport/DI provider under `discovery/download`
 - Test downloader, validator and production client contracts with fixtures.
 
-- [ ] First prove manual redirects, maximum 3 hops, per-hop policy, status mapping, 10/30/120 second timeouts and disabled automatic retries.
-- [ ] Stream to random app-private `.part` files; validate `Content-Length` and actual bytes against 100 MiB.
-- [ ] Emit monotonic progress without title/URL; cancellation closes body/output and removes staging file.
-- [ ] Flush and fsync before validation; cleanup on sync/validation failure.
-- [ ] Validate EPUB ZIP + stored mimetype entry, PDF `%PDF-`, and text BOM/NUL/binary heuristic; reject explicit MIME conflicts.
-- [ ] Startup cleanup only removes old regular `.part` entries inside the trusted staging directory and never follows links.
+- [x] First prove manual redirects, maximum 3 hops, per-hop policy, status mapping, 10/30/120 second timeouts and disabled automatic retries.
+- [x] Stream to random app-private `.part` files; validate `Content-Length` and actual bytes against 100 MiB.
+- [x] Emit monotonic progress without title/URL; cancellation closes body/output and removes staging file.
+- [x] Flush and fsync before validation; cleanup on sync/validation failure.
+- [x] Validate EPUB ZIP + stored mimetype entry, PDF `%PDF-`, and text BOM/NUL/binary heuristic; reject explicit MIME conflicts.
+- [x] Startup cleanup only removes old regular `.part` entries inside the trusted staging directory and never follows links.
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests '*SecureBookDownloaderTest' --tests '*DownloadedBookValidatorTest' --tests '*BookDownloadClientContractTest'
@@ -148,4 +148,3 @@ git push origin pagenest-v1.11.260826
 ## Completion boundary
 
 Phase 3 is complete only when eligible online EPUB/TXT/PDF downloads are policy-safe, bounded, cancellable, imported through the existing private library, duplicate-safe, navigable through the existing reader routes, fully tested without live-network dependencies, checkpointed on `master`, and archived in a verified GitHub Release.
-
