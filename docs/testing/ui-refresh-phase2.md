@@ -38,15 +38,15 @@ $env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --no-daemon
 ```
 
-最终结果：`BUILD SUCCESSFUL in 4m 56s`。
+功能完成门禁结果：`BUILD SUCCESSFUL in 4m 56s`。更新发布版本后再次执行同一完整命令，最终发布候选结果：`BUILD SUCCESSFUL in 5m 19s`。
 
 - JVM 测试套件：45。
 - JVM 测试：419，通过 419，失败 0，错误 0，跳过 0。
 - Lint：错误 0，警告 148。
-- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`，127,065,446 字节。
+- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`，125,096,822 字节。
 - AndroidTest APK：`app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`，3,772,592 字节。
-- 发布前 Debug APK SHA-256：`3F15525781A6253DE6DFB88F196F3942CD4683407AB4E868624BFA7425DDB0AE`。
-- 发布前包内版本：`com.air5005.pagenest`，`versionCode=7`，`versionName=1.6.260825`。
+- 本地发布候选 Debug APK SHA-256：`58B583CCF939D53BE331A2FB42A781F1B5BE5C46A42CFB48B4509BB8F3290D43`。
+- 包内版本：`com.air5005.pagenest`，`versionCode=8`，`versionName=1.7.260825`。
 
 首次完整门禁正确发现 19 条 `MissingTranslation` 错误；补齐 9 个语言目录后，单独 Lint 与重新执行的完整门禁均通过，没有建立或更新 Lint 基线。
 
@@ -103,8 +103,20 @@ adb shell am instrument -w -e class com.wxn.reader.presentation.home.dashboard.H
 - `docs/TASK5_RESUME_MANUAL.md`
 - 本文档
 
-Phase 2 达到可安装、可回归的发布检查点。版本号、GitHub Release、远端 APK 与 `SHA256SUMS.txt` 的最终信息将在本文件的发布归档段补充。
+Phase 2 已达到可安装、可回归的发布检查点，并完成远端 APK 归档。
 
 ## GitHub Release
 
-待发布 `pagenest-v1.7.260825` 后补充。
+- Release：`PageNest 1.7.260825`。
+- 标签：`pagenest-v1.7.260825`。
+- 发布源提交：`d9f94bb9e70ca1ae488d198f3744662366fce37a`。
+- GitHub Actions：`Archive Android APK Release` 运行 `32847109039` 成功；build 8 分 41 秒，release 10 秒。
+- 远端 APK：`PageNest-pagenest-v1.7.260825-debug.apk`，125,096,734 字节。
+- 远端 APK SHA-256：`FFE1E60E0A5C6F0E5B233763B6758DA0005AF8823DDADCAF8915F69DD7C0EDA0`。
+- `SHA256SUMS.txt` 声明值与下载后实算值一致。
+- 下载后包内校验：`com.air5005.pagenest`，`versionCode=8`，`versionName=1.7.260825`，`minSdk=29`，`targetSdk=36`。
+- Release 状态：最新、非草稿、非预发布。
+- Release 页面：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.7.260825>
+- Actions 页面：<https://github.com/air5005/pagenest/actions/runs/32847109039>
+
+本地与 GitHub Actions 在不同操作系统和构建环境独立生成 APK，因此二进制哈希不同；对外归档以远端 APK 哈希及同一 Release 中的 `SHA256SUMS.txt` 为准。

@@ -14,10 +14,10 @@ git status --short
 预期 `git status --short` 没有输出。本阶段验收代码提交为：
 
 ```text
-d6207de8fe2343d13456b82425144cdb591e572d
+d9f94bb9e70ca1ae488d198f3744662366fce37a
 ```
 
-Phase 1 发布提交为 `f828e6dbe5aecb4e0ccfca0d2dad4e6a10ca7760`，对应 GitHub Release `pagenest-v1.6.260825`。Phase 2 的发布证据见 `docs/testing/ui-refresh-phase2.md`；续接时始终以最新的 `origin/master` 为准。
+Phase 2 发布提交为 `d9f94bb9e70ca1ae488d198f3744662366fce37a`，对应 GitHub Release `pagenest-v1.7.260825`。完整发布证据见 `docs/testing/ui-refresh-phase2.md`；续接时始终以最新的 `origin/master` 为准。
 
 ## 2. 已完成的 UI Refresh Phase 1–2
 
@@ -33,6 +33,7 @@ Phase 1 发布提交为 `f828e6dbe5aecb4e0ccfca0d2dad4e6a10ca7760`，对应 GitH
 - 阅读活动读取失败只降级统计，不阻断首页、导入和书架。
 - 首页文案已补齐中文、德语、法语、西班牙语、葡萄牙语、日语、俄语、阿拉伯语和印地语资源。
 - API 36 模拟器的浅色、深色、导入、全部书籍、返回和重启路径已验收。
+- GitHub Release `PageNest 1.7.260825` 已发布，远端 APK 与 `SHA256SUMS.txt` 一致。
 
 设计与执行依据：
 
