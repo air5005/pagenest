@@ -299,4 +299,20 @@
     <string name="dashboard_no_recent_description">你的书已经准备好了，打开后会出现在最近阅读。</string>
     <string name="dashboard_all_books">全部书籍 %1$d</string>
     <string name="dashboard_back_to_summary">阅读概览 %1$d</string>
+    <string name="reader_back">返回书架</string>
+    <string name="reader_bookmark">为本页添加书签</string>
+    <string name="reader_more">更多阅读工具</string>
+    <string name="reader_chapters">目录</string>
+    <string name="reader_progress">进度</string>
+    <string name="reader_listen">听书</string>
+    <string name="reader_display">显示</string>
+    <string name="reader_previous_page">上一页</string>
+    <string name="reader_next_page">下一页</string>
+    <string name="reader_current_progress">当前进度 %1$.1f%%</string>
+    <string name="reader_speech_now_playing">正在听书</string>
+    <string name="reader_speech_previous">上一段朗读</string>
+    <string name="reader_speech_pause">暂停朗读</string>
+    <string name="reader_speech_play">继续朗读</string>
+    <string name="reader_speech_next">下一段朗读</string>
+    <string name="reader_speech_stop">停止朗读</string>
 </resources>
