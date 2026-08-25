@@ -1,4 +1,5 @@
 .worktrees/
+.superpowers/brainstorm/
 .gradle/
 .idea/
 **/build/
