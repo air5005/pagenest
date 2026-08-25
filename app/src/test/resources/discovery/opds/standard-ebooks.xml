@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
+  <id>https://standardebooks.org/feeds/opds</id>
+  <title>Standard Ebooks</title>
+  <link rel="next" href="https://standardebooks.org/ebooks/page-2" type="application/atom+xml;profile=opds-catalog" />
+  <entry>
+    <id>https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice</id>
+    <title>Pride and Prejudice</title>
+    <author><name>Jane Austen</name></author>
+    <summary>A carefully produced edition.</summary>
+    <updated>2026-08-25T12:00:00Z</updated>
+    <dc:language>en</dc:language>
+    <category term="Fiction" />
+    <link rel="http://opds-spec.org/image" href="https://standardebooks.org/images/pride.jpg" type="image/jpeg" />
+    <link rel="http://opds-spec.org/acquisition/open-access" href="https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice/downloads/pride-and-prejudice.epub" type="application/epub+zip" />
+    <link rel="http://opds-spec.org/acquisition/open-access" href="http://standardebooks.org/insecure.epub" type="application/epub+zip" />
+  </entry>
+</feed>

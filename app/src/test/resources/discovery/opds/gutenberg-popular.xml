@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dcterms="http://purl.org/dc/terms/">
+  <id>https://www.gutenberg.org/ebooks/search.opds/?sort_order=downloads</id>
+  <title>Project Gutenberg Popular</title>
+  <entry>
+    <id>https://www.gutenberg.org/ebooks/1342</id>
+    <title>Pride and Prejudice</title>
+    <author><name>Austen, Jane</name></author>
+    <dcterms:language>en</dcterms:language>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="https://www.gutenberg.org/ebooks/1342.epub3.images" type="application/epub+zip" />
+    <link rel="http://opds-spec.org/acquisition/open-access" href="https://www.gutenberg.org/ebooks/1342.txt.utf-8" type="text/plain" />
+  </entry>
+</feed>
