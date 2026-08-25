@@ -41,4 +41,15 @@
 
 ## 发布归档
 
-计划版本：`PageNest 1.8.260825`，标签 `pagenest-v1.8.260825`。GitHub Release、APK 与 `SHA256SUMS.txt` 的远端核验将在版本任务完成后补记。
+发布结果：
+
+- 版本：`PageNest 1.8.260825`（`versionCode 9`、`minSdk 29`）。
+- 发布源提交：`6f9347316c02d87893a3802fd3ddd5a4bff04679`。
+- 标签：`pagenest-v1.8.260825`。
+- GitHub Actions：`Archive Android APK Release` run `32856910277`，build 与 release 两个 job 均成功。
+- Release：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.8.260825>
+- APK：`PageNest-pagenest-v1.8.260825-debug.apk`，125,273,862 bytes。
+- 远端 APK 摘要：`ba2bb98c5b47d818f5cddd81267eb629aacb10ef0228d1c97364c26cdae44a0c`。
+- GitHub 资产元数据的 SHA-256 与远端 `SHA256SUMS.txt` 完全一致。
+
+本机尝试回下载整个远端 APK 时，大文件 CDN 的 TLS 握手失败；没有把未完成的 0 字节文件作为验证证据。远端完整性结论来自 GitHub 为已上传资产计算的摘要与独立发布校验清单的交叉比对。

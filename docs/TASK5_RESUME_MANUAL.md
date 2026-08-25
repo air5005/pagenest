@@ -11,13 +11,13 @@ git pull origin master
 git status --short
 ```
 
-预期 `git status --short` 没有输出。Phase 3 当前验收代码提交为：
+预期 `git status --short` 没有输出。Phase 3 发布源代码提交为：
 
 ```text
-3964ac4
+6f9347316c02d87893a3802fd3ddd5a4bff04679
 ```
 
-Phase 3 计划发布为 GitHub Release `pagenest-v1.8.260825`。完整验证证据见 `docs/testing/ui-refresh-phase3.md`；发布任务结束后，以最新的 `origin/master` 与该文档中的远端归档证据为准。
+Phase 3 已发布为 GitHub Release `pagenest-v1.8.260825`。完整验证与远端归档证据见 `docs/testing/ui-refresh-phase3.md`；续接时始终以最新的 `origin/master` 为准。
 
 ## 2. 已完成的 UI Refresh Phase 1–3
 
@@ -38,6 +38,7 @@ Phase 3 计划发布为 GitHub Release `pagenest-v1.8.260825`。完整验证证�
 - 目录、进度、听书、显示、书签与更多工具已统一到新的阅读控制区。
 - 后台朗读会话可显示迷你播放器并展开或收起完整控制面板。
 - 阅读控制区的 424 个单元测试、5 个 API 36 设备测试、APK 构建和 Lint 发布门禁已通过。
+- GitHub Release `PageNest 1.8.260825` 已发布，GitHub 资产摘要与 `SHA256SUMS.txt` 一致。
 
 设计与执行依据：
 
