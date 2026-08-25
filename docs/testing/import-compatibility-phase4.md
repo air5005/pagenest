@@ -52,8 +52,10 @@ fatal_count=0
 
 ## 发布门禁与归档
 
-版本：`versionCode 10` / `versionName 1.9.260825`  
-发布源代码：`a60fad3ed4e35354c5c42dd1e46c531165fcebf4`  
+版本：`versionCode 10` / `versionName 1.9.260825`
+
+发布源代码：`a60fad3ed4e35354c5c42dd1e46c531165fcebf4`
+
 标签：`pagenest-v1.9.260825`
 
 发布前与版本变更后的精确发布树均执行完整门禁。最终发布树结果：
