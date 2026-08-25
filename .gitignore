@@ -6,6 +6,8 @@ local.properties
 key.properties
 *.jks
 *.keystore
+*.apk
+*.aab
 google-services.json
 captures/
 .externalNativeBuild/
