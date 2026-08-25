@@ -63,18 +63,19 @@ package com.wxn.reader.ui.theme
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import androidx.compose.ui.graphics.toArgb
 
 class PageNestTokensTest {
     @Test fun brandPaletteUsesApprovedBlueGreenValues() {
-        assertEquals(0xFF18A69D, PageNestPalette.Teal.value)
-        assertEquals(0xFF397DE4, PageNestPalette.Blue.value)
-        assertEquals(0xFFF5F8F9, PageNestPalette.LightBackground.value)
-        assertEquals(0xFFF5F1E8, PageNestPalette.ReadingPaper.value)
+        assertEquals(0xFF18A69D.toInt(), PageNestPalette.Teal.toArgb())
+        assertEquals(0xFF397DE4.toInt(), PageNestPalette.Blue.toArgb())
+        assertEquals(0xFFF5F8F9.toInt(), PageNestPalette.LightBackground.toArgb())
+        assertEquals(0xFFF5F1E8.toInt(), PageNestPalette.ReadingPaper.toArgb())
     }
 
     @Test fun touchTargetsAndCardRadiusMeetTheUiContract() {
         assertEquals(48, PageNestSpacing.MinimumTouchTarget.value.toInt())
-        assertEquals(22, PageNestShapes.LargeCard.topStart.value.toInt())
+        assertEquals(22, PageNestSpacing.LargeCardRadius.value.toInt())
     }
 }
 ```
@@ -109,10 +110,11 @@ object PageNestSpacing {
     val ScreenHorizontal = 16.dp
     val CardGap = 12.dp
     val MinimumTouchTarget = 48.dp
+    val LargeCardRadius = 22.dp
 }
 
 object PageNestShapes {
-    val LargeCard = RoundedCornerShape(22.dp)
+    val LargeCard = RoundedCornerShape(PageNestSpacing.LargeCardRadius)
     val MediumCard = RoundedCornerShape(16.dp)
     val SmallControl = RoundedCornerShape(12.dp)
 }
@@ -312,6 +314,7 @@ class GettingStartedContentTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun showsPageNestBrandAndExposesBothActions() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
         var selected = false
         var skipped = false
         compose.setContent {
@@ -325,7 +328,7 @@ class GettingStartedContentTest {
         }
 
         compose.onNodeWithTag("pagenest_onboarding").assertIsDisplayed()
-        compose.onNodeWithText("欢迎来到页栖").assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.welcome_to_uread)).assertIsDisplayed()
         compose.onNodeWithTag("pagenest_select_directory").performClick()
         compose.onNodeWithTag("pagenest_skip").performClick()
         assertTrue(selected)
