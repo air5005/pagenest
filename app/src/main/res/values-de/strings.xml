@@ -1,5 +1,5 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">Einfach Leser</string>
+    <string name="app_name">PageNest</string>
     <string name="highlight">Hervorheben</string>
     <string name="underline">Unterstreichen</string>
     <string name="note">Notiz</string>
@@ -27,8 +27,8 @@
     <string name="cancel">Abbrechen</string>
     <string name="all_books">Alle Bücher</string>
     <string name="unlock_premium">Premium freischalten</string>
-    <string name="unlock_uread_premium">Handy Reader Premium freischalten</string>
-    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Schalten Sie alle Premium-Funktionen frei und genießen Sie das beste Leseerlebnis mit Handy Reader Premium.</string>
+    <string name="unlock_uread_premium">PageNest Premium freischalten</string>
+    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Schalten Sie alle Premium-Funktionen frei und genießen Sie das beste Leseerlebnis mit PageNest Premium.</string>
     <string name="remove_ads">Werbung entfernen</string>
     <string name="get_full_access_to_custom_app_theme">Erhalten Sie vollen Zugriff auf benutzerdefinierte App-Themes</string>
     <string name="get_unlimited_number_of_shelves">Erhalten Sie unbegrenzte Anzahl von Regalen</string>
@@ -224,7 +224,7 @@
     <string name="narrator">Sprecher</string>
     <string name="translated_text">Übersetzter Text: [API-Aufrufergebnis für \"%1$s\"]</string>
     <!-- 德语 /app/src/main/res/values-de/strings.xml -->
-    <string name="welcome_to_uread">Willkommen bei Einfach Leser</string>
+    <string name="welcome_to_uread">Willkommen bei PageNest</string>
     <string name="remove_note">Notiz entfernen</string>
     <string name="dialog_content_remove_note">Möchten Sie diese Notiz wirklich löschen?</string>
     <string name="ok">OK</string>

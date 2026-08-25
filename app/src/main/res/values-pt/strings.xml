@@ -1,5 +1,5 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">Leitor Ágil</string>
+    <string name="app_name">PageNest</string>
     <string name="highlight">Destacar</string>
     <string name="underline">Sublinhar</string>
     <string name="note">Nota</string>
@@ -27,8 +27,8 @@
     <string name="cancel">Cancelar</string>
     <string name="all_books">Todos os Livros</string>
     <string name="unlock_premium">Desbloquear Premium</string>
-    <string name="unlock_uread_premium">Desbloquear Handy Reader Premium</string>
-    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Desbloqueie todos os recursos premium e tenha a melhor experiência de leitura com o Handy Reader Premium.</string>
+    <string name="unlock_uread_premium">Desbloquear PageNest Premium</string>
+    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Desbloqueie todos os recursos premium e tenha a melhor experiência de leitura com o PageNest Premium.</string>
     <string name="remove_ads">Remover anúncios</string>
     <string name="get_full_access_to_custom_app_theme">Tenha acesso total ao tema personalizado do aplicativo</string>
     <string name="get_unlimited_number_of_shelves">Tenha número ilimitado de prateleiras</string>
@@ -112,7 +112,6 @@
     <string name="text_color">Cor do Texto</string>
     <string name="select_color">Selecionar Cor de %1$s</string>
     <string name="no_books_in">Sem livros em %1$s</string>
-<!--    <string name="welcome_to_uread">Bem-vindo ao Handy Reader!</string>-->
     <string name="to_get_started_please_select_a_directory_where_you_would_like_to_load_your_books">Para começar, selecione um diretório onde gostaria de carregar seus livros.</string>
     <string name="select_directory">Selecionar local do Diretório</string>
     <string name="select_scan_directory">Selecionar Diretório para Digitalização</string>
@@ -222,7 +221,7 @@
     <string name="subjects_with_comma">Assuntos (separados por vírgulas)</string>
     <string name="narrator">Narrador</string>
     <string name="translated_text">Texto traduzido: [Resultado de chamada de API para \"%1$s\"]</string>
-    <string name="welcome_to_uread">Bem-vindo/a ao Leitor Ágil</string>
+    <string name="welcome_to_uread">Bem-vindo/a ao PageNest</string>
     <string name="remove_note">Remover nota</string>
     <string name="dialog_content_remove_note">Tem certeza de que deseja remover esta nota?</string>
     <string name="ok">OK</string>
