@@ -302,4 +302,21 @@
     <string name="dashboard_no_recent_description">كتبك جاهزة. ستظهر الكتب المفتوحة هنا.</string>
     <string name="dashboard_all_books">كل الكتب %1$d</string>
     <string name="dashboard_back_to_summary">ملخص القراءة %1$d</string>
+    <string name="reader_back">العودة إلى المكتبة</string>
+    <string name="reader_bookmark">إضافة إشارة مرجعية لهذه الصفحة</string>
+    <string name="reader_more">المزيد من أدوات القراءة</string>
+    <string name="reader_chapters">المحتويات</string>
+    <string name="reader_progress">التقدم</string>
+    <string name="reader_listen">استماع</string>
+    <string name="reader_display">العرض</string>
+    <string name="reader_previous_page">الصفحة السابقة</string>
+    <string name="reader_next_page">الصفحة التالية</string>
+    <string name="reader_current_progress">التقدم الحالي %1$.1f%%</string>
+    <string name="reader_speech_now_playing">الاستماع الآن</string>
+    <string name="reader_speech_previous">الفقرة السابقة</string>
+    <string name="reader_speech_pause">إيقاف القراءة مؤقتًا</string>
+    <string name="reader_speech_play">متابعة القراءة</string>
+    <string name="reader_speech_next">الفقرة التالية</string>
+    <string name="reader_speech_stop">إيقاف القراءة</string>
+    <string name="reader_speech_collapse">طي إعدادات الصوت</string>
 </resources>

@@ -300,4 +300,21 @@
     <string name="dashboard_no_recent_description">Vos livres sont prêts. Les livres ouverts apparaîtront ici.</string>
     <string name="dashboard_all_books">Tous les livres %1$d</string>
     <string name="dashboard_back_to_summary">Aperçu de lecture %1$d</string>
+    <string name="reader_back">Retour à la bibliothèque</string>
+    <string name="reader_bookmark">Marquer cette page</string>
+    <string name="reader_more">Plus d’outils de lecture</string>
+    <string name="reader_chapters">Sommaire</string>
+    <string name="reader_progress">Progression</string>
+    <string name="reader_listen">Écouter</string>
+    <string name="reader_display">Affichage</string>
+    <string name="reader_previous_page">Page précédente</string>
+    <string name="reader_next_page">Page suivante</string>
+    <string name="reader_current_progress">Progression actuelle %1$.1f%%</string>
+    <string name="reader_speech_now_playing">Lecture en cours</string>
+    <string name="reader_speech_previous">Paragraphe précédent</string>
+    <string name="reader_speech_pause">Mettre en pause</string>
+    <string name="reader_speech_play">Reprendre la lecture</string>
+    <string name="reader_speech_next">Paragraphe suivant</string>
+    <string name="reader_speech_stop">Arrêter la lecture</string>
+    <string name="reader_speech_collapse">Réduire les réglages vocaux</string>
 </resources>

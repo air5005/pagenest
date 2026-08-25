@@ -301,4 +301,21 @@
     <string name="dashboard_no_recent_description">आपकी पुस्तकें तैयार हैं। खोली गई पुस्तकें यहाँ दिखेंगी।</string>
     <string name="dashboard_all_books">सभी पुस्तकें %1$d</string>
     <string name="dashboard_back_to_summary">पठन सारांश %1$d</string>
+    <string name="reader_back">लाइब्रेरी पर वापस जाएँ</string>
+    <string name="reader_bookmark">इस पृष्ठ को बुकमार्क करें</string>
+    <string name="reader_more">अधिक पठन उपकरण</string>
+    <string name="reader_chapters">विषय-सूची</string>
+    <string name="reader_progress">प्रगति</string>
+    <string name="reader_listen">सुनें</string>
+    <string name="reader_display">दिखावट</string>
+    <string name="reader_previous_page">पिछला पृष्ठ</string>
+    <string name="reader_next_page">अगला पृष्ठ</string>
+    <string name="reader_current_progress">वर्तमान प्रगति %1$.1f%%</string>
+    <string name="reader_speech_now_playing">अभी सुन रहे हैं</string>
+    <string name="reader_speech_previous">पिछला अनुच्छेद</string>
+    <string name="reader_speech_pause">पठन रोकें</string>
+    <string name="reader_speech_play">पठन जारी रखें</string>
+    <string name="reader_speech_next">अगला अनुच्छेद</string>
+    <string name="reader_speech_stop">पठन बंद करें</string>
+    <string name="reader_speech_collapse">वॉइस सेटिंग समेटें</string>
 </resources>

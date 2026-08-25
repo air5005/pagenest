@@ -300,4 +300,21 @@
     <string name="dashboard_no_recent_description">Ваши книги готовы. Открытые книги появятся здесь.</string>
     <string name="dashboard_all_books">Все книги %1$d</string>
     <string name="dashboard_back_to_summary">Обзор чтения %1$d</string>
+    <string name="reader_back">Вернуться в библиотеку</string>
+    <string name="reader_bookmark">Добавить страницу в закладки</string>
+    <string name="reader_more">Другие инструменты чтения</string>
+    <string name="reader_chapters">Оглавление</string>
+    <string name="reader_progress">Прогресс</string>
+    <string name="reader_listen">Слушать</string>
+    <string name="reader_display">Отображение</string>
+    <string name="reader_previous_page">Предыдущая страница</string>
+    <string name="reader_next_page">Следующая страница</string>
+    <string name="reader_current_progress">Текущий прогресс %1$.1f%%</string>
+    <string name="reader_speech_now_playing">Идёт чтение</string>
+    <string name="reader_speech_previous">Предыдущий абзац</string>
+    <string name="reader_speech_pause">Приостановить чтение</string>
+    <string name="reader_speech_play">Продолжить чтение</string>
+    <string name="reader_speech_next">Следующий абзац</string>
+    <string name="reader_speech_stop">Остановить чтение</string>
+    <string name="reader_speech_collapse">Свернуть настройки речи</string>
 </resources>

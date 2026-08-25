@@ -1,6 +1,7 @@
 .worktrees/
 .superpowers/brainstorm/
 .gradle/
+.kotlin/
 .idea/
 **/build/
 local.properties

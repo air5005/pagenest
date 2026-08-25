@@ -299,4 +299,21 @@
     <string name="dashboard_no_recent_description">Tus libros están listos. Los que abras aparecerán aquí.</string>
     <string name="dashboard_all_books">Todos los libros %1$d</string>
     <string name="dashboard_back_to_summary">Resumen de lectura %1$d</string>
+    <string name="reader_back">Volver a la biblioteca</string>
+    <string name="reader_bookmark">Marcar esta página</string>
+    <string name="reader_more">Más herramientas de lectura</string>
+    <string name="reader_chapters">Índice</string>
+    <string name="reader_progress">Progreso</string>
+    <string name="reader_listen">Escuchar</string>
+    <string name="reader_display">Pantalla</string>
+    <string name="reader_previous_page">Página anterior</string>
+    <string name="reader_next_page">Página siguiente</string>
+    <string name="reader_current_progress">Progreso actual %1$.1f%%</string>
+    <string name="reader_speech_now_playing">Escuchando ahora</string>
+    <string name="reader_speech_previous">Párrafo anterior</string>
+    <string name="reader_speech_pause">Pausar lectura</string>
+    <string name="reader_speech_play">Continuar lectura</string>
+    <string name="reader_speech_next">Párrafo siguiente</string>
+    <string name="reader_speech_stop">Detener lectura</string>
+    <string name="reader_speech_collapse">Contraer ajustes de voz</string>
 </resources>

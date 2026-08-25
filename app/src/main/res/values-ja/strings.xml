@@ -300,4 +300,21 @@
     <string name="dashboard_no_recent_description">本の準備ができています。開いた本はここに表示されます。</string>
     <string name="dashboard_all_books">すべての本 %1$d</string>
     <string name="dashboard_back_to_summary">読書概要 %1$d</string>
+    <string name="reader_back">ライブラリに戻る</string>
+    <string name="reader_bookmark">このページをブックマーク</string>
+    <string name="reader_more">その他の読書ツール</string>
+    <string name="reader_chapters">目次</string>
+    <string name="reader_progress">進捗</string>
+    <string name="reader_listen">読み上げ</string>
+    <string name="reader_display">表示</string>
+    <string name="reader_previous_page">前のページ</string>
+    <string name="reader_next_page">次のページ</string>
+    <string name="reader_current_progress">現在の進捗 %1$.1f%%</string>
+    <string name="reader_speech_now_playing">読み上げ中</string>
+    <string name="reader_speech_previous">前の段落</string>
+    <string name="reader_speech_pause">読み上げを一時停止</string>
+    <string name="reader_speech_play">読み上げを再開</string>
+    <string name="reader_speech_next">次の段落</string>
+    <string name="reader_speech_stop">読み上げを停止</string>
+    <string name="reader_speech_collapse">音声設定を閉じる</string>
 </resources>
