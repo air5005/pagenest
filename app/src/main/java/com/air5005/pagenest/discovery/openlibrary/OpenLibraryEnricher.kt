@@ -22,7 +22,7 @@ import kotlinx.coroutines.yield
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
-interface OnlineBookEnricher {
+fun interface OnlineBookEnricher {
     suspend fun enrich(book: OnlineBook): OpenLibraryMetadata?
 }
 
