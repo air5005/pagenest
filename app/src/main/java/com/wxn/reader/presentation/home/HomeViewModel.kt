@@ -169,7 +169,14 @@ class HomeViewModel
                 launch { observeBooks(preferences) }
                 launch { observeAppPreferences() }
                 if (preferences.scanDirectories.isEmpty()) {
-                    launch { addPublicDomainBooksIfNeeded() }
+                    launch {
+                        when (seedPublicDomainBookSafely { addPublicDomainBooksIfNeeded() }) {
+                            PublicDomainBookSeedResult.Seeded -> Unit
+                            PublicDomainBookSeedResult.Failed -> Logger.e(
+                                "HomeViewModel: optional public-domain sample could not be loaded",
+                            )
+                        }
+                    }
                 }
             }
         }
