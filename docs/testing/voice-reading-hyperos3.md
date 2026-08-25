@@ -119,6 +119,12 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 
 普通自动化测试禁止调用真实 Azure；真实 Key 只用于本节的人工连接验收。
 
+首次启用“在线”或“自动”模式时必须额外验证：
+
+- 提示内容逐字为“在线朗读会将当前段落文本发送给 Azure 生成语音，是否继续？”。
+- 选择“取消”后保持未授权，当前段落不得产生 Azure 请求或开始在线播放。
+- 再次发起并选择“同意”后保存授权，本次操作只启动一次；后续已授权操作不应重复弹窗。
+
 ## 5. HyperOS 后台与媒体控制设置
 
 为了验证“用户允许后台朗读”这一产品路径：
@@ -150,6 +156,8 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 | --- | --- | --- |
 | 系统中文离线音色 | 无网络也能朗读 | NOT RUN |
 | 有效 Azure Key + Region | 在线中文音色成功 | NOT RUN |
+| 首次在线提示后取消 | 明确说明发送当前段落；Azure 请求数为 0 | NOT RUN |
+| 首次在线提示后同意 | 保存授权并且只启动一次在线请求 | NOT RUN |
 | 无效 Key | 显示明确认证错误，不泄露 Key | NOT RUN |
 | 错误 Region | 显示 Region 错误 | NOT RUN |
 | Wi-Fi 切移动网络 | 当前会话可继续或同段回退，无重音 | NOT RUN |
@@ -165,14 +173,42 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 
 ## 8. 连续 60 分钟人工检查表
 
-开始前清理旧日志并记录基线：
+开始前建立本机临时证据目录、清理旧日志并记录基线：
 
 ```powershell
+$evidenceRoot = Join-Path $env:TEMP ("PageNest-HyperOS3-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+New-Item -ItemType Directory -Path $evidenceRoot | Out-Null
+Set-Content -LiteralPath (Join-Path $env:TEMP 'PageNest-HyperOS3-current.txt') -Value $evidenceRoot
 adb logcat -c
-adb shell dumpsys battery
-adb shell dumpsys meminfo com.air5005.pagenest
-adb shell dumpsys thermalservice
+adb shell dumpsys battery | Tee-Object -FilePath (Join-Path $evidenceRoot 'battery-start.txt')
+adb shell dumpsys meminfo com.air5005.pagenest | Tee-Object -FilePath (Join-Path $evidenceRoot 'meminfo-start.txt')
+adb shell dumpsys thermalservice | Tee-Object -FilePath (Join-Path $evidenceRoot 'thermal-start.txt')
 ```
+
+另开一个 PowerShell 窗口执行下面的 60 分钟内存采样。它每分钟提取一次 `TOTAL PSS`，保存原始样本，并在结束时生成可复核的峰值；采样窗口必须覆盖整个连续朗读过程：
+
+```powershell
+$evidenceRoot = Get-Content -LiteralPath (Join-Path $env:TEMP 'PageNest-HyperOS3-current.txt')
+$csv = Join-Path $evidenceRoot 'total-pss-60min.csv'
+'Timestamp,TotalPssKb' | Set-Content -LiteralPath $csv -Encoding utf8
+$sampleUntil = (Get-Date).AddMinutes(60)
+while ((Get-Date) -le $sampleUntil) {
+    $meminfo = adb shell dumpsys meminfo com.air5005.pagenest
+    $match = [regex]::Match(($meminfo -join "`n"), 'TOTAL PSS:\s*(\d+)')
+    if (-not $match.Success) {
+        throw '无法从 dumpsys meminfo 提取 TOTAL PSS；保留当前输出并停止验收'
+    }
+    '"{0}",{1}' -f (Get-Date -Format o), $match.Groups[1].Value |
+        Add-Content -LiteralPath $csv -Encoding utf8
+    if ((Get-Date) -le $sampleUntil) { Start-Sleep -Seconds 60 }
+}
+$samples = Import-Csv -LiteralPath $csv
+$peak = ($samples | Measure-Object -Property TotalPssKb -Maximum).Maximum
+"SampleCount=$($samples.Count) PeakTotalPssKb=$peak" |
+    Tee-Object -FilePath (Join-Path $evidenceRoot 'total-pss-summary.txt')
+```
+
+预期至少获得 60 个有效样本。采样命令失败、应用进程消失或样本不足时，本轮 60 分钟门禁判为 FAIL，不得用开始/结束两个瞬时值冒充峰值。
 
 - [ ] 00:00：记录开始时间、环境温度、设备体感温度、电量、充电状态、网络和引擎。
 - [ ] 00:05：锁屏并熄屏，确认语音持续且媒体通知可操作。
@@ -187,18 +223,20 @@ adb shell dumpsys thermalservice
 结束时采集：
 
 ```powershell
-adb shell dumpsys battery
-adb shell dumpsys meminfo com.air5005.pagenest
-adb shell dumpsys thermalservice
-adb logcat -d -b crash
-adb logcat -d | Select-String -Pattern 'ANR in com.air5005.pagenest|FATAL EXCEPTION'
+adb shell dumpsys battery | Tee-Object -FilePath (Join-Path $evidenceRoot 'battery-end.txt')
+adb shell dumpsys meminfo com.air5005.pagenest | Tee-Object -FilePath (Join-Path $evidenceRoot 'meminfo-end.txt')
+adb shell dumpsys thermalservice | Tee-Object -FilePath (Join-Path $evidenceRoot 'thermal-end.txt')
+adb logcat -d -b crash | Tee-Object -FilePath (Join-Path $evidenceRoot 'logcat-crash.txt')
+adb logcat -d | Select-String -Pattern 'ANR in com.air5005.pagenest|FATAL EXCEPTION' |
+    Tee-Object -FilePath (Join-Path $evidenceRoot 'logcat-anr-fatal.txt')
+Write-Output "Evidence: $evidenceRoot"
 ```
 
 | 60 分钟证据 | 实际值 |
 | --- | --- |
 | 开始/结束时间 | NOT RUN |
 | 开始/结束电量 | NOT RUN |
-| 峰值 TOTAL PSS | NOT RUN |
+| TOTAL PSS 样本数/峰值/证据 CSV | NOT RUN |
 | 观察到的设备温度 | NOT RUN |
 | Crash buffer | NOT RUN |
 | ANR/FATAL 扫描 | NOT RUN |
