@@ -12,5 +12,6 @@ key.properties
 *.aab
 google-services.json
 captures/
+release/
 .externalNativeBuild/
 .cxx/
