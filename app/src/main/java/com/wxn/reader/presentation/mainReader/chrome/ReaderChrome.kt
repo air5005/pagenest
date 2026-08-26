@@ -43,6 +43,11 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -68,7 +73,7 @@ fun ReaderChrome(
     onMore: () -> Unit,
     onChapters: () -> Unit,
     onProgressToggle: () -> Unit,
-    onProgressChange: (Double) -> Unit,
+    onProgressChange: (Double) -> Boolean,
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit,
     onSpeech: () -> Unit,
@@ -279,11 +284,15 @@ private fun ReaderAction(
 @Composable
 private fun ReaderProgressPanel(
     progression: Double,
-    onProgressChange: (Double) -> Unit,
+    onProgressChange: (Double) -> Boolean,
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit,
 ) {
     val safeProgress = progression.coerceIn(0.0, 1.0)
+    var scrubState by remember { mutableStateOf(ReaderProgressScrubState(safeProgress)) }
+    LaunchedEffect(safeProgress) {
+        scrubState = scrubState.synchronize(safeProgress)
+    }
     Surface(
         modifier = Modifier.fillMaxWidth().testTag("reader_progress_panel"),
         shape = RoundedCornerShape(22.dp),
@@ -297,8 +306,16 @@ private fun ReaderProgressPanel(
                     Icon(Icons.AutoMirrored.Sharp.ArrowBack, stringResource(R.string.reader_previous_page))
                 }
                 Slider(
-                    value = safeProgress.toFloat(),
-                    onValueChange = { onProgressChange(it.toDouble()) },
+                    value = scrubState.previewProgress.toFloat(),
+                    onValueChange = { scrubState = scrubState.preview(it.toDouble()) },
+                    onValueChangeFinished = {
+                        val target = scrubState.previewProgress
+                        scrubState = if (onProgressChange(target)) {
+                            scrubState.finish()
+                        } else {
+                            scrubState.cancel(safeProgress)
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = onNextPage) {
@@ -306,7 +323,7 @@ private fun ReaderProgressPanel(
                 }
             }
             Text(
-                text = stringResource(R.string.reader_current_progress, safeProgress * 100),
+                text = stringResource(R.string.reader_current_progress, scrubState.previewProgress * 100),
                 modifier = Modifier.align(Alignment.CenterHorizontally),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

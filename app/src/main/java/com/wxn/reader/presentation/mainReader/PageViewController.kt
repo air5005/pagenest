@@ -240,14 +240,14 @@ open class PageViewController @Inject constructor(
      */
     private var onInitChapterLoadListener: ((Boolean) -> Unit)? = null
 
-    @Volatile
-    var isCalcChapterWords: Boolean = false
+    private val chapterWordCalculationStatus = ChapterWordCalculationStatus()
+    val isCalcChapterWords: Boolean
+        get() = chapterWordCalculationStatus.isRunning
 
     /****
      * 计算每一章节的字数，已经进度，便于计算用户阅读进度
      */
-    suspend fun calcChaptersWords(book: Book) {
-        isCalcChapterWords = true
+    suspend fun calcChaptersWords(book: Book) = chapterWordCalculationStatus.track {
         val start = System.currentTimeMillis()
         val chapterIndexWords: ArrayList<Triple<Int, Int, Int>> = arrayListOf()
         val wordCountTriple = BookHelper.loadWordCount(context, book, textParser)
@@ -291,7 +291,6 @@ open class PageViewController @Inject constructor(
             }
             updateBookUseCase.invoke(book)
         }
-        isCalcChapterWords = false
         Logger.d("PageViewController::calcChapterWords:totalWordCount=${totalWordCount}, spend=${System.currentTimeMillis() - start}")
     }
 

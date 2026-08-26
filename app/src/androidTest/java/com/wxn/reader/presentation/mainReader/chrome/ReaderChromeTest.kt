@@ -114,7 +114,7 @@ class ReaderChromeTest {
             onMore = {},
             onChapters = {},
             onProgressToggle = onProgressToggle,
-            onProgressChange = {},
+            onProgressChange = { true },
             onPreviousPage = {},
             onNextPage = {},
             onSpeech = {},
