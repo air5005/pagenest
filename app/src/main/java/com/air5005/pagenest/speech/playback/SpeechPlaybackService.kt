@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.os.Build
 import android.os.Looper
 import androidx.annotation.OptIn as AndroidxOptIn
+import androidx.core.app.NotificationCompat
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.DefaultMediaNotificationProvider
@@ -53,6 +54,15 @@ class SpeechPlaybackService : MediaSessionService() {
                 ),
             )
         }
+        startForeground(
+            NOTIFICATION_ID,
+            NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentTitle(getString(R.string.reader_speech_now_playing))
+                .setOngoing(true)
+                .setSilent(true)
+                .build(),
+        )
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider(
                 this,
