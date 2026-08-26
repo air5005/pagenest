@@ -54,6 +54,7 @@ Phase 4 已发布为 GitHub Release `pagenest-v1.9.260825`。完整验证与远�
 - Phase 3 发布候选树的 533 个 JVM 测试、主 APK、测试 APK 和 Lint 门禁已通过；无连接设备，模拟器与 HyperOS 3 验收仍待执行。
 - GitHub Release `PageNest 1.11.260826` 已发布，远程 APK、`SHA256SUMS.txt`、GitHub 资产摘要与包内版本信息已交叉验证。
 - PageNest 1.12.260826 新增应用内日志中心、2 MiB 有界轮转日志、脱敏与重复抑制，并修复实机发现页无搜索键、导入结果遮屏、重启重复扫描三项问题；验证证据见 `docs/testing/diagnostics-logging.md`。
+- GitHub Release `PageNest 1.12.260826` 已发布；远端 APK、校验文件与包内版本已验证。由于 CI debug 签名不固定，覆盖旧版失败时需先卸载旧版再安装。
 
 设计与执行依据：
 

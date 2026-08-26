@@ -26,4 +26,9 @@
 
 ## 远端归档
 
-待 GitHub Release `pagenest-v1.12.260826` 工作流完成后补充远端资产摘要与下载校验结果。
+- GitHub Actions run `32930204359` 成功；build 7m54s，release 13s。
+- Release：`https://github.com/air5005/pagenest/releases/tag/pagenest-v1.12.260826`。
+- 远端 APK：`PageNest-pagenest-v1.12.260826-debug.apk`，126,185,402 bytes。
+- 远端 SHA-256：`bf067e7f33ec6a51fb9ba68d26d68ce3cc2dfa1817f002b85e0d222579ea3434`。
+- 下载后的 APK 与远端 `SHA256SUMS.txt` 完全一致；包内再次确认为 `com.air5005.pagenest`、versionCode `13`、versionName `1.12.260826`、minSdk `29`、targetSdk `36`。
+- 本地与远端 APK 哈希不同是 GitHub 临时调试签名造成的预期差异；发布资产自身的摘要校验已通过。不同工作流运行生成的 debug APK 可能无法覆盖安装，遇到签名不一致需卸载旧版后安装，会清除旧版应用数据。
