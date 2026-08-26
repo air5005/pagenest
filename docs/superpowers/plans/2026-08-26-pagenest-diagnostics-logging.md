@@ -61,12 +61,12 @@
 - Produces: `RotatingDiagnosticLogStore(directory, maxFileBytes = 524288, maxFiles = 4)`.
 - Produces: `DiagnosticLogThrottle(windowMillis = 10000).accept(entry, nowMillis): ThrottleDecision`, including suppressed duplicate count.
 
-- [ ] Write file-store tests for newest-first reads, 500-entry limit, pre-append rotation, four-file retention, total size boundary, clear, invalid-file cleanup, corrupt-line tolerance, and concurrent appends.
-- [ ] Run `:base:testDebugUnitTest --tests '*RotatingDiagnosticLogStoreTest'` and observe missing types.
-- [ ] Implement synchronized append/rotate/read/clear/flush and rerun until green.
-- [ ] Write throttle tests for first acceptance, duplicate suppression inside 10 seconds, distinct level/category/message acceptance, and next-entry suppression summary.
-- [ ] Run `:base:testDebugUnitTest --tests '*DiagnosticLogThrottleTest'` and observe missing behavior.
-- [ ] Implement bounded fingerprint state and rerun both focused suites until green.
+- [x] Write file-store tests for newest-first reads, 500-entry limit, pre-append rotation, four-file retention, total size boundary, clear, invalid-file cleanup, corrupt-line tolerance, and concurrent appends.
+- [x] Run `:base:testDebugUnitTest --tests '*RotatingDiagnosticLogStoreTest'` and observe missing types.
+- [x] Implement synchronized append/rotate/read/clear/flush and rerun until green.
+- [x] Write throttle tests for first acceptance, duplicate suppression inside 10 seconds, distinct level/category/message acceptance, and next-entry suppression summary.
+- [x] Run `:base:testDebugUnitTest --tests '*DiagnosticLogThrottleTest'` and observe missing behavior.
+- [x] Implement bounded fingerprint state and rerun both focused suites until green.
 - [ ] Commit and push with `feat: bound and throttle diagnostic files`.
 
 ### Task 3: Integrate Logger and crash delegation
