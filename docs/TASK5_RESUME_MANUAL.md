@@ -1,6 +1,6 @@
 # PageNest 续接手册（重启或换机）
 
-本仓库直接在 `master` 开发。UI Refresh Phase 4、Online Discovery Phase 1 数据核心以及 Phase 2 发现页面/详情页面/四项导航均已完成。当前优先入口是 **Online Discovery Phase 3：安全下载、私有书库导入并打开阅读器**。HyperOS 3 真机验收在目标手机连接后继续。
+本仓库直接在 `master` 开发。Online Discovery Phase 3 的安全下载、私有书库导入、一键加入书架和打开阅读器已完成。当前优先入口是 **HyperOS 3 ARM64 真机验收**；目标手机未连接时不得用电脑或 x86_64 结果替代。
 
 ## 1. 恢复工作区
 
@@ -50,6 +50,8 @@ Phase 4 已发布为 GitHub Release `pagenest-v1.9.260825`。完整验证与远�
 - Standard Ebooks 完整 OPDS 可能需要会员身份或开源项目授权；未配置凭据时按可用性降级，不阻断其他来源。
 - Online Discovery Phase 2 已加入蓝绿发现页、在线详情、Open Library 1 秒限流与 24 小时缓存、安全来源跳转和四项底部导航。
 - Phase 2 发布树的 495 个 JVM 测试、主 APK、测试 APK 与 Lint 门禁已通过；本轮无连接设备，Compose 测试只完成编译，HyperOS 3 结论仍待真机。
+- Online Discovery Phase 3 已完成 HTTPS/重定向/私网防护、100 MiB 上限、EPUB/TXT/PDF 验证、取消清理、私有书库导入、重复保护和阅读器跳转。
+- Phase 3 发布候选树的 533 个 JVM 测试、主 APK、测试 APK 和 Lint 门禁已通过；无连接设备，模拟器与 HyperOS 3 验收仍待执行。
 
 设计与执行依据：
 
@@ -70,19 +72,20 @@ Phase 4 已发布为 GitHub Release `pagenest-v1.9.260825`。完整验证与远�
 - `docs/testing/online-discovery-phase1.md`
 - `docs/superpowers/plans/2026-08-26-pagenest-online-discovery-phase2-ui.md`
 - `docs/testing/online-discovery-phase2.md`
+- `docs/superpowers/specs/2026-08-26-pagenest-online-discovery-phase3-design.md`
+- `docs/superpowers/plans/2026-08-26-pagenest-online-discovery-phase3-secure-import.md`
+- `docs/testing/online-discovery-phase3.md`
 
 ## 3. 下一开发入口
 
-继续 **Online Discovery Phase 3**。先用 Superpower brainstorming 固化安全下载与导入设计，再写独立实施计划并按 TDD 分任务推进：
+在目标手机连接后继续 **Online Discovery Phase 3 真机验收**：
 
-1. 只接受 Phase 1 已标记为免费全文的 HTTPS EPUB/TXT/PDF 获取项。
-2. 每次重定向与最终地址都重新校验协议、允许主机、端口和私网边界。
-3. 执行 100 MiB 上限、超时、媒体类型、文件头、临时文件同步和取消清理。
-4. 复用现有 `BookImportService` 与私有书库校验，处理重复导入和安全文件名。
-5. 导入成功后进入现有阅读器并保持进度；失败不能留下半成品或绕过验证。
-6. 每个任务红灯、绿灯、回归验证后分别提交并推送 `origin/master`。
+1. 运行真机预检并确认 Android 16 / SDK 36 / HyperOS 3 / `arm64-v8a`。
+2. 在真实网络分别验收 EPUB、TXT 和可提取文字 PDF 的加入书架、开始阅读和进度保存。
+3. 验收重复导入、弱网、取消、返回和应用重启后的半成品清理。
+4. 联合验收后台语音、锁屏控制、音频焦点与 60 分钟运行矩阵。
 
-Phase 1 与 Phase 2 的证据和限制分别见 `docs/testing/online-discovery-phase1.md`、`docs/testing/online-discovery-phase2.md`。
+Phase 1–3 的证据和限制分别见 `docs/testing/online-discovery-phase1.md`、`docs/testing/online-discovery-phase2.md` 和 `docs/testing/online-discovery-phase3.md`。
 
 ## 4. HyperOS 3 真机入口（设备连接后）
 

@@ -130,10 +130,10 @@ git push origin master
 - Create `docs/testing/online-discovery-phase3.md`.
 - Update `docs/TASK5_RESUME_MANUAL.md`.
 
-- [ ] Run all JVM tests, debug APK, Android-test APK and Lint; Lint errors must remain 0.
-- [ ] If API 36 emulator is available, run fixture-backed TXT download→import→open acceptance and discovery UI tests; never replace ARM64 conclusions with x86_64.
-- [ ] If HyperOS 3 ARM64 is connected, run EPUB/TXT/PDF and weak-network cancellation matrix; otherwise explicitly leave it pending.
-- [ ] Record exact counts, digests, package metadata, limitations and next entry.
+- [x] Run all JVM tests, debug APK, Android-test APK and Lint; Lint errors must remain 0.
+- [x] If API 36 emulator is available, run fixture-backed TXT download→import→open acceptance and discovery UI tests; never replace ARM64 conclusions with x86_64.
+- [x] If HyperOS 3 ARM64 is connected, run EPUB/TXT/PDF and weak-network cancellation matrix; otherwise explicitly leave it pending.
+- [x] Record exact counts, digests, package metadata, limitations and next entry.
 - [ ] Commit/push checkpoint and prove local HEAD equals `origin/master`.
 - [ ] Tag `pagenest-v1.11.260826`, wait for GitHub Actions, and verify downloaded Release APK against `SHA256SUMS.txt` and package metadata.
 
