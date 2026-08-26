@@ -50,7 +50,18 @@ $env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
 
 ## 4. GitHub Release 归档
 
-待标签 `pagenest-v1.11.260826` 触发工作流后回填发布页、Actions 运行、远程 APK 摘要、`SHA256SUMS.txt` 一致性与包元数据。
+- 发布源提交：`e77e8b486d64d8d4bd988df74f8bb312d4490623`。
+- Release：`pagenest-v1.11.260826`。
+- 发布页：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.11.260826>。
+- GitHub Actions：<https://github.com/air5005/pagenest/actions/runs/32915266557>，build（7 分 35 秒）和 release（13 秒）均成功。
+- 远程 APK：`PageNest-pagenest-v1.11.260826-debug.apk`，126,027,498 字节。
+- 远程 SHA-256：`1dfcef40087439dda1201970c84d364e0d7038a73b2536518a5919db58e82d99`。
+- 下载后实算摘要与远程 `SHA256SUMS.txt` 完全一致，GitHub 资产 `digest` 也一致。
+- `SHA256SUMS.txt` 大小 107 字节，GitHub 资产 SHA-256 为 `30a8c09ee20fdc9c329b28b882a8c4be4da922aa40bf5b95eeaa560410133de7`。
+- 远程 APK 包内元数据确认为 `com.air5005.pagenest`、versionCode 12、versionName `1.11.260826`、minSdk 29、targetSdk 36。
+- Release 为正式非草稿、非预发布版本。
+
+本机与 GitHub Actions 使用不同构建环境，调试签名 APK 的字节大小及摘要可以不同；对外归档以 Release 内 APK 与同一 Release 的 `SHA256SUMS.txt` 匹配为验收依据。
 
 ## 5. 下一续接入口
 
