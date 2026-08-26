@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
+import com.wxn.base.util.Logger
 import com.air5005.pagenest.speech.content.SpeechContentSource
 import com.air5005.pagenest.speech.engine.RoutingSpeechEngine
 import com.air5005.pagenest.speech.engine.SpeechEngineRouter
@@ -48,6 +49,7 @@ class ReaderSpeechManager @Inject constructor(
 
     private var pending: PendingReader? = null
     private var activeSession: SpeechSession? = null
+    private var lastLoggedRoute: SpeechRouteIndicator? = null
     val isActive: Boolean
         get() = when (playbackSnapshot.value.playbackState) {
             is com.air5005.pagenest.speech.model.SpeechPlaybackState.Preparing,
@@ -75,6 +77,7 @@ class ReaderSpeechManager @Inject constructor(
             }
             pending = null
             val preferences = preferencesRepository.preferences.first()
+            Logger.running("SPEECH_SESSION", "Speech session starting mode=${preferences.mode.name}")
             fallbackNoticePolicy.startSession()
             _routeIndicator.value = SpeechRouteIndicator(
                 engineId = if (preferences.mode == com.air5005.pagenest.speech.model.SpeechMode.OFFLINE) "system" else "azure",
@@ -87,6 +90,14 @@ class ReaderSpeechManager @Inject constructor(
                 stopRoute = router::stop,
                 onRoute = { indicator ->
                     _routeIndicator.value = indicator
+                    if (indicator != lastLoggedRoute) {
+                        if (indicator.fellBack) {
+                            Logger.warning("SPEECH_SESSION", "Speech engine fallback engine=${indicator.engineId}")
+                        } else {
+                            Logger.running("SPEECH_SESSION", "Speech engine selected engine=${indicator.engineId}")
+                        }
+                        lastLoggedRoute = indicator
+                    }
                     indicator.fallbackError
                         ?.let(fallbackNoticePolicy::noticeFor)
                         ?.let(_fallbackErrors::tryEmit)
@@ -119,10 +130,12 @@ class ReaderSpeechManager @Inject constructor(
     override fun previous() = AppSpeechController.previous()
 
     override fun stop() {
+        Logger.running("SPEECH_SESSION", "Speech session stopped")
         pending?.source?.close()
         pending = null
         AppSpeechController.stop()
         context.stopService(Intent(context, SpeechPlaybackService::class.java))
+        lastLoggedRoute = null
     }
 
     override fun setSleepTimer(minutes: Int?) {

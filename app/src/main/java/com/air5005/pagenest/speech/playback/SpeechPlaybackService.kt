@@ -18,6 +18,7 @@ import androidx.media3.common.util.UnstableApi
 import com.wxn.reader.R
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.wxn.base.util.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,6 +43,7 @@ class SpeechPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        Logger.running("SPEECH_SERVICE", "Background playback service created")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(
@@ -84,6 +86,7 @@ class SpeechPlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession = mediaSession
 
     override fun onDestroy() {
+        Logger.running("SPEECH_SERVICE", "Background playback service destroyed")
         snapshotObserver?.cancel()
         serviceScope.cancel()
         setPlaybackActive(false)
@@ -111,7 +114,10 @@ class SpeechPlaybackService : MediaSessionService() {
 
     private fun requestPlaybackActivation(): Boolean {
         if (playbackActive) return true
-        if (!focus.requestFocus()) return false
+        if (!focus.requestFocus()) {
+            Logger.warning("SPEECH_SERVICE", "Audio focus request denied")
+            return false
+        }
         if (!noisyRegistered) {
             registerReceiver(noisyReceiver, IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY))
             noisyRegistered = true

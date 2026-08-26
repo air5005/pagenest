@@ -1,6 +1,7 @@
 package com.air5005.pagenest.library.importing
 
 import com.wxn.base.bean.Book
+import com.wxn.base.util.Logger
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -26,7 +27,26 @@ class BookImportService(
 
     suspend fun execute(request: ImportRequest): ImportResult {
         val format = SupportedBookFormat.fromFileName(request.displayName)
-            ?: return rejected(ImportRejection.UNSUPPORTED_FORMAT)
+        if (format == null) {
+            Logger.warning("BOOK_IMPORT", "Local import rejected reason=UNSUPPORTED_FORMAT")
+            return rejected(ImportRejection.UNSUPPORTED_FORMAT)
+        }
+        Logger.running("BOOK_IMPORT", "Local import started format=${format.name}")
+        return try {
+            executeSupported(request, format).also(::recordOutcome)
+        } catch (cancelled: CancellationException) {
+            Logger.running("BOOK_IMPORT", "Local import cancelled format=${format.name}")
+            throw cancelled
+        } catch (failure: Throwable) {
+            Logger.error("BOOK_IMPORT", "Local import failed", failure)
+            throw failure
+        }
+    }
+
+    private suspend fun executeSupported(
+        request: ImportRequest,
+        format: SupportedBookFormat,
+    ): ImportResult {
         val input = try {
             request.openInput()
         } catch (failure: Throwable) {
@@ -405,6 +425,17 @@ class BookImportService(
         if (format != SupportedBookFormat.TXT) return this
         val sourceTitle = displayName.substringBeforeLast('.', displayName).trim()
         return if (sourceTitle.isEmpty()) this else copy(title = sourceTitle)
+    }
+
+    private fun recordOutcome(result: ImportResult) {
+        when (result) {
+            is ImportResult.Imported -> Logger.running("BOOK_IMPORT", "Local import completed outcome=IMPORTED")
+            is ImportResult.Duplicate -> Logger.running("BOOK_IMPORT", "Local import completed outcome=DUPLICATE")
+            is ImportResult.Rejected -> Logger.warning(
+                "BOOK_IMPORT",
+                "Local import rejected reason=${result.reason.name}",
+            )
+        }
     }
 
     private data class PublishedImport(

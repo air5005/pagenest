@@ -10,6 +10,7 @@ import com.air5005.pagenest.discovery.model.OnlineBookFormat
 import com.air5005.pagenest.discovery.model.RightsStatus
 import com.air5005.pagenest.library.importing.ImportRejection
 import com.air5005.pagenest.library.importing.ImportResult
+import com.wxn.base.util.Logger
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
@@ -35,50 +36,64 @@ class OnlineBookImportCoordinator(
     override suspend fun import(
         book: OnlineBook,
         onProgress: (OnlineImportProgress) -> Unit,
-    ): OnlineImportResult = keyedMutex.withLock(book.stableKey) {
-        findExisting(book.stableKey)?.let { return@withLock it }
-        val candidates = eligibleCandidates(book)
-        if (candidates.isEmpty()) {
-            return@withLock OnlineImportResult.Failed(OnlineImportFailure.NO_ELIGIBLE_ACQUISITION)
-        }
+    ): OnlineImportResult {
+        Logger.running("ONLINE_IMPORT", "Online import started")
+        val outcome = keyedMutex.withLock(book.stableKey) {
+            findExisting(book.stableKey)?.let { return@withLock it }
+            val candidates = eligibleCandidates(book)
+            if (candidates.isEmpty()) {
+                return@withLock OnlineImportResult.Failed(OnlineImportFailure.NO_ELIGIBLE_ACQUISITION)
+            }
 
-        var lastFailure = OnlineImportFailure.NETWORK
-        for (candidate in candidates) {
-            var retries = 0
-            while (true) {
-                val result = downloader.download(
-                    DownloadRequest(candidate.sourceId, candidate.url, candidate.format),
-                ) { progress ->
-                    onProgress(
-                        if (progress.stage == DownloadStage.VALIDATING) {
-                            OnlineImportProgress.Validating
-                        } else {
-                            OnlineImportProgress.Downloading(progress)
-                        },
-                    )
-                }
-                when (result) {
-                    is DownloadResult.Success -> return@withLock importDownloaded(
-                        book = book,
-                        downloaded = result.book.file,
-                        format = result.book.format,
-                        onProgress = onProgress,
-                    )
-                    is DownloadResult.Failure -> {
-                        lastFailure = OnlineImportFailure.fromDownload(result.reason)
-                        if (result.reason.isTerminal()) {
-                            return@withLock OnlineImportResult.Failed(lastFailure)
-                        }
-                        if (result.reason.isRetryable() && retries < MAX_RETRIES_PER_CANDIDATE) {
-                            retries++
-                            continue
+            var lastFailure = OnlineImportFailure.NETWORK
+            for (candidate in candidates) {
+                var retries = 0
+                while (true) {
+                    val result = downloader.download(
+                        DownloadRequest(candidate.sourceId, candidate.url, candidate.format),
+                    ) { progress ->
+                        onProgress(
+                            if (progress.stage == DownloadStage.VALIDATING) {
+                                OnlineImportProgress.Validating
+                            } else {
+                                OnlineImportProgress.Downloading(progress)
+                            },
+                        )
+                    }
+                    when (result) {
+                        is DownloadResult.Success -> return@withLock importDownloaded(
+                            book = book,
+                            downloaded = result.book.file,
+                            format = result.book.format,
+                            onProgress = onProgress,
+                        )
+                        is DownloadResult.Failure -> {
+                            lastFailure = OnlineImportFailure.fromDownload(result.reason)
+                            if (result.reason.isTerminal()) {
+                                return@withLock OnlineImportResult.Failed(lastFailure)
+                            }
+                            if (result.reason.isRetryable() && retries < MAX_RETRIES_PER_CANDIDATE) {
+                                retries++
+                                continue
+                            }
                         }
                     }
+                    break
                 }
-                break
             }
+            OnlineImportResult.Failed(lastFailure)
         }
-        OnlineImportResult.Failed(lastFailure)
+        when (outcome) {
+            is OnlineImportResult.Added -> Logger.running(
+                "ONLINE_IMPORT",
+                "Online import completed duplicate=${outcome.duplicate}",
+            )
+            is OnlineImportResult.Failed -> Logger.warning(
+                "ONLINE_IMPORT",
+                "Online import failed reason=${outcome.reason.name}",
+            )
+        }
+        return outcome
     }
 
     private suspend fun findExisting(stableKey: String): OnlineImportResult.Added? {

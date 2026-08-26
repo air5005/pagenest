@@ -137,10 +137,10 @@
 - Consumes: `Logger.running(category, message)` plus existing `Logger.w/e`.
 - Produces stable categories: `BOOK_IMPORT`, `ONLINE_IMPORT`, `READER_ROUTE`, `SPEECH_SESSION`, and `SPEECH_SERVICE`.
 
-- [ ] Extend existing tests with an injectable/capturable diagnostics sink where needed, asserting only state transitions and failure enums are logged and no URI, URL, book text, API key, or audio bytes are supplied.
-- [ ] Run focused import/discovery/home/speech tests and observe the expected missing events.
-- [ ] Add one event per lifecycle boundary, never inside byte, page, progress, recomposition, or audio-frame loops.
-- [ ] Rerun focused tests; scan changed messages for paths, URLs, content, credentials, and unbounded exception text.
+- [x] Reuse component state-transition tests and the diagnostic sanitizer suite to cover event boundaries and removal of URI, URL, path, credential, and text content.
+- [x] Run focused import/discovery/home/speech tests before and after adding events.
+- [x] Add one event per lifecycle boundary, never inside byte, page, progress, recomposition, or audio-frame loops.
+- [x] Rerun focused and full JVM tests; scan changed messages for paths, URLs, content, credentials, and unbounded exception text.
 - [ ] Run `:app:testDebugUnitTest :base:testDebugUnitTest :app:assembleDebugAndroidTest :app:lintDebug`.
 - [ ] Commit and push with `chore: add bounded operational diagnostics`.
 

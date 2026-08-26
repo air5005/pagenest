@@ -12,6 +12,7 @@ import com.air5005.pagenest.discovery.model.CatalogRequest
 import com.air5005.pagenest.discovery.model.OnlineBook
 import com.air5005.pagenest.discovery.openlibrary.OnlineBookEnricher
 import com.air5005.pagenest.discovery.repository.DiscoveryCatalogRepository
+import com.wxn.base.util.Logger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -74,6 +75,7 @@ class DiscoveryViewModel @Inject constructor(
     fun submitSearch() {
         val query = _state.value.searchQuery.trim()
         if (query.isEmpty()) return
+        Logger.running("DISCOVERY", "Search submitted queryLength=${query.length}")
         searchJob?.cancel()
         searchJob = null
         load(showInitialLoading = false, searchQuery = query)
@@ -221,12 +223,17 @@ class DiscoveryViewModel @Inject constructor(
                         unavailableSourceIds = result.unavailableSourceIds,
                     )
                 }
+                Logger.running(
+                    "DISCOVERY",
+                    "Catalog loaded kind=${request.kind.name} books=${result.page.books.size} stale=${result.fromStaleCache}",
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (failure: Throwable) {
                 _state.update {
                     it.copy(isLoading = false, isRefreshing = false, hasLoadError = true)
                 }
+                Logger.warning("DISCOVERY", "Catalog load failed type=${failure.javaClass.simpleName}")
             }
         }
     }

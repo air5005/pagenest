@@ -192,6 +192,7 @@ class HomeViewModel
 
     private fun initializeApp() {
         viewModelScope.launch {
+            Logger.running("LIBRARY", "Shelf initialization started")
             skinService.reconcile()
             val storedPreferences = appPreferencesUtil.appPrefsFlow.first()
             val preferences = storedPreferences.copy(
@@ -335,8 +336,10 @@ class HomeViewModel
             val appPref = _appPreferences.value ?: return@launch
             val scanDirectory = appPref.scanDirectories
             if (scanDirectory.isNotEmpty()) {
+                Logger.running("BOOK_IMPORT", "Manual directory scan requested directories=${scanDirectory.size}")
                 observeBooks(appPref)
             } else {
+                Logger.warning("BOOK_IMPORT", "Manual directory scan skipped reason=NO_DIRECTORY")
                 showSnackbar("No directory set for scanning books" )
             }
         }
@@ -401,6 +404,7 @@ class HomeViewModel
                 // The SHA-256 catalog performs the authoritative duplicate check.
                 val newBooks = uniqueFiles
                 Logger.d("HomeViewModel::observeBooks::newBooks.size=${newBooks.size}")
+                Logger.running("BOOK_IMPORT", "Directory scan completed candidates=${newBooks.size}")
                 if (newBooks.isNotEmpty()) {        //有新增加的，则将新增加的加入到数据库中
                     _isAddingBooks.value = true
                     _importProgressState.value = ImportProgressState.InProgress(0, newBooks.size)
@@ -433,6 +437,7 @@ class HomeViewModel
                     showSnackbar(
                         message = importSummary(importResults),
                     )
+                    Logger.running("BOOK_IMPORT", importSummaryForLog(importResults))
                     _isAddingBooks.value = false
                 }
 
@@ -442,7 +447,7 @@ class HomeViewModel
                 throw cancellation
             } catch (e: Exception) {
                 _importProgressState.value = ImportProgressState.Error(e.message ?: "Unknown error occurred")
-                Logger.e("HomeViewModel::Error observing books:${e.message}")
+                Logger.error("BOOK_IMPORT", "Directory scan failed", e)
                 showSnackbar(
                     message = stringResource(R.string.error_updateing_library, e.message ?: "Unknown error occurred")
                 )
@@ -647,6 +652,7 @@ class HomeViewModel
 
     fun importBooks(uris: List<Uri>) {
         if (uris.isEmpty()) return
+        Logger.running("BOOK_IMPORT", "Manual file import started count=${uris.size}")
         viewModelScope.launch(Dispatchers.IO) {
             _isAddingBooks.value = true
             _importProgressState.value = ImportProgressState.InProgress(0, uris.size)
@@ -660,6 +666,14 @@ class HomeViewModel
                 }
                 _importProgressState.value = ImportProgressState.Complete
                 showSnackbar(importSummary(results))
+                Logger.running("BOOK_IMPORT", importSummaryForLog(results))
+            } catch (cancellation: CancellationException) {
+                Logger.running("BOOK_IMPORT", "Manual file import cancelled")
+                throw cancellation
+            } catch (failure: Exception) {
+                _importProgressState.value = ImportProgressState.Error("Import failed")
+                Logger.error("BOOK_IMPORT", "Manual file import failed", failure)
+                showSnackbar(stringResource(R.string.discovery_error_import))
             } finally {
                 _isAddingBooks.value = false
             }
@@ -804,9 +818,20 @@ class HomeViewModel
         return stringResource(R.string.import_result_summary, imported, duplicates, failed)
     }
 
+    private fun importSummaryForLog(results: List<ImportResult>): String {
+        val imported = results.count { it is ImportResult.Imported }
+        val duplicates = results.count { it is ImportResult.Duplicate }
+        val failed = results.size - imported - duplicates
+        return "Import completed imported=$imported duplicates=$duplicates failed=$failed"
+    }
+
     fun openDashboardBook(bookId: Long) {
         viewModelScope.launch {
-            getBookByIdUseCase(bookId)?.let { book ->
+            val book = getBookByIdUseCase(bookId)
+            if (book == null) {
+                Logger.warning("READER_ROUTE", "Reader open skipped reason=BOOK_NOT_FOUND")
+            } else {
+                Logger.running("READER_ROUTE", "Reader open requested format=${book.fileType.uppercase()}")
                 openBook(book) { route -> _openLastBookRoute.value = route }
             }
         }

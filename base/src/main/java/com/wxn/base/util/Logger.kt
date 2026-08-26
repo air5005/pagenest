@@ -39,6 +39,15 @@ object Logger {
         diagnosticsWriter?.log(DiagnosticLevel.RUNNING, category, message)
     }
 
+    fun warning(category: String, message: String) {
+        Timber.tag(category).w(message)
+    }
+
+    fun error(category: String, message: String, throwable: Throwable? = null) {
+        if (throwable == null) Timber.tag(category).e(message)
+        else Timber.tag(category).e(throwable, message)
+    }
+
     fun readDiagnostics(limit: Int = RotatingDiagnosticLogStore.DEFAULT_MAX_ENTRIES): List<DiagnosticLogEntry> =
         diagnosticsWriter?.readRecent(limit).orEmpty()
 
