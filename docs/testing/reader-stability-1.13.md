@@ -27,10 +27,10 @@
 | 门禁 | 结果 | 说明 |
 | --- | --- | --- |
 | 针对性 TDD 回归 | PASS | 进度提交/拒绝恢复、失败跳转不改索引、慢速拖动不自动收起、语音最终失败状态 |
-| JVM 单元测试 | 待最终发布门禁 | `:app:testDebugUnitTest` |
-| Debug APK | 待最终发布门禁 | `:app:assembleDebug` |
-| Android 测试 APK | 待最终发布门禁 | `:app:assembleDebugAndroidTest` |
-| Android Lint | 待最终发布门禁 | `:app:lintDebug` |
+| JVM 单元测试 | PASS | `:app:testDebugUnitTest` |
+| Debug APK | PASS | `:app:assembleDebug` |
+| Android 测试 APK | PASS | `:app:assembleDebugAndroidTest` |
+| Android Lint | PASS | `:app:lintDebug`；完整门禁共 367 个任务，2026-08-26 运行成功 |
 
 ## 真机回归（发布后由目标设备执行）
 
@@ -47,6 +47,10 @@
 
 - 目标版本：`1.13.260826`（versionCode 14）
 - 目标标签：`pagenest-v1.13.260826`
-- GitHub Release：待发布
-- APK SHA-256：待发布后核对
+- 发布源码提交：`09904eb05c0cfa0e2cb0cdaa993bcd8fcbb4b022`
+- GitHub Actions：`32945480767`，`PASS`
+- GitHub Release：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.13.260826>
+- APK：`PageNest-pagenest-v1.13.260826-debug.apk`（126,203,846 字节）
+- APK SHA-256：`33b32738e783bd2942fcadb96c42a0a6f45f7ca614d6d384edf2d255e7b1d28a`
+- 远端校验：已从 GitHub Release 重新下载 APK 与 `SHA256SUMS.txt`，计算结果一致
 - 真机安装与回归：`NOT RUN (no connected device)`
