@@ -43,4 +43,5 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.timber)
     implementation(libs.toaster)
+    testImplementation(libs.junit)
 }

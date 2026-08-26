@@ -39,12 +39,12 @@
 - Produces: `DiagnosticLogCodec.encode(entry): String` and `decode(line): DiagnosticLogEntry?`; corrupt lines return `null`.
 - Produces: `DiagnosticSanitizer.sanitize(message: String): String` and `sanitize(throwable: Throwable): String`.
 
-- [ ] Write codec tests proving round-trip, escaped newlines, descending timestamp comparison, and corrupt-line rejection.
-- [ ] Run `:base:testDebugUnitTest --tests '*DiagnosticLogCodecTest'` and observe unresolved production types.
-- [ ] Implement the minimal record and one-line tab-separated codec; rerun until green.
-- [ ] Write sanitizer tests proving API keys, bearer tokens, URL query/fragment, Windows/Unix/Android private paths, 2,000-character limit, and 20-stack-line limit are removed or truncated.
-- [ ] Run `:base:testDebugUnitTest --tests '*DiagnosticSanitizerTest'` and observe missing behavior.
-- [ ] Implement ordered sanitization and rerun both focused suites until green.
+- [x] Write codec tests proving round-trip, escaped newlines, descending timestamp comparison, and corrupt-line rejection.
+- [x] Run `:base:testDebugUnitTest --tests '*DiagnosticLogCodecTest'` and observe unresolved production types.
+- [x] Implement the minimal record and one-line tab-separated codec; rerun until green.
+- [x] Write sanitizer tests proving API keys, bearer tokens, URL query/fragment, Windows/Unix/Android private paths, 2,000-character limit, and 20-stack-line limit are removed or truncated.
+- [x] Run `:base:testDebugUnitTest --tests '*DiagnosticSanitizerTest'` and observe missing behavior.
+- [x] Implement ordered sanitization and rerun both focused suites until green.
 - [ ] Commit and push with `feat: define privacy-safe diagnostic entries`.
 
 ### Task 2: Implement bounded rotating storage and duplicate throttling
