@@ -17,17 +17,24 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+interface OnlineImportCoordinator {
+    suspend fun import(
+        book: OnlineBook,
+        onProgress: (OnlineImportProgress) -> Unit = {},
+    ): OnlineImportResult
+}
+
 class OnlineBookImportCoordinator(
     private val downloader: OnlineBookDownloader,
     private val importer: OnlineBookImporter,
     private val ledger: OnlineImportLedger,
     private val localBookLookup: LocalBookLookup,
-) {
+) : OnlineImportCoordinator {
     private val keyedMutex = RefCountedKeyedMutex()
 
-    suspend fun import(
+    override suspend fun import(
         book: OnlineBook,
-        onProgress: (OnlineImportProgress) -> Unit = {},
+        onProgress: (OnlineImportProgress) -> Unit,
     ): OnlineImportResult = keyedMutex.withLock(book.stableKey) {
         findExisting(book.stableKey)?.let { return@withLock it }
         val candidates = eligibleCandidates(book)

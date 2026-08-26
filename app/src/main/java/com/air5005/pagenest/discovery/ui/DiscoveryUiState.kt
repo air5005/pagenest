@@ -1,6 +1,7 @@
 package com.air5005.pagenest.discovery.ui
 
 import com.air5005.pagenest.discovery.config.DiscoverySourceStatus
+import com.air5005.pagenest.discovery.importing.OnlineImportFailure
 import com.air5005.pagenest.discovery.model.CatalogLanguage
 import com.air5005.pagenest.discovery.model.OnlineBook
 import com.air5005.pagenest.discovery.openlibrary.OpenLibraryMetadata
@@ -10,6 +11,15 @@ enum class DiscoveryTab {
     POPULAR,
     LATEST,
     SOURCES,
+}
+
+sealed interface DiscoveryAcquisitionState {
+    data object Idle : DiscoveryAcquisitionState
+    data class Downloading(val bytesRead: Long, val totalBytes: Long?) : DiscoveryAcquisitionState
+    data object Validating : DiscoveryAcquisitionState
+    data object Importing : DiscoveryAcquisitionState
+    data class Added(val bookId: Long) : DiscoveryAcquisitionState
+    data class Error(val reason: OnlineImportFailure) : DiscoveryAcquisitionState
 }
 
 data class DiscoveryUiState(
@@ -26,4 +36,5 @@ data class DiscoveryUiState(
     val selectedBook: OnlineBook? = null,
     val isDetailLoading: Boolean = false,
     val detailMetadata: OpenLibraryMetadata? = null,
+    val acquisition: DiscoveryAcquisitionState = DiscoveryAcquisitionState.Idle,
 )

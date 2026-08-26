@@ -1,10 +1,16 @@
 package com.air5005.pagenest.discovery.ui
 
 import com.air5005.pagenest.discovery.config.DiscoverySourceRegistry
+import com.air5005.pagenest.discovery.download.DownloadProgress
+import com.air5005.pagenest.discovery.importing.OnlineImportCoordinator
+import com.air5005.pagenest.discovery.importing.OnlineImportFailure
+import com.air5005.pagenest.discovery.importing.OnlineImportProgress
+import com.air5005.pagenest.discovery.importing.OnlineImportResult
 import com.air5005.pagenest.discovery.model.CatalogKind
 import com.air5005.pagenest.discovery.model.CatalogLanguage
 import com.air5005.pagenest.discovery.model.CatalogPage
 import com.air5005.pagenest.discovery.model.CatalogRequest
+import com.air5005.pagenest.discovery.model.OnlineBook
 import com.air5005.pagenest.discovery.model.SourceBookDetails
 import com.air5005.pagenest.discovery.model.SourceReference
 import com.air5005.pagenest.discovery.openlibrary.OnlineBookEnricher
@@ -12,9 +18,14 @@ import com.air5005.pagenest.discovery.openlibrary.OpenLibraryMetadata
 import com.air5005.pagenest.discovery.repository.DiscoveryCatalogRepository
 import com.air5005.pagenest.discovery.repository.DiscoveryResult
 import com.air5005.pagenest.discovery.source.OnlineCatalogSource
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -111,10 +122,151 @@ class DiscoveryViewModelTest {
         assertNull(viewModel.state.value.detailMetadata)
     }
 
+    @Test
+    fun `add to shelf exposes deterministic phases and remains on added detail`() = runTest(dispatcher) {
+        val book = discoveryBook("one", "One")
+        val coordinator = FakeImportCoordinator { _, progress ->
+            progress(OnlineImportProgress.Downloading(DownloadProgress(10, 100)))
+            progress(OnlineImportProgress.Validating)
+            progress(OnlineImportProgress.Importing)
+            OnlineImportResult.Added(42L, duplicate = false)
+        }
+        val viewModel = viewModel(
+            FakeRepository { DiscoveryResult(CatalogPage(listOf(book), null), false, emptyList()) },
+            coordinator = coordinator,
+        )
+        advanceUntilIdle()
+        viewModel.selectBook(book)
+        advanceUntilIdle()
+        val observed = mutableListOf<DiscoveryAcquisitionState>()
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.state.map { it.acquisition }.distinctUntilChanged().collect(observed::add)
+        }
+
+        viewModel.addToShelf()
+        advanceUntilIdle()
+
+        assertTrue(observed.contains(DiscoveryAcquisitionState.Downloading(10, 100)))
+        assertTrue(observed.contains(DiscoveryAcquisitionState.Validating))
+        assertTrue(observed.contains(DiscoveryAcquisitionState.Importing))
+        assertEquals(DiscoveryAcquisitionState.Added(42L), viewModel.state.value.acquisition)
+        assertEquals(book, viewModel.state.value.selectedBook)
+        assertEquals(1, coordinator.calls)
+        collector.cancel()
+    }
+
+    @Test
+    fun `start reading emits local book id exactly once after import`() = runTest(dispatcher) {
+        val book = discoveryBook("one", "One")
+        val coordinator = FakeImportCoordinator { _, _ -> OnlineImportResult.Added(51L, duplicate = true) }
+        val viewModel = viewModel(
+            FakeRepository { DiscoveryResult(CatalogPage(listOf(book), null), false, emptyList()) },
+            coordinator = coordinator,
+        )
+        advanceUntilIdle()
+        viewModel.selectBook(book)
+        advanceUntilIdle()
+        val events = mutableListOf<Long>()
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.readerBookIds.collect(events::add)
+        }
+
+        viewModel.startReading()
+        advanceUntilIdle()
+
+        assertEquals(listOf(51L), events)
+        assertEquals(DiscoveryAcquisitionState.Added(51L), viewModel.state.value.acquisition)
+        assertEquals(1, coordinator.calls)
+        collector.cancel()
+    }
+
+    @Test
+    fun `double taps do not start parallel imports and cancel returns idle`() = runTest(dispatcher) {
+        val book = discoveryBook("one", "One")
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val coordinator = FakeImportCoordinator { _, progress ->
+            progress(OnlineImportProgress.Downloading(DownloadProgress(1, null)))
+            entered.complete(Unit)
+            release.await()
+            OnlineImportResult.Added(1L, duplicate = false)
+        }
+        val viewModel = viewModel(
+            FakeRepository { DiscoveryResult(CatalogPage(listOf(book), null), false, emptyList()) },
+            coordinator = coordinator,
+        )
+        advanceUntilIdle()
+        viewModel.selectBook(book)
+        advanceUntilIdle()
+
+        viewModel.addToShelf()
+        viewModel.addToShelf()
+        entered.await()
+        assertEquals(1, coordinator.calls)
+        assertTrue(viewModel.state.value.acquisition is DiscoveryAcquisitionState.Downloading)
+
+        viewModel.cancelAcquisition()
+        advanceUntilIdle()
+        assertEquals(DiscoveryAcquisitionState.Idle, viewModel.state.value.acquisition)
+    }
+
+    @Test
+    fun `close detail cancels acquisition and stale completion cannot update new state`() = runTest(dispatcher) {
+        val book = discoveryBook("one", "One")
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val coordinator = FakeImportCoordinator { _, _ ->
+            entered.complete(Unit)
+            release.await()
+            OnlineImportResult.Added(99L, duplicate = false)
+        }
+        val viewModel = viewModel(
+            FakeRepository { DiscoveryResult(CatalogPage(listOf(book), null), false, emptyList()) },
+            coordinator = coordinator,
+        )
+        advanceUntilIdle()
+        viewModel.selectBook(book)
+        advanceUntilIdle()
+        viewModel.addToShelf()
+        entered.await()
+
+        viewModel.closeDetail()
+        release.complete(Unit)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.selectedBook)
+        assertEquals(DiscoveryAcquisitionState.Idle, viewModel.state.value.acquisition)
+    }
+
+    @Test
+    fun `typed coordinator failure becomes typed acquisition error`() = runTest(dispatcher) {
+        val book = discoveryBook("one", "One")
+        val viewModel = viewModel(
+            FakeRepository { DiscoveryResult(CatalogPage(listOf(book), null), false, emptyList()) },
+            coordinator = FakeImportCoordinator { _, _ ->
+                OnlineImportResult.Failed(OnlineImportFailure.RESPONSE_TOO_LARGE)
+            },
+        )
+        advanceUntilIdle()
+        viewModel.selectBook(book)
+        advanceUntilIdle()
+
+        viewModel.addToShelf()
+        advanceUntilIdle()
+
+        assertEquals(
+            DiscoveryAcquisitionState.Error(OnlineImportFailure.RESPONSE_TOO_LARGE),
+            viewModel.state.value.acquisition,
+        )
+    }
+
     private fun viewModel(
         repository: DiscoveryCatalogRepository,
         enricher: OnlineBookEnricher = OnlineBookEnricher { null },
-    ) = DiscoveryViewModel(repository, enricher, registry())
+        coordinator: OnlineImportCoordinator = FakeImportCoordinator { _, _ ->
+            OnlineImportResult.Failed(OnlineImportFailure.NO_ELIGIBLE_ACQUISITION)
+        },
+    ) = DiscoveryViewModel(repository, enricher, registry(), coordinator)
 
     private fun registry(): DiscoverySourceRegistry = DiscoverySourceRegistry.create(
         source("gutendex"), source("gutenberg-opds"), { source("standard-ebooks") }, false,
@@ -133,6 +285,19 @@ class DiscoveryViewModelTest {
         override suspend fun discover(request: CatalogRequest): DiscoveryResult {
             requests += request
             return result(request)
+        }
+    }
+
+    private class FakeImportCoordinator(
+        private val handler: suspend (OnlineBook, (OnlineImportProgress) -> Unit) -> OnlineImportResult,
+    ) : OnlineImportCoordinator {
+        var calls = 0
+        override suspend fun import(
+            book: OnlineBook,
+            onProgress: (OnlineImportProgress) -> Unit,
+        ): OnlineImportResult {
+            calls++
+            return handler(book, onProgress)
         }
     }
 }

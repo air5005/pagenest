@@ -46,7 +46,7 @@ object OnlineImportModule {
         importer: OnlineBookImporter,
         ledger: OnlineImportLedger,
         localBookLookup: LocalBookLookup,
-    ): OnlineBookImportCoordinator = OnlineBookImportCoordinator(
+    ): OnlineImportCoordinator = OnlineBookImportCoordinator(
         downloader,
         importer,
         ledger,

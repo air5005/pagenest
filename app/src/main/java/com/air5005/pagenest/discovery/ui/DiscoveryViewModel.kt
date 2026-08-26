@@ -3,6 +3,9 @@ package com.air5005.pagenest.discovery.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.air5005.pagenest.discovery.config.DiscoverySourceRegistry
+import com.air5005.pagenest.discovery.importing.OnlineImportCoordinator
+import com.air5005.pagenest.discovery.importing.OnlineImportProgress
+import com.air5005.pagenest.discovery.importing.OnlineImportResult
 import com.air5005.pagenest.discovery.model.CatalogKind
 import com.air5005.pagenest.discovery.model.CatalogLanguage
 import com.air5005.pagenest.discovery.model.CatalogRequest
@@ -12,11 +15,14 @@ import com.air5005.pagenest.discovery.repository.DiscoveryCatalogRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -25,15 +31,19 @@ class DiscoveryViewModel @Inject constructor(
     private val repository: DiscoveryCatalogRepository,
     private val enricher: OnlineBookEnricher,
     registry: DiscoverySourceRegistry,
+    private val importCoordinator: OnlineImportCoordinator,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         DiscoveryUiState(sourceStatuses = registry.statuses),
     )
     val state: StateFlow<DiscoveryUiState> = _state.asStateFlow()
+    private val readerBookIdChannel = Channel<Long>(Channel.BUFFERED)
+    val readerBookIds = readerBookIdChannel.receiveAsFlow()
 
     private var loadJob: Job? = null
     private var searchJob: Job? = null
     private var detailJob: Job? = null
+    private var acquisitionJob: Job? = null
 
     init {
         load(showInitialLoading = true)
@@ -65,8 +75,15 @@ class DiscoveryViewModel @Inject constructor(
 
     fun selectBook(book: OnlineBook) {
         detailJob?.cancel()
+        acquisitionJob?.cancel()
+        acquisitionJob = null
         _state.update {
-            it.copy(selectedBook = book, isDetailLoading = true, detailMetadata = null)
+            it.copy(
+                selectedBook = book,
+                isDetailLoading = true,
+                detailMetadata = null,
+                acquisition = DiscoveryAcquisitionState.Idle,
+            )
         }
         detailJob = viewModelScope.launch {
             val metadata = try {
@@ -85,8 +102,87 @@ class DiscoveryViewModel @Inject constructor(
 
     fun closeDetail() {
         detailJob?.cancel()
+        acquisitionJob?.cancel()
+        acquisitionJob = null
         _state.update {
-            it.copy(selectedBook = null, isDetailLoading = false, detailMetadata = null)
+            it.copy(
+                selectedBook = null,
+                isDetailLoading = false,
+                detailMetadata = null,
+                acquisition = DiscoveryAcquisitionState.Idle,
+            )
+        }
+    }
+
+    fun addToShelf() = startAcquisition(openAfterImport = false)
+
+    fun startReading() {
+        val added = _state.value.acquisition as? DiscoveryAcquisitionState.Added
+        if (added != null) {
+            readerBookIdChannel.trySend(added.bookId)
+            return
+        }
+        startAcquisition(openAfterImport = true)
+    }
+
+    fun cancelAcquisition() {
+        acquisitionJob?.cancel()
+        acquisitionJob = null
+        _state.update { it.copy(acquisition = DiscoveryAcquisitionState.Idle) }
+    }
+
+    private fun startAcquisition(openAfterImport: Boolean) {
+        val book = _state.value.selectedBook ?: return
+        if (acquisitionJob?.isActive == true) return
+        val stableKey = book.stableKey
+        _state.update {
+            if (it.selectedBook?.stableKey != stableKey) it
+            else it.copy(acquisition = DiscoveryAcquisitionState.Downloading(0L, null))
+        }
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                when (val result = importCoordinator.import(book) { progress ->
+                    updateAcquisitionProgress(stableKey, progress)
+                }) {
+                    is OnlineImportResult.Added -> {
+                        val stillSelected = _state.value.selectedBook?.stableKey == stableKey
+                        if (stillSelected) {
+                            _state.update {
+                                it.copy(acquisition = DiscoveryAcquisitionState.Added(result.bookId))
+                            }
+                            if (openAfterImport) readerBookIdChannel.send(result.bookId)
+                        }
+                    }
+                    is OnlineImportResult.Failed -> _state.update {
+                        if (it.selectedBook?.stableKey != stableKey) it
+                        else it.copy(acquisition = DiscoveryAcquisitionState.Error(result.reason))
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                _state.update {
+                    if (it.selectedBook?.stableKey != stableKey) it
+                    else it.copy(acquisition = DiscoveryAcquisitionState.Idle)
+                }
+                throw cancelled
+            }
+        }
+        acquisitionJob = job
+        job.start()
+    }
+
+    private fun updateAcquisitionProgress(stableKey: String, progress: OnlineImportProgress) {
+        _state.update { current ->
+            if (current.selectedBook?.stableKey != stableKey) return@update current
+            current.copy(
+                acquisition = when (progress) {
+                    is OnlineImportProgress.Downloading -> DiscoveryAcquisitionState.Downloading(
+                        progress.progress.bytesRead,
+                        progress.progress.totalBytes,
+                    )
+                    OnlineImportProgress.Validating -> DiscoveryAcquisitionState.Validating
+                    OnlineImportProgress.Importing -> DiscoveryAcquisitionState.Importing
+                },
+            )
         }
     }
 

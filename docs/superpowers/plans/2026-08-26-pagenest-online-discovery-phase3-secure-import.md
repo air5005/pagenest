@@ -90,11 +90,11 @@ git push origin master
 - Modify `DiscoveryUiState.kt`, `DiscoveryViewModel.kt`, `DiscoveryModule.kt`
 - Extend `DiscoveryViewModelTest.kt`; add DI contract tests.
 
-- [ ] Add typed idle/downloading/validating/importing/added/error states and byte progress.
-- [ ] Add `addToShelf`, `startReading`, `cancelAcquisition`, and one-shot local book ID event.
-- [ ] Prevent double taps/parallel work for the selected book; close detail cancels active work.
-- [ ] Add-to-shelf stays on detail; start-reading emits book ID exactly once.
-- [ ] Existing ledger hit skips transport and reaches added/open state.
+- [x] Add typed idle/downloading/validating/importing/added/error states and byte progress.
+- [x] Add `addToShelf`, `startReading`, `cancelAcquisition`, and one-shot local book ID event.
+- [x] Prevent double taps/parallel work for the selected book; close detail cancels active work.
+- [x] Add-to-shelf stays on detail; start-reading emits book ID exactly once.
+- [x] Existing ledger hit skips transport and reaches added/open state.
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests '*DiscoveryViewModelTest' --tests '*DiscoveryModuleContractTest'
