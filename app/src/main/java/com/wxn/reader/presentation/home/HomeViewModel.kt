@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
@@ -202,7 +203,6 @@ class HomeViewModel
                 homeBackgroundImage = skinService.effectiveHomeBackground(storedPreferences.homeBackgroundImage),
             )
             coroutineScope {
-                launch { loadBooks(preferences) }
                 launch { loadShelves() }
                 launch { observeAppPreferences() }
                 if (preferences.scanDirectories.isEmpty()) {
@@ -320,11 +320,11 @@ class HomeViewModel
 
     private fun observeAppPreferences() {
         viewModelScope.launch {
-            appPreferencesUtil.appPrefsFlow.collect { preferences ->
+            appPreferencesUtil.appPrefsFlow.collectLatest { preferences ->
                 _appPreferences.value = preferences.copy(
                     homeBackgroundImage = skinService.effectiveHomeBackground(preferences.homeBackgroundImage),
                 )
-                // Optionally reload books if sort preferences change
+                // Cancel the previous long-lived query before applying new sort/filter preferences.
                 loadBooks(preferences)
             }
         }
@@ -445,8 +445,6 @@ class HomeViewModel
                     _isAddingBooks.value = false
                 }
 
-                val appPref = _appPreferences.value ?: return@launch
-                loadBooks(appPref)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (e: Exception) {
@@ -763,8 +761,6 @@ class HomeViewModel
             }
 
             updateAppPreferences(newPreferences)
-
-            loadBooks(newPreferences)
         }
     }
 

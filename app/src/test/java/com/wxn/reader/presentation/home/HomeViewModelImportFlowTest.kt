@@ -56,6 +56,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -80,6 +81,7 @@ class HomeViewModelImportFlowTest {
     private lateinit var service: BookImportService
     private lateinit var requestFactory: AndroidImportRequestFactory
     private lateinit var getBookByIdUseCase: GetBookByIdUseCase
+    private lateinit var getBooksUseCase: GetBooksUseCase
     private lateinit var preferencesUtil: AppPreferencesUtil
     private lateinit var getAllBooksUseCase: GetAllBooksUseCase
     private lateinit var getAllReadingActivitiesUseCase: GetAllReadingActivitiesUseCase
@@ -95,6 +97,7 @@ class HomeViewModelImportFlowTest {
         service = mockk()
         requestFactory = mockk()
         getBookByIdUseCase = mockk(relaxed = true)
+        getBooksUseCase = mockk(relaxed = true)
         preferencesUtil = mockk<AppPreferencesUtil>()
         every { preferencesUtil.appPrefsFlow } returns flow { awaitCancellation() }
         getAllBooksUseCase = mockk<GetAllBooksUseCase>()
@@ -102,7 +105,7 @@ class HomeViewModelImportFlowTest {
         every { getAllBooksUseCase() } returns flow { awaitCancellation() }
         coEvery { getAllReadingActivitiesUseCase() } returns flow { awaitCancellation() }
         viewModel = HomeViewModel(
-            getBooksUseCase = mockk(relaxed = true),
+            getBooksUseCase = getBooksUseCase,
             getBookUrisUseCase = mockk(relaxed = true),
             insertBookUseCase = mockk(relaxed = true),
             updateBookUseCase = mockk(relaxed = true),
@@ -255,6 +258,29 @@ class HomeViewModelImportFlowTest {
     }
 
     @Test
+    fun preferenceChangesRestartTheBookQuery() {
+        viewModel.viewModelScope.cancel()
+        val preferenceFlow = MutableStateFlow(preferences(emptySet()))
+        every { preferencesUtil.appPrefsFlow } returns preferenceFlow
+        val queryCount = AtomicInteger(0)
+        every {
+            getBooksUseCase.getSortedBooks(any(), any(), any(), any())
+        } answers {
+            queryCount.incrementAndGet()
+            flow { awaitCancellation() }
+        }
+
+        viewModel = createViewModel()
+        mainDispatcher.scheduler.runCurrent()
+        val initialQueryCount = queryCount.get()
+
+        preferenceFlow.value = preferenceFlow.value.copy(sortOrder = SortOrder.DESCENDING)
+        mainDispatcher.scheduler.runCurrent()
+
+        assertEquals(initialQueryCount + 1, queryCount.get())
+    }
+
+    @Test
     fun scanPropagatesCancellationWithoutCompletingOrImportingLaterFiles() = runBlocking {
         val cancelled = document("content://scan/Cancelled.epub", "Cancelled.epub")
         val later = document("content://scan/Later.epub", "Later.epub")
@@ -355,7 +381,7 @@ class HomeViewModelImportFlowTest {
     )
 
     private fun createViewModel() = HomeViewModel(
-        getBooksUseCase = mockk(relaxed = true),
+        getBooksUseCase = getBooksUseCase,
         getBookUrisUseCase = mockk(relaxed = true),
         insertBookUseCase = mockk(relaxed = true),
         updateBookUseCase = mockk(relaxed = true),
