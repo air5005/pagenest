@@ -318,4 +318,6 @@
     <string name="reader_speech_stop">Arrêter la lecture</string>
     <string name="reader_speech_collapse">Réduire les réglages vocaux</string>
     <string name="discovery">Découvrir</string>
+    <string name="refreshing_library">Actualisation de la bibliothèque</string>
+    <string name="no_scan_directory">Aucun dossier d’analyse des livres n’est configuré</string>
 </resources>

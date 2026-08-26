@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import com.air5005.pagenest.speech.model.SpeechPlaybackState
+import com.air5005.pagenest.speech.ui.SpeechControlPolicy
 import com.air5005.pagenest.speech.ui.SpeechControlUiState
 import com.wxn.reader.R
 
@@ -360,7 +361,7 @@ private fun SpeechMiniPlayer(
                     style = MaterialTheme.typography.labelLarge,
                 )
                 Text(
-                    text = state.activeEngineLabel,
+                    text = SpeechControlPolicy.readerStatusLabel(state.playback, state.activeEngineLabel),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
                     maxLines = 1,

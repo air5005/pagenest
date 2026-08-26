@@ -32,6 +32,9 @@ object SpeechControlPolicy {
         else -> "等待朗读"
     }
 
+    fun readerStatusLabel(playback: SpeechPlaybackState, engineLabel: String): String =
+        (playback as? SpeechPlaybackState.Error)?.let { messageFor(it.error) } ?: engineLabel
+
     fun requiresPreparation(playback: SpeechPlaybackState): Boolean =
         playback !is SpeechPlaybackState.Paused
 }

@@ -80,5 +80,6 @@ object ReaderChromeReducer {
     fun shouldScheduleAutoHide(state: ReaderChromeState): Boolean =
         state.controlsVisible &&
             !state.blockingOverlayVisible &&
-            !state.speechPanelExpanded
+            !state.speechPanelExpanded &&
+            !state.progressPanelExpanded
 }

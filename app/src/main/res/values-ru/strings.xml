@@ -318,4 +318,6 @@
     <string name="reader_speech_stop">Остановить чтение</string>
     <string name="reader_speech_collapse">Свернуть настройки речи</string>
     <string name="discovery">Обзор</string>
+    <string name="refreshing_library">Обновление библиотеки</string>
+    <string name="no_scan_directory">Папка для поиска книг не настроена</string>
 </resources>

@@ -831,28 +831,15 @@ class MainReadViewModel @Inject constructor(
      * 拖动阅读进度条来改变阅读位置
      */
     fun changePageByProgress(newProgress: Double):Boolean {
-        var targetChapter: BookChapter? = null
         val curTextChapter = pageController.curTextChapter ?: return false
         if (curTextChapter.totalWordCount == 0L || pageController.isCalcChapterWords) {
             ToastUtil.show(stringResource(R.string.is_load_chapter_info))
             return false
         }
-        for(index in 0 until allChapters.size) {
-            val startProgress : Double = allChapters[index].chapterProgress.toDouble()
-            val endProgress : Double = if (index < allChapters.size - 1) {
-                allChapters[index + 1].chapterProgress.toDouble()
-            } else {
-                1.001
-            }
-            if (newProgress  >= startProgress && newProgress < endProgress) {
-                targetChapter = allChapters[index]
-            }
+        return ReaderProgressNavigator.navigate(newProgress, allChapters) { newChapterIndex, progress ->
+            Logger.d("MainReadViewModel::changePageByProgress:newProgress[$progress],targetChapterIndex=$newChapterIndex")
+            pageController.changeChapter(newChapterIndex, progress)
         }
-        Logger.d("MainReadViewModel::changePageByProgress:newProgress[$newProgress],targetChapterIndex=${targetChapter?.chapterIndex}")
-        targetChapter?.chapterIndex?.let { newChapterIndex ->
-            pageController.changeChapter(newChapterIndex, newProgress)
-        }
-        return true
     }
 
     fun chaptersDrawerOpen(open: Boolean = true) {

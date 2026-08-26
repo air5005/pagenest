@@ -319,4 +319,6 @@
     <string name="reader_speech_stop">पठन बंद करें</string>
     <string name="reader_speech_collapse">वॉइस सेटिंग समेटें</string>
     <string name="discovery">खोजें</string>
+    <string name="refreshing_library">लाइब्रेरी रीफ़्रेश हो रही है</string>
+    <string name="no_scan_directory">किताबें स्कैन करने के लिए फ़ोल्डर सेट नहीं है</string>
 </resources>

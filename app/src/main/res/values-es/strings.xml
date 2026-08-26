@@ -317,4 +317,6 @@
     <string name="reader_speech_stop">Detener lectura</string>
     <string name="reader_speech_collapse">Contraer ajustes de voz</string>
     <string name="discovery">Descubrir</string>
+    <string name="refreshing_library">Actualizando la biblioteca</string>
+    <string name="no_scan_directory">No se ha configurado una carpeta para buscar libros</string>
 </resources>

@@ -131,6 +131,22 @@ class ReaderChromeReducerTest {
     }
 
     @Test
+    fun `open progress panel blocks auto hide for long scrubs`() {
+        val progressOpen = ReaderChromeReducer.reduce(
+            initial.copy(controlsVisible = true),
+            ReaderChromeEvent.ProgressPanelChanged(expanded = true),
+        )
+
+        assertFalse(ReaderChromeReducer.shouldScheduleAutoHide(progressOpen))
+        assertTrue(
+            ReaderChromeReducer.reduce(
+                progressOpen,
+                ReaderChromeEvent.AutoHide(progressOpen.interactionGeneration),
+            ).progressPanelExpanded,
+        )
+    }
+
+    @Test
     fun `explicit visibility update is idempotent and refreshes a shown menu`() {
         val shown = ReaderChromeReducer.reduce(
             initial,

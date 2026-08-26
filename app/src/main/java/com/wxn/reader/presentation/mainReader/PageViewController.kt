@@ -361,10 +361,6 @@ open class PageViewController @Inject constructor(
     }
 
     override fun changeChapter(newChapterIndex: Int, newProgress: Double): Boolean {
-        if (durChapterIndex != newChapterIndex) {
-            durChapterIndex = newChapterIndex
-            durPageIndex = 0
-        }
         if (newProgress >= 0.0) {
             val curChapter = curTextChapter ?: return false
             if (curChapter.totalWordCount == 0L || curChapter.wordCount == 0L) {
@@ -373,6 +369,10 @@ open class PageViewController @Inject constructor(
             }
 
             targetProgress = newProgress
+        }
+        if (durChapterIndex != newChapterIndex) {
+            durChapterIndex = newChapterIndex
+            durPageIndex = 0
         }
         loadContent(true, PageChangeOrigin.USER)
         return true

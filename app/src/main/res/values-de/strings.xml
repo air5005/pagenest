@@ -320,4 +320,6 @@
     <string name="reader_speech_stop">Vorlesen beenden</string>
     <string name="reader_speech_collapse">Spracheinstellungen einklappen</string>
     <string name="discovery">Entdecken</string>
+    <string name="refreshing_library">Bibliothek wird aktualisiert</string>
+    <string name="no_scan_directory">Kein Ordner zum Scannen von Büchern festgelegt</string>
 </resources>
