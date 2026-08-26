@@ -1173,11 +1173,16 @@ class MainReadViewModel @Inject constructor(
     fun updateReaderPreferences(newPreferences: ReaderPreferences, updateView: Boolean = true) {
         Logger.d("MainReadViewModel::updateReaderPreferences")
         viewModelScope.launch {
+            val previousPreferences = _readerPreferences.value
             readerPrefsUtil.updatePreferences(newPreferences)
             _readerPreferences.value = newPreferences
             if (updateView) {
                 with(Dispatchers.Main) {
-                    pageController.updatePageViews()
+                    when (ReaderPreferenceChangePolicy.classify(previousPreferences, newPreferences)) {
+                        ReaderPreferenceChange.NONE -> Unit
+                        ReaderPreferenceChange.APPEARANCE_ONLY -> pageController.updatePageAppearance()
+                        ReaderPreferenceChange.REPAGINATE -> pageController.updatePageViews()
+                    }
                 }
             }
         }

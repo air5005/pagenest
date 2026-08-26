@@ -1457,6 +1457,15 @@ open class PageViewController @Inject constructor(
         }
     }
 
+    /** Refreshes colors and backgrounds without reparsing or repaginating the chapter. */
+    fun updatePageAppearance() {
+        ChapterProvider.upStyle(context) {
+            callBack?.upTipStyle()
+            callBack?.upBg()
+            callBack?.upContent(resetPageOffset = false)
+        }
+    }
+
     fun clear() {
         invalidateSpeechLayout()
         scope?.launchIO {
