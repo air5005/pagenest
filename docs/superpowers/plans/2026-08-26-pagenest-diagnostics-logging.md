@@ -141,8 +141,8 @@
 - [x] Run focused import/discovery/home/speech tests before and after adding events.
 - [x] Add one event per lifecycle boundary, never inside byte, page, progress, recomposition, or audio-frame loops.
 - [x] Rerun focused and full JVM tests; scan changed messages for paths, URLs, content, credentials, and unbounded exception text.
-- [ ] Run `:app:testDebugUnitTest :base:testDebugUnitTest :app:assembleDebugAndroidTest :app:lintDebug`.
-- [ ] Commit and push with `chore: add bounded operational diagnostics`.
+- [x] Run `:app:testDebugUnitTest :base:testDebugUnitTest :app:assembleDebugAndroidTest :app:lintDebug`.
+- [x] Commit and push with `chore: add bounded operational diagnostics`.
 
 ### Task 6: Release gate, documentation, and GitHub APK archive
 
@@ -155,9 +155,9 @@
 **Interfaces:**
 - Produces tag `pagenest-v1.12.260826` and a GitHub Release containing `PageNest-pagenest-v1.12.260826-debug.apk` plus `SHA256SUMS.txt`.
 
-- [ ] Bump the version and run `:base:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --console=plain`.
-- [ ] Record exact test counts, Lint totals, APK sizes/hashes, package metadata, log capacity rules, privacy limits, and device-test status.
-- [ ] If API 36 emulator is connected, execute diagnostics Compose tests and verify rotation/clear through the app; if HyperOS 3 ARM64 is connected, install and verify the real settings screen. Otherwise record each gate as not run/pending.
+- [x] Bump the version and run `:base:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --console=plain`.
+- [x] Record exact test counts, Lint totals, APK sizes/hashes, package metadata, log capacity rules, privacy limits, and device-test status.
+- [x] Check connected devices; none were attached, so API 36/HyperOS 3 device execution is explicitly recorded as pending rather than passed.
 - [ ] Commit and push `release: prepare PageNest 1.12.260826`; fetch and prove local HEAD equals `origin/master`.
 - [ ] Create and push annotated tag `pagenest-v1.12.260826`, wait for `.github/workflows/release-apk.yml`, then download and verify APK against `SHA256SUMS.txt` and package metadata.
 - [ ] Archive remote release evidence in both checkpoint documents, commit/push it, and prove a clean `master` synchronized with `origin/master`.

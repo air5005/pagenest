@@ -21,5 +21,5 @@ catalog or private-library data model:
       explicit snackbar dismissal.
 - [x] Implement the smallest production changes that make the tests pass.
 - [x] Compile the Android test APK and run focused JVM tests plus lint.
-- [ ] Build the next version APK, commit and push `master`, publish a GitHub
+- [ ] Build the next version APK and complete the local release gate; commit, push, and GitHub
       Release, then verify the downloaded artifact checksum.

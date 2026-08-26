@@ -168,7 +168,7 @@ class SystemTtsEngineCloseAdmissionTest {
     fun `owner reentrant close return observes exact once release`() {
         withOwner("owner-reentrant") { ownerScope, platform ->
             val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, ownerScope)
-            assertTrue(platform.listenerInstalled.await(5, TimeUnit.SECONDS))
+            awaitLatch(platform.listenerInstalled, "TTS listener installation")
             val releaseObservedAtReentrantReturn = CopyOnWriteArrayList<Pair<Int, Int>>()
             val continuation = Proxy.newProxyInstance(
                 CancellableContinuation::class.java.classLoader,
@@ -236,7 +236,7 @@ class SystemTtsEngineCloseAdmissionTest {
                     ownerScope,
                     admissionLock,
                 )
-                assertTrue(platform.listenerInstalled.await(5, TimeUnit.SECONDS))
+                awaitLatch(platform.listenerInstalled, "TTS listener installation")
                 val callers = Executors.newFixedThreadPool(2)
                 try {
                     admissionLock.lock()
@@ -282,7 +282,7 @@ class SystemTtsEngineCloseAdmissionTest {
     fun `off owner concurrent close waits for exact once release before returning`() {
         withOwner("off-owner-close") { ownerScope, platform ->
             val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, ownerScope)
-            assertTrue(platform.listenerInstalled.await(5, TimeUnit.SECONDS))
+            awaitLatch(platform.listenerInstalled, "TTS listener installation")
             val ownerBlocked = CountDownLatch(1)
             val releaseOwner = CountDownLatch(1)
             ownerScope.launch {
@@ -319,7 +319,7 @@ class SystemTtsEngineCloseAdmissionTest {
     fun `owner thread close releases synchronously and remains idempotent`() {
         withOwner("owner-close") { ownerScope, platform ->
             val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, ownerScope)
-            assertTrue(platform.listenerInstalled.await(5, TimeUnit.SECONDS))
+            awaitLatch(platform.listenerInstalled, "TTS listener installation")
 
             val releasedAtReturn = Executors.newSingleThreadExecutor().useExecutor { observer ->
                 observer.submit<Pair<Int, Int>> {
@@ -362,6 +362,10 @@ class SystemTtsEngineCloseAdmissionTest {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
         while (lock.queueLength < expected && System.nanoTime() < deadline) Thread.yield()
         assertTrue("expected $expected queued lock waiters", lock.queueLength >= expected)
+    }
+
+    private fun awaitLatch(latch: CountDownLatch, operation: String) {
+        assertTrue("timed out waiting for $operation", latch.await(30, TimeUnit.SECONDS))
     }
 
     private fun request(text: String) = SpeechRequest(

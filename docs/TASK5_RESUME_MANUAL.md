@@ -53,6 +53,7 @@ Phase 4 已发布为 GitHub Release `pagenest-v1.9.260825`。完整验证与远�
 - Online Discovery Phase 3 已完成 HTTPS/重定向/私网防护、100 MiB 上限、EPUB/TXT/PDF 验证、取消清理、私有书库导入、重复保护和阅读器跳转。
 - Phase 3 发布候选树的 533 个 JVM 测试、主 APK、测试 APK 和 Lint 门禁已通过；无连接设备，模拟器与 HyperOS 3 验收仍待执行。
 - GitHub Release `PageNest 1.11.260826` 已发布，远程 APK、`SHA256SUMS.txt`、GitHub 资产摘要与包内版本信息已交叉验证。
+- PageNest 1.12.260826 新增应用内日志中心、2 MiB 有界轮转日志、脱敏与重复抑制，并修复实机发现页无搜索键、导入结果遮屏、重启重复扫描三项问题；验证证据见 `docs/testing/diagnostics-logging.md`。
 
 设计与执行依据：
 
@@ -76,6 +77,9 @@ Phase 4 已发布为 GitHub Release `pagenest-v1.9.260825`。完整验证与远�
 - `docs/superpowers/specs/2026-08-26-pagenest-online-discovery-phase3-design.md`
 - `docs/superpowers/plans/2026-08-26-pagenest-online-discovery-phase3-secure-import.md`
 - `docs/testing/online-discovery-phase3.md`
+- `docs/superpowers/specs/2026-08-26-pagenest-diagnostics-logging-design.md`
+- `docs/superpowers/plans/2026-08-26-pagenest-diagnostics-logging.md`
+- `docs/testing/diagnostics-logging.md`
 
 ## 3. 下一开发入口
 
