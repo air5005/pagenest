@@ -26,5 +26,5 @@
   build the debug APK.
 - [ ] Install on the connected HyperOS target and verify Online Discovery plus logs.
 - [x] Update test evidence and resume documentation.
-- Commit and push `master`, publish the versioned APK and checksum in a GitHub
+- [x] Commit and push `master`, publish the versioned APK and checksum in a GitHub
   Release, then verify the uploaded checksum.

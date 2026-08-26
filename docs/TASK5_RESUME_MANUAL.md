@@ -143,6 +143,7 @@ git rev-parse origin/master
 
 - 在线发现可靠性代码与 TDD 已完成，本地完整 Gradle 门禁通过。
 - 版本已提升为 `1.15.260826` / versionCode 16。
+- `master` 已推送，1.15 APK 与校验文件已归档到 GitHub Release。
 - 下一步：连接并授权目标小米手机，覆盖安装 1.15，验证在线推荐、搜索和
-  Gutenberg EPUB 导入；随后提交/推送 `master` 并发布 GitHub Release。
+  Gutenberg EPUB 导入。
 - 证据：`docs/testing/online-discovery-resilience-1.15.md`。

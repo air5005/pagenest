@@ -47,7 +47,8 @@
 
 - 版本：`1.15.260826`（versionCode 16）
 - 本地文件：`app/build/outputs/apk/debug/app-debug.apk`
-- 大小：126,253,178 字节
+- 大小：127,083,770 字节
+- SHA-256：`c7d1e30cc1dbdd696895b35bda8d08961201e0a38d540228e8b3608bd25758c4`
 
 ## 真机状态
 
@@ -56,3 +57,12 @@
 声称目标 HyperOS 手机已经验证通过。重新连接并授权后应验证推荐、热门、
 最新、英文搜索、Gutenberg EPUB 导入以及“运行日志”中的来源失败分类。
 
+## GitHub 发布证据
+
+- 来源提交：`026a3b31aab2f803db88c3e340c0d09c32de4cfc`
+- 标签：`pagenest-v1.15.260826`
+- Release：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.15.260826>
+- GitHub 保存的 APK 大小：127,083,770 字节。
+- GitHub 保存的 APK 摘要：
+  `sha256:c7d1e30cc1dbdd696895b35bda8d08961201e0a38d540228e8b3608bd25758c4`。
+- Release 同时包含 `SHA256SUMS.txt`，内容与 GitHub 计算的 APK 摘要一致。
