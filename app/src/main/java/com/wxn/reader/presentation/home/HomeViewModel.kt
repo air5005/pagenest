@@ -148,6 +148,9 @@ class HomeViewModel
     private val _importProgressState = MutableStateFlow<ImportProgressState>(ImportProgressState.Idle)
     val importProgressState: StateFlow<ImportProgressState> = _importProgressState.asStateFlow()
 
+    private val _libraryOpenRequest = MutableStateFlow(0L)
+    val libraryOpenRequest: StateFlow<Long> = _libraryOpenRequest.asStateFlow()
+
     private val _snackbarState = MutableStateFlow<SnackbarState>(SnackbarState.Hidden)
     val snackbarState: StateFlow<SnackbarState> = _snackbarState.asStateFlow()
 
@@ -434,6 +437,7 @@ class HomeViewModel
                         }
                     }
                     _importProgressState.value = ImportProgressState.Complete
+                    requestLibraryOpenAfterImport(importResults)
                     showSnackbar(
                         message = importSummary(importResults),
                     )
@@ -665,6 +669,7 @@ class HomeViewModel
                     _importProgressState.value = ImportProgressState.InProgress(index + 1, uris.size)
                 }
                 _importProgressState.value = ImportProgressState.Complete
+                requestLibraryOpenAfterImport(results)
                 showSnackbar(importSummary(results))
                 Logger.running("BOOK_IMPORT", importSummaryForLog(results))
             } catch (cancellation: CancellationException) {
@@ -816,6 +821,12 @@ class HomeViewModel
         val duplicates = results.count { it is ImportResult.Duplicate }
         val failed = results.size - imported - duplicates
         return stringResource(R.string.import_result_summary, imported, duplicates, failed)
+    }
+
+    private fun requestLibraryOpenAfterImport(results: List<ImportResult>) {
+        if (results.none { it is ImportResult.Imported }) return
+        _currentShelf.value = null
+        _libraryOpenRequest.value += 1
     }
 
     private fun importSummaryForLog(results: List<ImportResult>): String {

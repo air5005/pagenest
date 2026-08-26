@@ -87,6 +87,7 @@ fun HomeScreen(
     val dashboardState by viewModel.dashboardState.collectAsStateWithLifecycle()
 
     val importProgress by viewModel.importProgressState.collectAsStateWithLifecycle()
+    val libraryOpenRequest by viewModel.libraryOpenRequest.collectAsStateWithLifecycle()
     val snackbarState by viewModel.snackbarState.collectAsStateWithLifecycle()
 
     val selectedTabRow by viewModel.selectedTabRow.collectAsStateWithLifecycle()
@@ -148,6 +149,14 @@ fun HomeScreen(
             val shelf = shelves.getOrNull(selectedTab - 1)
             viewModel.updateCurrentShelf(shelf)
             shelf?.let { viewModel.getBooksForShelf(it.id) }
+        }
+    }
+
+    LaunchedEffect(libraryOpenRequest) {
+        if (libraryOpenRequest > 0L) {
+            showAllBooks = true
+            selectedTab = 0
+            viewModel.updateCurrentShelf(null)
         }
     }
 

@@ -197,6 +197,7 @@ class HomeViewModelImportFlowTest {
             viewModel.snackbarState.value,
         )
         assertFalse(viewModel.isAddingBooks.value)
+        assertEquals(1L, viewModel.libraryOpenRequest.value)
     }
 
     @Test
@@ -235,6 +236,7 @@ class HomeViewModelImportFlowTest {
         viewModel.dismissSnackbar()
         assertEquals(SnackbarState.Hidden, viewModel.snackbarState.value)
         assertFalse(viewModel.isAddingBooks.value)
+        assertEquals(1L, viewModel.libraryOpenRequest.value)
     }
 
     @Test
