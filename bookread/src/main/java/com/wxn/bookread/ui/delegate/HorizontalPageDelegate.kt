@@ -97,10 +97,15 @@ abstract class HorizontalPageDelegate(pageView: PageView) : PageDelegate(pageVie
             }
         }
         if (isMoved) {
-            isCancel = if (mDirection == Direction.NEXT) sumX > lastX else sumX < lastX
+            isCancel = PageTurnGesturePolicy.shouldCancel(
+                direction = mDirection,
+                start = startX,
+                current = focusX,
+                pageExtent = viewWidth,
+            )
             isRunning = true
             //设置触摸点
-            pageView.setTouchPoint(sumX, sumY)
+            pageView.setTouchPoint(focusX, focusY)
         }
     }
 
