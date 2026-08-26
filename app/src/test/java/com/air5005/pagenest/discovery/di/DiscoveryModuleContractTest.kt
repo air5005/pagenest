@@ -36,6 +36,7 @@ class DiscoveryModuleContractTest {
         val registry = DiscoverySourceRegistry.create(
             gutendex = source("gutendex"),
             gutenberg = source("gutenberg-opds"),
+            openLibrary = source("openlibrary"),
             standardEbooksFactory = { source("standard-ebooks") },
             standardEbooksAuthorized = false,
         )

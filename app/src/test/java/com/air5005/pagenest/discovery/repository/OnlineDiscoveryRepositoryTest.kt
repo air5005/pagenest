@@ -7,6 +7,8 @@ import com.air5005.pagenest.discovery.model.AcquisitionAccess
 import com.air5005.pagenest.discovery.model.CatalogKind
 import com.air5005.pagenest.discovery.model.CatalogPage
 import com.air5005.pagenest.discovery.model.CatalogRequest
+import com.air5005.pagenest.discovery.model.CatalogSourceException
+import com.air5005.pagenest.discovery.model.CatalogSourceFailure
 import com.air5005.pagenest.discovery.model.OnlineAcquisition
 import com.air5005.pagenest.discovery.model.OnlineBook
 import com.air5005.pagenest.discovery.model.OnlineBookFormat
@@ -16,8 +18,10 @@ import com.air5005.pagenest.discovery.model.SourceReference
 import com.air5005.pagenest.discovery.source.OnlineCatalogSource
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.currentTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -125,7 +129,25 @@ class OnlineDiscoveryRepositoryTest {
         ).discover(popular())
 
         assertEquals(listOf("slow"), result.unavailableSourceIds)
+        assertEquals(CatalogSourceFailure.TIMEOUT, result.sourceFailures.single().failure)
         assertEquals("fast", result.page.books.single().stableKey)
+    }
+
+    @Test
+    fun `typed source failure is retained without exposing transport details`() = runTest {
+        val malformed = object : OnlineCatalogSource {
+            override val id = "malformed"
+            override suspend fun browse(request: CatalogRequest): CatalogPage =
+                throw CatalogSourceException(CatalogSourceFailure.MALFORMED)
+            override suspend fun details(reference: SourceReference): SourceBookDetails? = null
+        }
+
+        val result = repository(listOf(malformed), MemoryCache()).discover(popular())
+
+        assertEquals(
+            SourceFailure("malformed", CatalogSourceFailure.MALFORMED),
+            result.sourceFailures.single(),
+        )
     }
 
     @Test
@@ -148,6 +170,29 @@ class OnlineDiscoveryRepositoryTest {
 
         assertEquals("mobile", result.page.books.single().stableKey)
         assertTrue(result.unavailableSourceIds.isEmpty())
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `useful source returns after bounded aggregation grace without waiting full timeout`() = runTest {
+        val slow = object : OnlineCatalogSource {
+            override val id = "slow"
+            override suspend fun browse(request: CatalogRequest): CatalogPage {
+                delay(30_000)
+                return page(book("slow", "Slow"))
+            }
+            override suspend fun details(reference: SourceReference): SourceBookDetails? = null
+        }
+
+        val result = repository(
+            sources = listOf(successSource("fast"), slow),
+            cache = MemoryCache(),
+            timeoutMillis = 20_000,
+        ).discover(popular())
+
+        assertEquals("fast", result.page.books.single().stableKey)
+        assertTrue(currentTime < 20_000)
+        assertEquals(CatalogSourceFailure.TIMEOUT, result.sourceFailures.single().failure)
     }
 
     @Test(expected = CancellationException::class)

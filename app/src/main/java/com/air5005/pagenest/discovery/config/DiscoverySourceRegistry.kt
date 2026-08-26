@@ -20,20 +20,23 @@ class DiscoverySourceRegistry private constructor(
         fun create(
             gutendex: OnlineCatalogSource,
             gutenberg: OnlineCatalogSource,
+            openLibrary: OnlineCatalogSource,
             standardEbooksFactory: () -> OnlineCatalogSource,
             standardEbooksAuthorized: Boolean,
         ): DiscoverySourceRegistry {
             require(gutendex.id == GUTENDEX_ID) { "Unexpected Gutendex source id" }
             require(gutenberg.id == GUTENBERG_ID) { "Unexpected Gutenberg source id" }
+            require(openLibrary.id == OPEN_LIBRARY_ID) { "Unexpected Open Library source id" }
             val standard = standardEbooksFactory.takeIf { standardEbooksAuthorized }?.invoke()
             if (standard != null) {
                 require(standard.id == STANDARD_EBOOKS_ID) { "Unexpected Standard Ebooks source id" }
             }
             return DiscoverySourceRegistry(
-                enabledSources = listOfNotNull(gutendex, gutenberg, standard),
+                enabledSources = listOfNotNull(gutendex, gutenberg, openLibrary, standard),
                 statuses = listOf(
                     DiscoverySourceStatus(GUTENDEX_ID, enabled = true),
                     DiscoverySourceStatus(GUTENBERG_ID, enabled = true),
+                    DiscoverySourceStatus(OPEN_LIBRARY_ID, enabled = true),
                     DiscoverySourceStatus(
                         id = STANDARD_EBOOKS_ID,
                         enabled = standard != null,
@@ -45,6 +48,7 @@ class DiscoverySourceRegistry private constructor(
 
         const val GUTENDEX_ID = "gutendex"
         const val GUTENBERG_ID = "gutenberg-opds"
+        const val OPEN_LIBRARY_ID = "openlibrary"
         const val STANDARD_EBOOKS_ID = "standard-ebooks"
     }
 }

@@ -12,6 +12,7 @@ import com.air5005.pagenest.discovery.openlibrary.OpenLibraryRateLimiter
 import com.air5005.pagenest.discovery.repository.DiscoveryCatalogRepository
 import com.air5005.pagenest.discovery.repository.OnlineDiscoveryRepository
 import com.air5005.pagenest.discovery.source.gutendex.GutendexCatalogSource
+import com.air5005.pagenest.discovery.source.openlibrary.OpenLibraryCatalogSource
 import com.air5005.pagenest.discovery.source.opds.KnownOpdsSources
 import dagger.Module
 import dagger.Provides
@@ -46,6 +47,7 @@ object DiscoveryModule {
     ): DiscoverySourceRegistry = DiscoverySourceRegistry.create(
         gutendex = GutendexCatalogSource(client),
         gutenberg = KnownOpdsSources.gutenberg(client),
+        openLibrary = OpenLibraryCatalogSource(client),
         standardEbooksFactory = { KnownOpdsSources.standardEbooks(client) },
         standardEbooksAuthorized = false,
     )

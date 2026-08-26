@@ -39,6 +39,7 @@ data class OpdsSourceConfig(
     val requestPathMapper: (CatalogRequest) -> String,
     val sourceBookId: (ParsedOpdsEntry) -> String?,
     val stableKey: (ParsedOpdsEntry, String) -> String,
+    val derivedAcquisitions: (ParsedOpdsEntry, String) -> List<OnlineAcquisition> = { _, _ -> emptyList() },
 )
 
 class OpdsCatalogSource(
@@ -133,7 +134,9 @@ class OpdsCatalogSource(
             catalogUpdatedAtEpochMillis = entry.updated?.let(::instantEpochOrNull),
             rightsStatus = config.rightsStatus,
             sourceReferences = listOf(SourceReference(id, sourceBookId)),
-            acquisitions = entry.acquisitions.mapNotNull(::mapAcquisition),
+            acquisitions = (entry.acquisitions.mapNotNull(::mapAcquisition) +
+                config.derivedAcquisitions(entry, sourceBookId))
+                .distinctBy { it.url },
         )
     }
 

@@ -7,18 +7,29 @@ import com.air5005.pagenest.discovery.cache.CatalogCacheKey
 import com.air5005.pagenest.discovery.model.CatalogKind
 import com.air5005.pagenest.discovery.model.CatalogPage
 import com.air5005.pagenest.discovery.model.CatalogRequest
+import com.air5005.pagenest.discovery.model.CatalogSourceException
+import com.air5005.pagenest.discovery.model.CatalogSourceFailure
 import com.air5005.pagenest.discovery.source.OnlineCatalogSource
+import com.wxn.base.util.Logger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class DiscoveryResult(
     val page: CatalogPage,
     val fromStaleCache: Boolean,
     val unavailableSourceIds: List<String>,
+    val sourceFailures: List<SourceFailure> = emptyList(),
+)
+
+data class SourceFailure(
+    val sourceId: String,
+    val failure: CatalogSourceFailure,
 )
 
 class OnlineDiscoveryRepository(
@@ -41,7 +52,8 @@ class OnlineDiscoveryRepository(
 
         val outcomes = querySources(request)
         val successfulPages = outcomes.mapNotNull { (it as? SourceOutcome.Success)?.page }
-        val unavailable = outcomes.mapNotNull { (it as? SourceOutcome.Failure)?.sourceId }
+        val failures = outcomes.mapNotNull { (it as? SourceOutcome.Failure)?.failure }
+        val unavailable = failures.map(SourceFailure::sourceId)
 
         if (successfulPages.isEmpty()) {
             if (cached != null) {
@@ -49,12 +61,14 @@ class OnlineDiscoveryRepository(
                     page = cached.page.copy(sourceWarnings = unavailable),
                     fromStaleCache = true,
                     unavailableSourceIds = unavailable,
+                    sourceFailures = failures,
                 )
             }
             return DiscoveryResult(
                 page = CatalogPage(emptyList(), null, unavailable),
                 fromStaleCache = false,
                 unavailableSourceIds = unavailable,
+                sourceFailures = failures,
             )
         }
 
@@ -63,26 +77,69 @@ class OnlineDiscoveryRepository(
         if (page.books.isNotEmpty()) {
             safeCachePut(key, CachedCatalogPage(nowEpochMillis(), page))
         }
-        return DiscoveryResult(page, fromStaleCache = false, unavailableSourceIds = unavailable)
+        return DiscoveryResult(
+            page,
+            fromStaleCache = false,
+            unavailableSourceIds = unavailable,
+            sourceFailures = failures,
+        )
     }
 
     private suspend fun querySources(request: CatalogRequest): List<SourceOutcome> = supervisorScope {
-        sources.map { source ->
-            async {
-                try {
-                    SourceOutcome.Success(
-                        sourceId = source.id,
-                        page = withTimeout(sourceTimeoutMillis) { source.browse(request) },
-                    )
-                } catch (_: TimeoutCancellationException) {
-                    SourceOutcome.Failure(source.id)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Throwable) {
-                    SourceOutcome.Failure(source.id)
-                }
+        if (sources.isEmpty()) return@supervisorScope emptyList()
+        val channel = Channel<SourceOutcome>(sources.size)
+        val jobs = sources.associate { source ->
+            source.id to launch { channel.send(querySource(source, request)) }
+        }
+        val outcomes = mutableListOf<SourceOutcome>()
+        var hasUsefulResult = false
+        while (outcomes.size < sources.size) {
+            val outcome = if (hasUsefulResult) {
+                withTimeoutOrNull(SOURCE_AGGREGATION_GRACE_MILLIS) { channel.receive() }
+            } else {
+                channel.receive()
+            } ?: break
+            if (outcome is SourceOutcome.Cancelled) {
+                jobs.values.forEach { it.cancel() }
+                throw outcome.cause
             }
-        }.awaitAll()
+            outcomes += outcome
+            if (outcome is SourceOutcome.Success && outcome.page.books.isNotEmpty()) {
+                hasUsefulResult = true
+            }
+        }
+
+        val completedIds = outcomes.mapTo(mutableSetOf()) { it.sourceId }
+        jobs.filterKeys { it !in completedIds }.values.forEach { it.cancel() }
+        jobs.values.joinAll()
+        sources.filter { it.id !in completedIds }.forEach { source ->
+            outcomes += sourceFailure(source.id, CatalogSourceFailure.TIMEOUT)
+        }
+        channel.close()
+        outcomes
+    }
+
+    private suspend fun querySource(
+        source: OnlineCatalogSource,
+        request: CatalogRequest,
+    ): SourceOutcome = try {
+        SourceOutcome.Success(
+            sourceId = source.id,
+            page = withTimeout(sourceTimeoutMillis) { source.browse(request) },
+        )
+    } catch (_: TimeoutCancellationException) {
+        sourceFailure(source.id, CatalogSourceFailure.TIMEOUT)
+    } catch (cancelled: CancellationException) {
+        SourceOutcome.Cancelled(source.id, cancelled)
+    } catch (known: CatalogSourceException) {
+        sourceFailure(source.id, known.failure)
+    } catch (_: Throwable) {
+        sourceFailure(source.id, CatalogSourceFailure.NETWORK)
+    }
+
+    private fun sourceFailure(sourceId: String, failure: CatalogSourceFailure): SourceOutcome.Failure {
+        Logger.warning("DISCOVERY", "Catalog source failed id=$sourceId reason=${failure.name}")
+        return SourceOutcome.Failure(SourceFailure(sourceId, failure))
     }
 
     private suspend fun safeCacheGet(key: String): CachedCatalogPage? = try {
@@ -119,14 +176,23 @@ class OnlineDiscoveryRepository(
     }
 
     private sealed interface SourceOutcome {
-        data class Success(val sourceId: String, val page: CatalogPage) : SourceOutcome
-        data class Failure(val sourceId: String) : SourceOutcome
+        val sourceId: String
+
+        data class Success(override val sourceId: String, val page: CatalogPage) : SourceOutcome
+        data class Failure(val failure: SourceFailure) : SourceOutcome {
+            override val sourceId: String get() = failure.sourceId
+        }
+        data class Cancelled(
+            override val sourceId: String,
+            val cause: CancellationException,
+        ) : SourceOutcome
     }
 
     companion object {
         // Public catalog endpoints are frequently reached through mobile VPN/proxy paths.
         // Eight seconds was short enough to reject a valid Gutenberg response on HyperOS.
         const val DEFAULT_SOURCE_TIMEOUT_MILLIS = 20_000L
+        const val SOURCE_AGGREGATION_GRACE_MILLIS = 1_500L
         const val DETAILS_TTL_MILLIS = 24L * 60L * 60L * 1_000L
         private const val THIRTY_MINUTES_MILLIS = 30L * 60L * 1_000L
         private const val ONE_HOUR_MILLIS = 60L * 60L * 1_000L

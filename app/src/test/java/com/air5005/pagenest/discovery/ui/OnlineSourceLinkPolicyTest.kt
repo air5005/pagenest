@@ -7,6 +7,14 @@ import org.junit.Test
 
 class OnlineSourceLinkPolicyTest {
     @Test
+    fun `open library work reference maps to trusted work page`() {
+        assertEquals(
+            "https://openlibrary.org/works/OL45804W",
+            OnlineSourceLinkPolicy.sourcePage(SourceReference("openlibrary", "OL45804W")),
+        )
+        assertNull(OnlineSourceLinkPolicy.sourcePage(SourceReference("openlibrary", "../bad")))
+    }
+    @Test
     fun `gutendex and gutenberg numeric ids map to canonical Gutenberg pages`() {
         assertEquals(
             "https://www.gutenberg.org/ebooks/1342",

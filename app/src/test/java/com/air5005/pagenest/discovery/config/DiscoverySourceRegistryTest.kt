@@ -19,6 +19,7 @@ class DiscoverySourceRegistryTest {
         val registry = DiscoverySourceRegistry.create(
             gutendex = source("gutendex"),
             gutenberg = source("gutenberg-opds"),
+            openLibrary = source("openlibrary"),
             standardEbooksFactory = {
                 standardConstructed = true
                 source("standard-ebooks")
@@ -26,9 +27,12 @@ class DiscoverySourceRegistryTest {
             standardEbooksAuthorized = false,
         )
 
-        assertEquals(listOf("gutendex", "gutenberg-opds"), registry.enabledSources.map { it.id })
         assertEquals(
-            listOf("gutendex", "gutenberg-opds", "standard-ebooks"),
+            listOf("gutendex", "gutenberg-opds", "openlibrary"),
+            registry.enabledSources.map { it.id },
+        )
+        assertEquals(
+            listOf("gutendex", "gutenberg-opds", "openlibrary", "standard-ebooks"),
             registry.statuses.map { it.id },
         )
         assertEquals(
@@ -46,6 +50,7 @@ class DiscoverySourceRegistryTest {
         val registry = DiscoverySourceRegistry.create(
             gutendex = source("gutendex"),
             gutenberg = source("gutenberg-opds"),
+            openLibrary = source("openlibrary"),
             standardEbooksFactory = {
                 constructionCount += 1
                 source("standard-ebooks")
@@ -53,7 +58,10 @@ class DiscoverySourceRegistryTest {
             standardEbooksAuthorized = true,
         )
 
-        assertEquals(listOf("gutendex", "gutenberg-opds", "standard-ebooks"), registry.enabledSources.map { it.id })
+        assertEquals(
+            listOf("gutendex", "gutenberg-opds", "openlibrary", "standard-ebooks"),
+            registry.enabledSources.map { it.id },
+        )
         assertTrue(registry.statuses.all { it.enabled })
         assertEquals(1, constructionCount)
     }

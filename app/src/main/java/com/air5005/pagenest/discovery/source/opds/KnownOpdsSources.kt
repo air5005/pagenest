@@ -2,6 +2,9 @@ package com.air5005.pagenest.discovery.source.opds
 
 import com.air5005.pagenest.discovery.model.CatalogKind
 import com.air5005.pagenest.discovery.model.RightsStatus
+import com.air5005.pagenest.discovery.model.AcquisitionAccess
+import com.air5005.pagenest.discovery.model.OnlineAcquisition
+import com.air5005.pagenest.discovery.model.OnlineBookFormat
 import io.ktor.client.HttpClient
 import io.ktor.http.URLBuilder
 
@@ -27,6 +30,17 @@ object KnownOpdsSources {
             },
             sourceBookId = { entry -> GUTENBERG_ID.find(entry.id)?.groupValues?.get(1) },
             stableKey = { _, sourceBookId -> "gutenberg:$sourceBookId" },
+            derivedAcquisitions = { _, sourceBookId ->
+                listOf(
+                    OnlineAcquisition(
+                        sourceId = "gutenberg-opds",
+                        format = OnlineBookFormat.EPUB,
+                        url = "https://www.gutenberg.org/ebooks/$sourceBookId.epub3.images",
+                        access = AcquisitionAccess.FREE_FULL,
+                        qualityPriority = 20,
+                    ),
+                )
+            },
         ),
     )
 

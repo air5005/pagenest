@@ -18,6 +18,9 @@ object OnlineSourceLinkPolicy {
             reference.sourceBookId.takeIf(standardEbooksSlug::matches)
                 ?.let { "https://standardebooks.org/ebooks/$it" }
 
+        DiscoverySourceRegistry.OPEN_LIBRARY_ID ->
+            openLibraryWorkPage(reference.sourceBookId)
+
         else -> null
     }
 

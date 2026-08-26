@@ -286,7 +286,11 @@ class DiscoveryViewModelTest {
     ) = DiscoveryViewModel(repository, enricher, registry(), coordinator)
 
     private fun registry(): DiscoverySourceRegistry = DiscoverySourceRegistry.create(
-        source("gutendex"), source("gutenberg-opds"), { source("standard-ebooks") }, false,
+        source("gutendex"),
+        source("gutenberg-opds"),
+        source("openlibrary"),
+        { source("standard-ebooks") },
+        false,
     )
 
     private fun source(id: String) = object : OnlineCatalogSource {
