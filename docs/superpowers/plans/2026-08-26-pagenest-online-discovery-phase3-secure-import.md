@@ -110,11 +110,11 @@ git push origin master
 - Modify all locale discovery resource files.
 - Extend `OnlineBookDetailScreenTest.kt`, `HomeNavigationTest.kt`.
 
-- [ ] Show actions only for eligible acquisitions; inaccessible details remain source-only.
-- [ ] Show determinate/indeterminate progress, safe localized phases/errors and cancel.
-- [ ] Show persistent “已加入书架” for success; add action does not navigate.
-- [ ] Start action passes book ID to `HomeViewModel.openDashboardBook`; PDF/EPUB/TXT use existing routes.
-- [ ] Back/close/cancel behavior is deterministic and large-font semantics remain usable.
+- [x] Show actions only for eligible acquisitions; inaccessible details remain source-only.
+- [x] Show determinate/indeterminate progress, safe localized phases/errors and cancel.
+- [x] Show persistent “已加入书架” for success; add action does not navigate.
+- [x] Start action passes book ID to `HomeViewModel.openDashboardBook`; PDF/EPUB/TXT use existing routes.
+- [x] Back/close/cancel behavior is deterministic and large-font semantics remain usable.
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests '*DiscoveryViewModelTest' :app:assembleDebugAndroidTest :app:lintDebug

@@ -1,9 +1,13 @@
 package com.air5005.pagenest.discovery.ui
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performClick
 import com.air5005.pagenest.discovery.model.AcquisitionAccess
 import com.air5005.pagenest.discovery.model.OnlineAcquisition
 import com.air5005.pagenest.discovery.model.OnlineBook
@@ -17,17 +21,75 @@ class OnlineBookDetailScreenTest {
     @get:Rule val compose = createComposeRule()
 
     @Test
-    fun detail_shows_rights_formats_and_safe_phase_three_notice() {
+    fun eligible_detail_shows_import_actions_and_dispatches_them() {
+        var addCalls = 0
+        var readCalls = 0
         compose.setContent {
             MaterialTheme {
-                OnlineBookDetailScreen(book = testBook())
+                OnlineBookDetailScreen(
+                    book = testBook(),
+                    acquisition = DiscoveryAcquisitionState.Idle,
+                    onAddToShelf = { addCalls++ },
+                    onStartReading = { readCalls++ },
+                )
             }
         }
 
         compose.onNodeWithText("Pride and Prejudice").assertIsDisplayed()
         compose.onNodeWithText("公共领域").assertIsDisplayed()
         compose.onNodeWithText("EPUB").assertIsDisplayed()
-        compose.onNodeWithText("安全下载与导入将在下一阶段开放").assertIsDisplayed()
+        compose.onNodeWithText("加入书架").performClick()
+        compose.onNodeWithText("开始阅读").performClick()
+        assert(addCalls == 1)
+        assert(readCalls == 1)
+        compose.onNodeWithText("查看来源").assertIsDisplayed()
+    }
+
+    @Test
+    fun progress_cancel_success_and_safe_error_are_visible() {
+        var cancelCalls = 0
+        compose.setContent {
+            MaterialTheme {
+                Column {
+                    OnlineAcquisitionControls(
+                        acquisition = DiscoveryAcquisitionState.Downloading(50, 100),
+                        onAddToShelf = {},
+                        onStartReading = {},
+                        onCancel = { cancelCalls++ },
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("正在下载 50%").assertIsDisplayed()
+        compose.onNodeWithText("取消").performClick()
+        assert(cancelCalls == 1)
+
+        compose.setContent {
+            MaterialTheme {
+                OnlineAcquisitionControls(
+                    acquisition = DiscoveryAcquisitionState.Added(42L),
+                    onAddToShelf = {},
+                    onStartReading = {},
+                    onCancel = {},
+                )
+            }
+        }
+        compose.onNodeWithText("已加入书架").assertIsDisplayed()
+        compose.onNodeWithText("开始阅读").assertIsDisplayed()
+    }
+
+    @Test
+    fun inaccessible_detail_keeps_source_only() {
+        compose.setContent {
+            MaterialTheme {
+                OnlineBookDetailScreen(
+                    book = testBook().copy(rightsStatus = RightsStatus.UNKNOWN),
+                )
+            }
+        }
+
+        compose.onAllNodesWithText("加入书架").assertCountEquals(0)
+        compose.onAllNodesWithText("开始阅读").assertCountEquals(0)
         compose.onNodeWithText("查看来源").assertIsDisplayed()
     }
 

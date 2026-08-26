@@ -34,7 +34,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,13 +49,16 @@ import com.air5005.pagenest.discovery.config.SourceDisabledReason
 import com.air5005.pagenest.discovery.model.CatalogLanguage
 import com.air5005.pagenest.discovery.model.OnlineBook
 import com.wxn.reader.R
+import kotlinx.coroutines.flow.Flow
 
 @Composable
 fun DiscoveryRoute(
     modifier: Modifier = Modifier,
     viewModel: DiscoveryViewModel = hiltViewModel(),
+    onBookReady: (Long) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    DiscoveryReaderEventEffect(viewModel.readerBookIds, onBookReady)
     val selected = state.selectedBook
     if (selected != null) {
         OnlineBookDetailScreen(
@@ -61,7 +66,11 @@ fun DiscoveryRoute(
             modifier = modifier,
             isLoading = state.isDetailLoading,
             metadata = state.detailMetadata,
+            acquisition = state.acquisition,
             onBack = viewModel::closeDetail,
+            onAddToShelf = viewModel::addToShelf,
+            onStartReading = viewModel::startReading,
+            onCancelAcquisition = viewModel::cancelAcquisition,
         )
     } else {
         DiscoveryScreen(
@@ -73,6 +82,17 @@ fun DiscoveryRoute(
             onRetry = viewModel::retry,
             onBookSelected = viewModel::selectBook,
         )
+    }
+}
+
+@Composable
+fun DiscoveryReaderEventEffect(
+    events: Flow<Long>,
+    onBookReady: (Long) -> Unit,
+) {
+    val currentCallback by rememberUpdatedState(onBookReady)
+    LaunchedEffect(events) {
+        events.collect(currentCallback)
     }
 }
 

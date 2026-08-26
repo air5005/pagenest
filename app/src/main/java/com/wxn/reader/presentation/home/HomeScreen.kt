@@ -312,7 +312,10 @@ fun HomeScreen(
                         onRecentBookClick = viewModel::openDashboardBook,
                     )
                 } else if (currentDestination == HomeTopLevelDestination.DISCOVERY) {
-                    DiscoveryRoute(Modifier.padding(innerPadding))
+                    DiscoveryRoute(
+                        modifier = Modifier.padding(innerPadding),
+                        onBookReady = viewModel::openDashboardBook,
+                    )
                 } else if (currentDestination == HomeTopLevelDestination.MINE) {
                     HomeMinePanel(innerPadding, viewModel)
                 }

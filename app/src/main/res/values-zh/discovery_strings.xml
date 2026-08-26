@@ -36,5 +36,22 @@
     <string name="discovery_rights_preview">仅预览</string>
     <string name="discovery_rights_borrow">可借阅</string>
     <string name="discovery_rights_unknown">版权未知</string>
+    <string name="discovery_add_to_shelf">加入书架</string>
+    <string name="discovery_start_reading">开始阅读</string>
+    <string name="discovery_cancel_acquisition">取消</string>
+    <string name="discovery_added_to_shelf">已加入书架</string>
+    <string name="discovery_downloading">正在下载</string>
+    <string name="discovery_downloading_percent">正在下载 %1$d%%</string>
+    <string name="discovery_validating">正在验证文件</string>
+    <string name="discovery_importing">正在导入书架</string>
+    <string name="discovery_error_unavailable">暂时无法获取这本书</string>
+    <string name="discovery_error_unsafe">为保护设备，已停止不安全的下载</string>
+    <string name="discovery_error_unauthorized">该图书需要授权，暂不能导入</string>
+    <string name="discovery_error_too_large">文件过大，暂不能导入</string>
+    <string name="discovery_error_network">网络异常，请稍后重试</string>
+    <string name="discovery_error_unsupported">暂不支持这种图书格式</string>
+    <string name="discovery_error_unreadable">文件无法阅读，请尝试其他来源</string>
+    <string name="discovery_error_parse">图书解析失败，请尝试其他格式</string>
+    <string name="discovery_error_storage">存储空间不足或无法写入</string>
+    <string name="discovery_error_import">导入失败，请稍后重试</string>
 </resources>
-
