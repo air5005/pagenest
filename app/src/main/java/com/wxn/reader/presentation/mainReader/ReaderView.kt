@@ -3,7 +3,6 @@ package com.wxn.reader.presentation.mainReader
 import android.content.Intent
 import android.net.Uri
 import android.widget.FrameLayout
-import android.widget.Toast
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -48,6 +47,7 @@ import com.air5005.pagenest.speech.model.SpeechPlaybackState
 import com.air5005.pagenest.speech.settings.SpeechSettingsViewModel
 import com.air5005.pagenest.speech.settings.SpeechUiEvent
 import com.air5005.pagenest.speech.ui.SpeechControlPolicy
+import com.air5005.pagenest.speech.ui.ReaderSpeechEventPolicy
 import com.air5005.pagenest.speech.ui.SpeechSettingsEventPolicy
 import com.air5005.pagenest.speech.ui.SpeechControlSheet
 import com.air5005.pagenest.speech.ui.SpeechControlUiState
@@ -94,9 +94,7 @@ fun ReaderView(
     var speechEvent by remember { mutableStateOf<SpeechUiEvent?>(null) }
     LaunchedEffect(speechSettings) {
         speechSettings.events.collect { event ->
-            if (event is SpeechUiEvent.ShowFallbackMessage) {
-                Toast.makeText(context, event.message, Toast.LENGTH_LONG).show()
-            } else if (event is SpeechUiEvent.ShowMessage) {
+            if (ReaderSpeechEventPolicy.shouldPresent(event)) {
                 speechEvent = event
             }
         }
@@ -108,7 +106,6 @@ fun ReaderView(
     val chromeState by viewModel.readerChromeState.collectAsStateWithLifecycle()
     val appPreferences by viewModel.appPreferences.collectAsStateWithLifecycle()
     val readProgression by viewModel.readProgression.collectAsStateWithLifecycle()
-    var progressExpanded by remember { mutableStateOf(false) }
     var showMoreTools by remember { mutableStateOf(false) }
     var showDisplayTools by remember { mutableStateOf(false) }
 
@@ -188,10 +185,6 @@ fun ReaderView(
         }
     }
 
-    LaunchedEffect(chromeState.controlsVisible) {
-        if (!chromeState.controlsVisible) progressExpanded = false
-    }
-
     val speechControlState = SpeechControlUiState(
         playback = speechSnapshot.playbackState,
         mode = speechState.preferences.mode,
@@ -248,14 +241,15 @@ fun ReaderView(
                 progression = readProgression,
                 isBookmarked = isBookmarked,
                 speech = speechControlState,
-                progressExpanded = progressExpanded,
                 onBack = { backDispatcher?.onBackPressed() },
                 onBookmark = {
                     if (isBookmarked) viewModel.deleteBookmark() else viewModel.addBookmark()
                 },
                 onMore = { showMoreTools = true },
                 onChapters = { viewModel.chaptersDrawerOpen() },
-                onProgressToggle = { progressExpanded = !progressExpanded },
+                onProgressToggle = {
+                    viewModel.setProgressPanelExpanded(!chromeState.progressPanelExpanded)
+                },
                 onProgressChange = { viewModel.changePageByProgress(it) },
                 onPreviousPage = { viewModel.pageController.pageFactory?.moveToPrev(true) },
                 onNextPage = { viewModel.pageController.pageFactory?.moveToNext(true) },

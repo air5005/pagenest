@@ -67,7 +67,6 @@ fun ReaderChrome(
     progression: Double,
     isBookmarked: Boolean,
     speech: SpeechControlUiState,
-    progressExpanded: Boolean,
     onBack: () -> Unit,
     onBookmark: () -> Unit,
     onMore: () -> Unit,
@@ -109,58 +108,59 @@ fun ReaderChrome(
             )
         }
 
-        AnimatedVisibility(
-            visible = state.controlsVisible && progressExpanded,
-            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-            exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 12.dp)
-                .padding(bottom = if (state.speechMiniPlayerVisible) 196.dp else 116.dp),
+                .padding(vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ReaderProgressPanel(
-                progression = progression,
-                onProgressChange = {
-                    onInteraction()
-                    onProgressChange(it)
-                },
-                onPreviousPage = { invoke(onPreviousPage) },
-                onNextPage = { invoke(onNextPage) },
-            )
-        }
+            AnimatedVisibility(
+                visible = state.controlsVisible && state.progressPanelExpanded,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+            ) {
+                ReaderProgressPanel(
+                    progression = progression,
+                    onProgressChange = {
+                        onInteraction()
+                        onProgressChange(it)
+                    },
+                    onPreviousPage = { invoke(onPreviousPage) },
+                    onNextPage = { invoke(onNextPage) },
+                )
+            }
 
-        AnimatedVisibility(
-            visible = state.speechMiniPlayerVisible,
-            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-            exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 12.dp)
-                .padding(bottom = if (state.controlsVisible) 116.dp else 12.dp),
-        ) {
-            SpeechMiniPlayer(
-                state = speech,
-                onPlay = { invoke(onPlaySpeech) },
-                onPause = { invoke(onPauseSpeech) },
-                onPrevious = { invoke(onPreviousSpeech) },
-                onNext = { invoke(onNextSpeech) },
-                onStop = { invoke(onStopSpeech) },
-                onExpand = { invoke(onExpandSpeech) },
-            )
-        }
+            AnimatedVisibility(
+                visible = state.speechMiniPlayerVisible,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+            ) {
+                SpeechMiniPlayer(
+                    state = speech,
+                    onPlay = { invoke(onPlaySpeech) },
+                    onPause = { invoke(onPauseSpeech) },
+                    onPrevious = { invoke(onPreviousSpeech) },
+                    onNext = { invoke(onNextSpeech) },
+                    onStop = { invoke(onStopSpeech) },
+                    onExpand = { invoke(onExpandSpeech) },
+                )
+            }
 
-        AnimatedVisibility(
-            visible = state.controlsVisible,
-            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-            exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
-            modifier = Modifier.align(Alignment.BottomCenter),
-        ) {
-            ReaderActionDock(
-                onChapters = { invoke(onChapters) },
-                onProgress = { invoke(onProgressToggle) },
-                onSpeech = { invoke(onSpeech) },
-                onDisplay = { invoke(onDisplay) },
-            )
+            AnimatedVisibility(
+                visible = state.controlsVisible,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+            ) {
+                ReaderActionDock(
+                    onChapters = { invoke(onChapters) },
+                    onProgress = { invoke(onProgressToggle) },
+                    onSpeech = { invoke(onSpeech) },
+                    onDisplay = { invoke(onDisplay) },
+                )
+            }
         }
     }
 }
@@ -231,8 +231,6 @@ private fun ReaderActionDock(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("reader_action_dock"),
         shape = RoundedCornerShape(26.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),

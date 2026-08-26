@@ -92,6 +92,45 @@ class ReaderChromeReducerTest {
     }
 
     @Test
+    fun `progress panel temporarily replaces the speech mini player`() {
+        val listening = ReaderChromeReducer.reduce(
+            initial.copy(controlsVisible = true),
+            ReaderChromeEvent.SpeechSessionChanged(active = true),
+        )
+
+        val progressOpen = ReaderChromeReducer.reduce(
+            listening,
+            ReaderChromeEvent.ProgressPanelChanged(expanded = true),
+        )
+
+        assertTrue(progressOpen.progressPanelExpanded)
+        assertFalse(progressOpen.speechMiniPlayerVisible)
+
+        val progressClosed = ReaderChromeReducer.reduce(
+            progressOpen,
+            ReaderChromeEvent.ProgressPanelChanged(expanded = false),
+        )
+        assertTrue(progressClosed.speechMiniPlayerVisible)
+    }
+
+    @Test
+    fun `opening speech panel closes progress panel`() {
+        val progressOpen = initial.copy(
+            controlsVisible = true,
+            speechSessionActive = true,
+            progressPanelExpanded = true,
+        )
+
+        val speechOpen = ReaderChromeReducer.reduce(
+            progressOpen,
+            ReaderChromeEvent.SpeechPanelChanged(expanded = true),
+        )
+
+        assertTrue(speechOpen.speechPanelExpanded)
+        assertFalse(speechOpen.progressPanelExpanded)
+    }
+
+    @Test
     fun `explicit visibility update is idempotent and refreshes a shown menu`() {
         val shown = ReaderChromeReducer.reduce(
             initial,

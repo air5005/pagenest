@@ -363,4 +363,6 @@
     <string name="reader_speech_stop">停止朗读</string>
     <string name="reader_speech_collapse">收起语音设置</string>
     <string name="discovery">发现</string>
+    <string name="refreshing_library">正在刷新书架</string>
+    <string name="no_scan_directory">尚未设置书籍扫描目录</string>
 </resources>

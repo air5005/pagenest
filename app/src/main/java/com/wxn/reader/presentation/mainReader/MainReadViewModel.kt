@@ -915,6 +915,10 @@ class MainReadViewModel @Inject constructor(
         dispatchChrome(ReaderChromeEvent.SpeechPanelChanged(expanded))
     }
 
+    fun setProgressPanelExpanded(expanded: Boolean) {
+        dispatchChrome(ReaderChromeEvent.ProgressPanelChanged(expanded))
+    }
+
     fun onChromeAutoHide(generation: Long) {
         dispatchChrome(ReaderChromeEvent.AutoHide(generation))
     }

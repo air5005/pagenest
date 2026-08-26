@@ -331,7 +331,7 @@ class HomeViewModel
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             delay(500)
-            showSnackbar("Refreshing Library" )
+            showSnackbar(stringResource(R.string.refreshing_library))
                 _appPreferences.value = appPreferencesUtil.appPrefsFlow.first()
             val appPref = _appPreferences.value ?: return@launch
             val scanDirectory = appPref.scanDirectories
@@ -340,7 +340,7 @@ class HomeViewModel
                 observeBooks(appPref)
             } else {
                 Logger.warning("BOOK_IMPORT", "Manual directory scan skipped reason=NO_DIRECTORY")
-                showSnackbar("No directory set for scanning books" )
+                showSnackbar(stringResource(R.string.no_scan_directory))
             }
         }
     }

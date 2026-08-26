@@ -5,9 +5,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Snackbar
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -29,30 +30,27 @@ fun CustomSnackbar(
 ) {
     when (snackbarState) {
         is SnackbarState.Visible -> {
-            Snackbar(
+            Surface(
                 modifier = Modifier
                     .padding(16.dp)
                     .fillMaxWidth(),
-                action = {
-                    TextButton(onClick = onDismiss) {
-                        Text(stringResource(R.string.close))
-                    }
-                },
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                tonalElevation = 6.dp,
+                shadowElevation = 6.dp,
             ) {
-                // Show different content based on import progress
-                when (importProgressState) {
-                    is ImportProgressState.InProgress -> {
-                        val animatedProgress = animateFloatAsState(
-                            targetValue = importProgressState.current.toFloat() / importProgressState.total,
-                            label = ""
-                        ).value
-                        Column(
-                            verticalArrangement = Arrangement.Center,
-                            horizontalAlignment = Alignment.Start,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalAlignment = Alignment.Start,
+                ) {
+                    when (importProgressState) {
+                        is ImportProgressState.InProgress -> {
+                            val animatedProgress = animateFloatAsState(
+                                targetValue = importProgressState.current.toFloat() / importProgressState.total,
+                                label = ""
+                            ).value
                             LinearProgressIndicator(
                                 progress = { animatedProgress },
                                 modifier = Modifier
@@ -64,18 +62,20 @@ fun CustomSnackbar(
                                 text = snackbarState.message
                             )
                         }
+                        is ImportProgressState.Error -> {
+                            Text(
+                                text = snackbarState.message,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        is ImportProgressState.Complete -> Text(text = snackbarState.message)
+                        ImportProgressState.Idle -> Text(text = snackbarState.message)
                     }
-                    is ImportProgressState.Error -> {
-                        Text(
-                            text = snackbarState.message,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                    is ImportProgressState.Complete -> {
-                        Text(text = snackbarState.message)
-                    }
-                    ImportProgressState.Idle -> {
-                        Text(text = snackbarState.message)
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.align(Alignment.End),
+                    ) {
+                        Text(stringResource(R.string.close))
                     }
                 }
             }

@@ -5,10 +5,11 @@ data class ReaderChromeState(
     val blockingOverlayVisible: Boolean = false,
     val speechSessionActive: Boolean = false,
     val speechPanelExpanded: Boolean = false,
+    val progressPanelExpanded: Boolean = false,
     val interactionGeneration: Long = 0L,
 ) {
     val speechMiniPlayerVisible: Boolean
-        get() = speechSessionActive && !speechPanelExpanded
+        get() = speechSessionActive && !speechPanelExpanded && !progressPanelExpanded
 }
 
 sealed interface ReaderChromeEvent {
@@ -18,6 +19,7 @@ sealed interface ReaderChromeEvent {
     data class BlockingOverlayChanged(val visible: Boolean) : ReaderChromeEvent
     data class SpeechSessionChanged(val active: Boolean) : ReaderChromeEvent
     data class SpeechPanelChanged(val expanded: Boolean) : ReaderChromeEvent
+    data class ProgressPanelChanged(val expanded: Boolean) : ReaderChromeEvent
     data class AutoHide(val generation: Long) : ReaderChromeEvent
 }
 
@@ -30,6 +32,7 @@ object ReaderChromeReducer {
     ): ReaderChromeState = when (event) {
         ReaderChromeEvent.CenterTapped -> state.copy(
             controlsVisible = !state.controlsVisible,
+            progressPanelExpanded = state.progressPanelExpanded && !state.controlsVisible,
             interactionGeneration = state.interactionGeneration + 1,
         )
 
@@ -39,6 +42,7 @@ object ReaderChromeReducer {
 
         is ReaderChromeEvent.ControlsVisibilityChanged -> state.copy(
             controlsVisible = event.visible,
+            progressPanelExpanded = state.progressPanelExpanded && event.visible,
             interactionGeneration = state.interactionGeneration + 1,
         )
 
@@ -54,13 +58,20 @@ object ReaderChromeReducer {
 
         is ReaderChromeEvent.SpeechPanelChanged -> state.copy(
             speechPanelExpanded = event.expanded && state.speechSessionActive,
+            progressPanelExpanded = state.progressPanelExpanded && !event.expanded,
+            interactionGeneration = state.interactionGeneration + 1,
+        )
+
+        is ReaderChromeEvent.ProgressPanelChanged -> state.copy(
+            progressPanelExpanded = event.expanded && state.controlsVisible,
+            speechPanelExpanded = state.speechPanelExpanded && !event.expanded,
             interactionGeneration = state.interactionGeneration + 1,
         )
 
         is ReaderChromeEvent.AutoHide -> if (
             event.generation == state.interactionGeneration && shouldScheduleAutoHide(state)
         ) {
-            state.copy(controlsVisible = false)
+            state.copy(controlsVisible = false, progressPanelExpanded = false)
         } else {
             state
         }

@@ -108,7 +108,6 @@ class ReaderChromeTest {
                 voiceId = null,
                 sleepTimerMinutes = null,
             ),
-            progressExpanded = false,
             onBack = {},
             onBookmark = {},
             onMore = {},
