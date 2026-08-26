@@ -98,6 +98,7 @@ class SecureBookDownloader(
                 output.flush()
                 output.fd.sync()
             }
+            onProgress(DownloadProgress(bytesRead, total, DownloadStage.VALIDATING))
             if (!validator.validate(part, request.format, response.contentType)) {
                 return DownloadResult.Failure(DownloadFailure.FORMAT_MISMATCH)
             }

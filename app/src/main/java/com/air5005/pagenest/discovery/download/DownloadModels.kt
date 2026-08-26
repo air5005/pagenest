@@ -12,7 +12,13 @@ data class DownloadRequest(
 data class DownloadProgress(
     val bytesRead: Long,
     val totalBytes: Long?,
+    val stage: DownloadStage = DownloadStage.DOWNLOADING,
 )
+
+enum class DownloadStage {
+    DOWNLOADING,
+    VALIDATING,
+}
 
 data class DownloadedBook(
     val file: File,

@@ -70,12 +70,12 @@ git push origin master
 - Add small adapters for `BookImportService` and local book existence lookup.
 - Test fallback, concurrency, ledger and import handoff.
 
-- [ ] Filter/sort candidates using existing eligibility/priority and only supported EPUB/TXT/PDF.
-- [ ] Retry each candidate at most once only for typed recoverable failures; stop on unsafe, too-large, rights or format-spoof failures.
-- [ ] Always delete staging in `finally`, including `BookImportService` cancellation/failure.
-- [ ] Map `Imported` and `Duplicate` to a local book ID without changing import semantics.
-- [ ] Persist stableKey-to-bookId atomically without URL; validate local book existence on every hit and remove stale mappings.
-- [ ] Serialize the same stable key while allowing different keys; cancellation of one waiter must not corrupt the owner operation.
+- [x] Filter/sort candidates using existing eligibility/priority and only supported EPUB/TXT/PDF.
+- [x] Retry each candidate at most once only for typed recoverable failures; stop on unsafe, too-large, rights or format-spoof failures.
+- [x] Always delete staging in `finally`, including `BookImportService` cancellation/failure.
+- [x] Map `Imported` and `Duplicate` to a local book ID without changing import semantics.
+- [x] Persist stableKey-to-bookId atomically without URL; validate local book existence on every hit and remove stale mappings.
+- [x] Serialize the same stable key while allowing different keys; cancellation of one waiter must not corrupt the owner operation.
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests '*OnlineBookImportCoordinatorTest' --tests '*OnlineImportLedgerTest' --tests '*BookImportServiceTest'
