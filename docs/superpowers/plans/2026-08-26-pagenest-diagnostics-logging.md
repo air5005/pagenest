@@ -113,14 +113,14 @@
 - Produces: `DiagnosticsViewModel.refresh()`, `selectFilter(filter)`, and `clear()`.
 - Produces: route `Screens.DiagnosticsScreen.route == "diagnostics_screen"`.
 
-- [ ] Write ViewModel tests for initial load, newest-first state, each filter, refresh, clear, and safe load/clear failure states.
-- [ ] Run `:app:testDebugUnitTest --tests '*DiagnosticsViewModelTest'` and observe missing types.
-- [ ] Implement the repository and ViewModel using `Dispatchers.IO`; rerun until green.
-- [ ] Write Compose tests for title, level chips, entries, empty state, storage summary, refresh, and clear confirmation.
-- [ ] Run `:app:assembleDebugAndroidTest` and observe missing screen/navigation behavior.
-- [ ] Implement the large-font-safe LazyColumn screen, route, and “我的” system-configuration entry; add every string key to all maintained locales.
-- [ ] Rerun the focused JVM suite and Android-test APK compilation until green, then run `:app:lintDebug`.
-- [ ] Commit and push with `feat: add on-device diagnostics log viewer`.
+- [x] Write ViewModel tests for initial load, newest-first state, each filter, refresh, clear, and safe load/clear failure states.
+- [x] Run `:app:testDebugUnitTest --tests '*DiagnosticsViewModelTest'` and observe missing types.
+- [x] Implement the repository and ViewModel using `Dispatchers.IO`; rerun until green.
+- [x] Write Compose tests for title, level chips, entries, empty state, storage summary, refresh, and clear confirmation.
+- [x] Run `:app:assembleDebugAndroidTest` and observe missing screen/navigation behavior.
+- [x] Implement the large-font-safe LazyColumn screen, route, and “我的” system-configuration entry; add every string key to all maintained locales.
+- [x] Rerun the focused JVM suite and Android-test APK compilation until green, then run `:app:lintDebug`.
+- [x] Commit and push with `feat: add on-device diagnostics log viewer`.
 
 ### Task 5: Add low-volume operational events at critical boundaries
 

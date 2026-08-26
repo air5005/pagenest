@@ -25,4 +25,5 @@ sealed class Screens(val route: String) {
     data object PremiumScreen: Screens("premium_screen")
 
     data object TtsSetScreen: Screens("tts_set_screen")
+    data object DiagnosticsScreen: Screens("diagnostics_screen")
 }

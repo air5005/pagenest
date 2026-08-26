@@ -14,6 +14,7 @@ import com.wxn.reader.presentation.pdfReader.PdfReaderScreen
 import com.wxn.reader.presentation.settings.components.DeletedBooksScreen
 import com.wxn.reader.presentation.settings.components.GeneralSettings
 import com.air5005.pagenest.speech.ui.SpeechSettingsScreen
+import com.air5005.pagenest.diagnostics.DiagnosticsRoute
 import com.wxn.reader.presentation.shelves.ShelvesScreen
 import com.wxn.reader.presentation.settings.components.ThemeScreen
 import com.wxn.reader.presentation.sharedComponents.PremiumScreen
@@ -96,6 +97,11 @@ fun SetupNavGraph(startDestination: String) {
             route = Screens.TtsSetScreen.route,
         ) {
             SpeechSettingsScreen()
+        }
+        composable(
+            route = Screens.DiagnosticsScreen.route,
+        ) {
+            DiagnosticsRoute(onBack = navController::popBackStack)
         }
         //composable(
         //    route = Screens.OnlineBooksScreen.route,
