@@ -128,6 +128,28 @@ class OnlineDiscoveryRepositoryTest {
         assertEquals("fast", result.page.books.single().stableKey)
     }
 
+    @Test
+    fun `default timeout tolerates a slow mobile catalog response`() = runTest {
+        val slowButUsable = object : OnlineCatalogSource {
+            override val id = "mobile-catalog"
+            override suspend fun browse(request: CatalogRequest): CatalogPage {
+                delay(12_000)
+                return page(book("mobile", "Mobile network result"))
+            }
+            override suspend fun details(reference: SourceReference): SourceBookDetails? = null
+        }
+        val repository = OnlineDiscoveryRepository(
+            sources = listOf(slowButUsable),
+            cache = MemoryCache(),
+            nowEpochMillis = { now },
+        )
+
+        val result = repository.discover(popular())
+
+        assertEquals("mobile", result.page.books.single().stableKey)
+        assertTrue(result.unavailableSourceIds.isEmpty())
+    }
+
     @Test(expected = CancellationException::class)
     fun `caller cancellation propagates unchanged`() = runTest {
         val cancelled = object : OnlineCatalogSource {

@@ -124,7 +124,9 @@ class OnlineDiscoveryRepository(
     }
 
     companion object {
-        const val DEFAULT_SOURCE_TIMEOUT_MILLIS = 8_000L
+        // Public catalog endpoints are frequently reached through mobile VPN/proxy paths.
+        // Eight seconds was short enough to reject a valid Gutenberg response on HyperOS.
+        const val DEFAULT_SOURCE_TIMEOUT_MILLIS = 20_000L
         const val DETAILS_TTL_MILLIS = 24L * 60L * 60L * 1_000L
         private const val THIRTY_MINUTES_MILLIS = 30L * 60L * 1_000L
         private const val ONE_HOUR_MILLIS = 60L * 60L * 1_000L
