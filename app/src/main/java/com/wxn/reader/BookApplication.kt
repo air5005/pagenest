@@ -12,6 +12,7 @@ import com.wxn.reader.util.LanguageUtil
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -76,7 +77,12 @@ class BookApplication : Application() {
 
     private fun initComponent() {
         LanguageUtil.initDefaultLanguage(this)
-        Logger.init(BuildConfig.DEBUG)
+        Logger.init(BuildConfig.DEBUG, File(filesDir, "diagnostics"))
+        val currentCrashHandler = Thread.getDefaultUncaughtExceptionHandler()
+        if (currentCrashHandler !is com.wxn.base.diagnostics.DiagnosticCrashHandler) {
+            Thread.setDefaultUncaughtExceptionHandler(Logger.crashHandler(currentCrashHandler))
+        }
+        Logger.running("APP_START", "version=${BuildConfig.VERSION_NAME}")
         ToastUtil.init(this)
     }
 

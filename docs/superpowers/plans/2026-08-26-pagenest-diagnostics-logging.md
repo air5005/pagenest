@@ -85,13 +85,13 @@
 - Produces: `Logger.readDiagnostics(limit: Int = 500)`, `clearDiagnostics()`, `diagnosticsBytes()`, and `flushDiagnostics()`.
 - Produces: `DiagnosticCrashHandler(writer, delegate)` that synchronously logs category `CRASH` before always invoking `delegate`.
 
-- [ ] Write writer tests proving background serialization, severity mapping, sanitization-before-throttling, suppression summary, flush, and write-failure isolation.
-- [ ] Run `:base:testDebugUnitTest --tests '*DiagnosticLogWriterTest'` and observe missing behavior.
-- [ ] Implement a single-thread writer with a synchronous crash path; rerun until green.
-- [ ] Write crash-handler tests proving log-before-delegate and delegate invocation even when logging fails.
-- [ ] Run `:base:testDebugUnitTest --tests '*DiagnosticCrashHandlerTest'` and observe missing behavior.
-- [ ] Implement the handler and Logger wiring; configure it in `BookApplication` and record one version-only `APP_START` event.
-- [ ] Run `:base:testDebugUnitTest --tests 'com.wxn.base.diagnostics.*' :app:compileDebugKotlin` to verify the complete diagnostics core and application wiring.
+- [x] Write writer tests proving background serialization, severity mapping, sanitization-before-throttling, suppression summary, flush, and write-failure isolation.
+- [x] Run `:base:testDebugUnitTest --tests '*DiagnosticLogWriterTest'` and observe missing behavior.
+- [x] Implement a single-thread writer with a synchronous crash path; rerun until green.
+- [x] Write crash-handler tests proving log-before-delegate and delegate invocation even when logging fails.
+- [x] Run `:base:testDebugUnitTest --tests '*DiagnosticCrashHandlerTest'` and observe missing behavior.
+- [x] Implement the handler and Logger wiring; configure it in `BookApplication` and record one version-only `APP_START` event.
+- [x] Run `:base:testDebugUnitTest --tests 'com.wxn.base.diagnostics.*' :app:compileDebugKotlin` to verify the complete diagnostics core and application wiring.
 - [ ] Commit and push with `feat: persist warnings errors and crash context`.
 
 ### Task 4: Add diagnostics repository, ViewModel, screen, and navigation

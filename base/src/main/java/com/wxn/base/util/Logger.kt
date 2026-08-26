@@ -2,7 +2,14 @@ package com.wxn.base.util
 
 import android.os.Build
 import android.os.StrictMode
+import android.util.Log
+import com.wxn.base.diagnostics.DiagnosticCrashHandler
+import com.wxn.base.diagnostics.DiagnosticLevel
+import com.wxn.base.diagnostics.DiagnosticLogEntry
+import com.wxn.base.diagnostics.DiagnosticLogWriter
+import com.wxn.base.diagnostics.RotatingDiagnosticLogStore
 import timber.log.Timber
+import java.io.File
 import java.util.concurrent.Executors
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -14,13 +21,49 @@ fun Throwable.toast(prefix: String = "") {
 }
 
 object Logger {
+    private var diagnosticsWriter: DiagnosticLogWriter? = null
+    private var diagnosticsTree: Timber.Tree? = null
 
-    fun init(isDebug:Boolean) {
+    fun init(isDebug: Boolean, diagnosticsDirectory: File) {
         if (isDebug) {
 //            enableStrictMode()
             Timber.plant(Timber.DebugTree())
         }
+        diagnosticsTree?.let(Timber::uproot)
+        diagnosticsWriter = DiagnosticLogWriter(RotatingDiagnosticLogStore(diagnosticsDirectory))
+        diagnosticsTree = DiagnosticsTree().also(Timber::plant)
     }
+
+    fun running(category: String, message: String) {
+        Timber.i("[$category] $message")
+        diagnosticsWriter?.log(DiagnosticLevel.RUNNING, category, message)
+    }
+
+    fun readDiagnostics(limit: Int = RotatingDiagnosticLogStore.DEFAULT_MAX_ENTRIES): List<DiagnosticLogEntry> =
+        diagnosticsWriter?.readRecent(limit).orEmpty()
+
+    fun clearDiagnostics() {
+        diagnosticsWriter?.clear()
+    }
+
+    fun diagnosticsBytes(): Long = diagnosticsWriter?.totalBytes() ?: 0L
+
+    fun flushDiagnostics() {
+        diagnosticsWriter?.flush()
+    }
+
+    fun crashHandler(delegate: Thread.UncaughtExceptionHandler?): Thread.UncaughtExceptionHandler =
+        DiagnosticCrashHandler(
+            recordCrash = { throwable ->
+                diagnosticsWriter?.logSynchronously(
+                    DiagnosticLevel.ERROR,
+                    "CRASH",
+                    "Uncaught exception",
+                    throwable,
+                )
+            },
+            delegate = delegate,
+        )
 
     /**
      * Strict mode will log violation of VM and threading policy.
@@ -109,5 +152,16 @@ object Logger {
 
     fun log(priority: Int, message: String) {
         Timber.log(priority, message)
+    }
+
+    private class DiagnosticsTree : Timber.DebugTree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            val level = when {
+                priority >= Log.ERROR -> DiagnosticLevel.ERROR
+                priority >= Log.WARN -> DiagnosticLevel.WARNING
+                else -> return
+            }
+            diagnosticsWriter?.log(level, tag ?: "APP", message, t)
+        }
     }
 }
