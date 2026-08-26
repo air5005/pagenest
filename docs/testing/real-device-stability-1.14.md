@@ -25,7 +25,7 @@
 ## 自动验证
 
 - 原生 UTF-8 回归测试：PASS（4 个夹具）。
-- 全模块 JVM 单元测试：PASS。
+- JVM 单元测试：按模块及语音关闭并发测试类分组执行均 PASS。全量单进程执行时，有 1 个语音监听安装等待用例仅在整套 564 项测试的资源竞争下发生 30 秒调度超时；该测试类独立复跑全部 PASS，未出现功能断言失败。
 - 全工程 Android Lint：PASS。
 - Debug APK：PASS。
 - Android 测试 APK：PASS。
@@ -46,3 +46,13 @@
 - 版本：`1.14.260826`（versionCode 15）
 - 标签：`pagenest-v1.14.260826`
 - APK：`PageNest-pagenest-v1.14.260826-debug.apk`
+
+## GitHub 发布证据
+
+- 来源提交：`f538843d5a0bab819e08fa41be3d0a18a4882f78`
+- GitHub Actions：`32978545315`，构建与 Release 任务均 PASS。
+- Release：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.14.260826>
+- APK 大小：126,203,850 字节。
+- APK SHA-256：`de078c2f75cd7e2476c319adfe3319b3e0d276bc8fc682e61631d66c5af22dde`。
+- 完整性：GitHub 对已存储 APK 计算的摘要与随 Release 发布的 `SHA256SUMS.txt` 一致。
+- 真机状态：尚未执行 1.14 最终回归；用户已断开 USB，待重新连接目标小米手机后按上述清单验证。
