@@ -59,6 +59,22 @@ class DiscoveryScreenTest {
         compose.onNodeWithText("暂时没有找到书籍").assertIsDisplayed()
     }
 
+    @Test
+    fun search_action_is_visible_and_submits() {
+        var submissions = 0
+        compose.setContent {
+            MaterialTheme {
+                DiscoveryScreen(
+                    state = DiscoveryUiState(isLoading = false, searchQuery = "三体"),
+                    onSearch = { submissions++ },
+                )
+            }
+        }
+
+        compose.onNodeWithText("搜索").assertIsDisplayed().performClick()
+        assertEquals(1, submissions)
+    }
+
     private fun testBook() = OnlineBook(
         stableKey = "gutenberg:1342",
         title = "Pride and Prejudice",

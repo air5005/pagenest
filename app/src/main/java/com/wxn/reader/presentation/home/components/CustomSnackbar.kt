@@ -9,10 +9,13 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.wxn.reader.R
 import com.wxn.reader.presentation.home.states.ImportProgressState
 import com.wxn.reader.presentation.home.states.SnackbarState
 
@@ -22,6 +25,7 @@ import com.wxn.reader.presentation.home.states.SnackbarState
 fun CustomSnackbar(
     snackbarState: SnackbarState,
     importProgressState: ImportProgressState,
+    onDismiss: () -> Unit,
 ) {
     when (snackbarState) {
         is SnackbarState.Visible -> {
@@ -29,17 +33,11 @@ fun CustomSnackbar(
                 modifier = Modifier
                     .padding(16.dp)
                     .fillMaxWidth(),
-//                action = {
-//                    // Optional dismiss button
-//                    TextButton(onClick = onDismiss) {
-//                        Text("Dismiss")
-//                    }
-//                }
-//                dismissAction = {
-//                    TextButton(onClick = onDismiss) {
-//                        Text("Dismiss")
-//                    }
-//                },
+                action = {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.close))
+                    }
+                },
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
             ) {

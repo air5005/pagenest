@@ -287,6 +287,7 @@
     <string name="import_result_unreadable" translatable="false">无法读取所选文件</string>
     <string name="import_result_parse_failed" translatable="false">无法解析这本书</string>
     <string name="import_result_storage_failed" translatable="false">存储空间不足或复制失败</string>
+    <string name="import_result_summary" translatable="false">处理完成：新增 %1$d 本，已存在 %2$d 本，失败 %3$d 本</string>
     <string name="speech_settings">Voice reading</string>
     <string name="speech_back">Back</string>
     <string name="speech_mode">Reading mode</string>

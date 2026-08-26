@@ -292,6 +292,7 @@ fun HomeScreen(
                     CustomSnackbar(
                         snackbarState = snackbarState,
                         importProgressState = importProgress,
+                        onDismiss = viewModel::dismissSnackbar,
                     )
                 },
                 containerColor = Color.Transparent,

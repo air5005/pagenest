@@ -14,6 +14,10 @@ import com.wxn.base.bean.Book
 import com.wxn.bookparser.FileParser
 import com.wxn.reader.BookApplication
 import com.wxn.reader.data.model.AppPreferences
+import com.wxn.reader.data.model.AppTheme
+import com.wxn.reader.data.model.Layout
+import com.wxn.reader.data.model.SortOption
+import com.wxn.reader.data.model.SortOrder
 import com.wxn.reader.data.source.local.AppPreferencesUtil
 import com.wxn.reader.domain.repository.PermissionRepository
 import com.wxn.reader.domain.use_case.books.DeleteBookByUriUseCase
@@ -51,6 +55,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -75,6 +80,9 @@ class HomeViewModelImportFlowTest {
     private lateinit var service: BookImportService
     private lateinit var requestFactory: AndroidImportRequestFactory
     private lateinit var getBookByIdUseCase: GetBookByIdUseCase
+    private lateinit var preferencesUtil: AppPreferencesUtil
+    private lateinit var getAllBooksUseCase: GetAllBooksUseCase
+    private lateinit var getAllReadingActivitiesUseCase: GetAllReadingActivitiesUseCase
     private lateinit var viewModel: HomeViewModel
 
     @Before
@@ -87,10 +95,10 @@ class HomeViewModelImportFlowTest {
         service = mockk()
         requestFactory = mockk()
         getBookByIdUseCase = mockk(relaxed = true)
-        val preferencesUtil = mockk<AppPreferencesUtil>()
+        preferencesUtil = mockk<AppPreferencesUtil>()
         every { preferencesUtil.appPrefsFlow } returns flow { awaitCancellation() }
-        val getAllBooksUseCase = mockk<GetAllBooksUseCase>()
-        val getAllReadingActivitiesUseCase = mockk<GetAllReadingActivitiesUseCase>()
+        getAllBooksUseCase = mockk<GetAllBooksUseCase>()
+        getAllReadingActivitiesUseCase = mockk<GetAllReadingActivitiesUseCase>()
         every { getAllBooksUseCase() } returns flow { awaitCancellation() }
         coEvery { getAllReadingActivitiesUseCase() } returns flow { awaitCancellation() }
         viewModel = HomeViewModel(
@@ -183,8 +191,8 @@ class HomeViewModelImportFlowTest {
 
         assertEquals(
             SnackbarState.Visible(
-                "已导入《Imported》\n书籍已在书架中\n存储空间不足或复制失败\nAdded 1 books(s)",
-                unlimited = true,
+                "处理完成：新增 1 本，已存在 1 本，失败 1 本",
+                unlimited = false,
             ),
             viewModel.snackbarState.value,
         )
@@ -192,7 +200,7 @@ class HomeViewModelImportFlowTest {
     }
 
     @Test
-    fun publicImportFlowUsesEveryExactLocalizedOutcome() = runBlocking {
+    fun publicImportFlowUsesCompactDismissibleSummary() = runBlocking {
         val cases = listOf(
             Triple("Imported.epub", ImportResult.Imported(1), "已导入《Imported》"),
             Triple("Duplicate.epub", ImportResult.Duplicate(1), "书籍已在书架中"),
@@ -219,12 +227,29 @@ class HomeViewModelImportFlowTest {
 
         assertEquals(
             SnackbarState.Visible(
-                cases.joinToString("\n") { it.third },
-                unlimited = true,
+                "处理完成：新增 1 本，已存在 1 本，失败 5 本",
+                unlimited = false,
             ),
             viewModel.snackbarState.value,
         )
+        viewModel.dismissSnackbar()
+        assertEquals(SnackbarState.Hidden, viewModel.snackbarState.value)
         assertFalse(viewModel.isAddingBooks.value)
+    }
+
+    @Test
+    fun initializerDoesNotRescanPersistedDirectories() = runBlocking {
+        viewModel.viewModelScope.cancel()
+        mockkObject(DocumentUtil)
+        coEvery { DocumentUtil.getFilesFromDirectory(any(), any()) } returns emptyList()
+        every { preferencesUtil.appPrefsFlow } returns flowOf(preferences(setOf("content://saved")))
+
+        viewModel = createViewModel()
+        mainDispatcher.scheduler.runCurrent()
+        delay(300)
+
+        coVerify(exactly = 0) { DocumentUtil.getFilesFromDirectory(any(), any()) }
+        coVerify(exactly = 0) { service.execute(any()) }
     }
 
     @Test
@@ -303,6 +328,54 @@ class HomeViewModelImportFlowTest {
     private fun request(displayName: String) = ImportRequest(displayName) {
         error("The mocked service must not open the request")
     }
+
+    private fun preferences(scanDirectories: Set<String>) = AppPreferences(
+        isFirstLaunch = false,
+        isAssetsBooksFetched = true,
+        scanDirectories = scanDirectories,
+        enablePdfSupport = true,
+        language = "zh",
+        appTheme = AppTheme.SYSTEM,
+        colorScheme = "default",
+        homeLayout = Layout.Grid,
+        homeBackgroundImage = "",
+        gridCount = 3,
+        showEntries = true,
+        showRating = true,
+        showReadingStatus = true,
+        showReadingDates = true,
+        showFileTypeLabel = true,
+        sortBy = SortOption.TITLE,
+        sortOrder = SortOrder.ASCENDING,
+        isPremium = false,
+        autoOpenLastRead = false,
+        lastBookId = 0L,
+    )
+
+    private fun createViewModel() = HomeViewModel(
+        getBooksUseCase = mockk(relaxed = true),
+        getBookUrisUseCase = mockk(relaxed = true),
+        insertBookUseCase = mockk(relaxed = true),
+        updateBookUseCase = mockk(relaxed = true),
+        deleteBookUseCase = mockk(relaxed = true),
+        deleteBookByUriUseCase = mockk(relaxed = true),
+        getBookByIdUseCase = getBookByIdUseCase,
+        getAllBooksUseCase = getAllBooksUseCase,
+        getAllReadingActivitiesUseCase = getAllReadingActivitiesUseCase,
+        addShelfUseCase = mockk(relaxed = true),
+        removeShelfUseCase = mockk(relaxed = true),
+        getShelvesUseCase = mockk(relaxed = true),
+        addBookToShelfUseCase = mockk(relaxed = true),
+        removeBooksFromShelfUseCase = mockk(relaxed = true),
+        getBooksForShelfUseCase = mockk(relaxed = true),
+        appPreferencesUtil = preferencesUtil,
+        fileParser = mockk(relaxed = true),
+        permissionRepository = mockk(relaxed = true),
+        bookImportService = service,
+        importRequestFactory = requestFactory,
+        skinService = mockk(relaxed = true),
+        application = application,
+    )
 
     private fun dashboardBook(id: Long, fileType: String, filePath: String) = Book(
         id = id,

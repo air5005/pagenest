@@ -101,6 +101,23 @@ class DiscoveryViewModelTest {
     }
 
     @Test
+    fun `explicit search submits the current query immediately once`() = runTest(dispatcher) {
+        val repository = FakeRepository { DiscoveryResult(CatalogPage(emptyList(), null), false, emptyList()) }
+        val viewModel = viewModel(repository)
+        advanceUntilIdle()
+        val baseline = repository.requests.size
+
+        viewModel.updateSearchQuery("three body problem")
+        advanceTimeBy(100)
+        viewModel.submitSearch()
+        advanceUntilIdle()
+
+        assertEquals(baseline + 1, repository.requests.size)
+        assertEquals(CatalogKind.SEARCH, repository.requests.last().kind)
+        assertEquals("three body problem", repository.requests.last().query)
+    }
+
+    @Test
     fun `book selection enriches detail and close clears it`() = runTest(dispatcher) {
         val book = discoveryBook("one", "One")
         val metadata = OpenLibraryMetadata("OL1W", null, 1900, 2, false,

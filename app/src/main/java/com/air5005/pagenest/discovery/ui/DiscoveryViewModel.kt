@@ -71,6 +71,14 @@ class DiscoveryViewModel @Inject constructor(
         }
     }
 
+    fun submitSearch() {
+        val query = _state.value.searchQuery.trim()
+        if (query.isEmpty()) return
+        searchJob?.cancel()
+        searchJob = null
+        load(showInitialLoading = false, searchQuery = query)
+    }
+
     fun retry() = load(showInitialLoading = _state.value.sections.ranking.isEmpty())
 
     fun selectBook(book: OnlineBook) {

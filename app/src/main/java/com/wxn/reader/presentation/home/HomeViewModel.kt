@@ -14,7 +14,6 @@ import com.wxn.bookparser.FileParser
 import com.wxn.base.bean.Book
 import com.air5005.pagenest.library.importing.AndroidImportRequestFactory
 import com.air5005.pagenest.library.importing.BookImportService
-import com.air5005.pagenest.library.importing.ImportRejection
 import com.air5005.pagenest.library.importing.ImportResult
 import com.air5005.pagenest.skin.SkinApplyFailure
 import com.air5005.pagenest.skin.SkinApplyResult
@@ -201,7 +200,6 @@ class HomeViewModel
             coroutineScope {
                 launch { loadBooks(preferences) }
                 launch { loadShelves() }
-                launch { observeBooks(preferences) }
                 launch { observeAppPreferences() }
                 if (preferences.scanDirectories.isEmpty()) {
                     launch {
@@ -364,10 +362,12 @@ class HomeViewModel
 
     }
 
-    private fun hideSnackbar() {
+    fun dismissSnackbar() {
         snackbarJob?.cancel()
         _snackbarState.value = SnackbarState.Hidden
     }
+
+    private fun hideSnackbar() = dismissSnackbar()
 
     private fun observeBooks(preferences: AppPreferences) {
         viewModelScope.launch(Dispatchers.IO + CoroutineExceptionHandler { _, throwable ->
@@ -404,8 +404,7 @@ class HomeViewModel
                 if (newBooks.isNotEmpty()) {        //有新增加的，则将新增加的加入到数据库中
                     _isAddingBooks.value = true
                     _importProgressState.value = ImportProgressState.InProgress(0, newBooks.size)
-                    val importMessages = mutableListOf<String>()
-                    var importedCount = 0
+                    val importResults = mutableListOf<ImportResult>()
                     showSnackbar(
                         message = stringResource(R.string.adding_new_book_to_library)
                     )
@@ -427,15 +426,12 @@ class HomeViewModel
                             )
                             val request = importRequestFactory.create(documentFile.uri)
                             val result = bookImportService.execute(request)
-                            importMessages += localizedImportResult(request.displayName, result)
-                            if (result is ImportResult.Imported) importedCount += 1
+                            importResults += result
                         }
                     }
                     _importProgressState.value = ImportProgressState.Complete
                     showSnackbar(
-                        message = (importMessages + stringResource(R.string.added_books, importedCount))
-                            .joinToString("\n"),
-                        unlimited = importMessages.isNotEmpty(),
+                        message = importSummary(importResults),
                     )
                     _isAddingBooks.value = false
                 }
@@ -654,39 +650,21 @@ class HomeViewModel
         viewModelScope.launch(Dispatchers.IO) {
             _isAddingBooks.value = true
             _importProgressState.value = ImportProgressState.InProgress(0, uris.size)
-            val messages = mutableListOf<String>()
+            val results = mutableListOf<ImportResult>()
             try {
                 uris.forEachIndexed { index, uri ->
                     val request = importRequestFactory.create(uri)
                     val result = bookImportService.execute(request)
-                    messages += localizedImportResult(request.displayName, result)
+                    results += result
                     _importProgressState.value = ImportProgressState.InProgress(index + 1, uris.size)
                 }
                 _importProgressState.value = ImportProgressState.Complete
-                showSnackbar(messages.joinToString("\n"), unlimited = messages.size > 1)
+                showSnackbar(importSummary(results))
             } finally {
                 _isAddingBooks.value = false
             }
         }
     }
-
-    private fun localizedImportResult(displayName: String, result: ImportResult): String =
-        when (result) {
-            is ImportResult.Imported -> stringResource(
-                R.string.import_result_imported,
-                displayName.substringBeforeLast('.'),
-            )
-            is ImportResult.Duplicate -> stringResource(R.string.import_result_duplicate)
-            is ImportResult.Rejected -> when (result.reason) {
-                ImportRejection.PROTECTED -> stringResource(R.string.import_result_protected)
-                ImportRejection.UNSUPPORTED_FORMAT ->
-                    stringResource(R.string.import_result_unsupported)
-                ImportRejection.UNREADABLE -> stringResource(R.string.import_result_unreadable)
-                ImportRejection.PARSE_FAILED -> stringResource(R.string.import_result_parse_failed)
-                ImportRejection.STORAGE_FAILED ->
-                    stringResource(R.string.import_result_storage_failed)
-            }
-        }
 
     fun updateBook(updatedBook: Book, updatedReadingStatus: Boolean = false) {
         viewModelScope.launch {
@@ -817,6 +795,13 @@ class HomeViewModel
                 openBook(lastBook, onRouteNav)
             }
         }
+    }
+
+    private fun importSummary(results: List<ImportResult>): String {
+        val imported = results.count { it is ImportResult.Imported }
+        val duplicates = results.count { it is ImportResult.Duplicate }
+        val failed = results.size - imported - duplicates
+        return stringResource(R.string.import_result_summary, imported, duplicates, failed)
     }
 
     fun openDashboardBook(bookId: Long) {

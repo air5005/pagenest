@@ -18,6 +18,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Language
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.NewReleases
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -40,7 +43,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -79,6 +84,7 @@ fun DiscoveryRoute(
             onTabSelected = viewModel::selectTab,
             onLanguageSelected = viewModel::selectLanguage,
             onQueryChanged = viewModel::updateSearchQuery,
+            onSearch = viewModel::submitSearch,
             onRetry = viewModel::retry,
             onBookSelected = viewModel::selectBook,
         )
@@ -103,6 +109,7 @@ fun DiscoveryScreen(
     onTabSelected: (DiscoveryTab) -> Unit = {},
     onLanguageSelected: (CatalogLanguage) -> Unit = {},
     onQueryChanged: (String) -> Unit = {},
+    onSearch: () -> Unit = {},
     onRetry: () -> Unit = {},
     onBookSelected: (OnlineBook) -> Unit = {},
 ) {
@@ -116,6 +123,7 @@ fun DiscoveryScreen(
                 onTabSelected = onTabSelected,
                 onLanguageSelected = onLanguageSelected,
                 onQueryChanged = onQueryChanged,
+                onSearch = onSearch,
             )
         }
         if (state.fromStaleCache) {
@@ -172,7 +180,9 @@ private fun DiscoveryHeader(
     onTabSelected: (DiscoveryTab) -> Unit,
     onLanguageSelected: (CatalogLanguage) -> Unit,
     onQueryChanged: (String) -> Unit,
+    onSearch: () -> Unit,
 ) {
+    val focusManager = LocalFocusManager.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -183,16 +193,35 @@ private fun DiscoveryHeader(
             fontWeight = FontWeight.Bold, color = Color.White)
         Text(stringResource(R.string.discovery_subtitle), color = Color.White.copy(alpha = .78f))
         Spacer(Modifier.height(18.dp))
-        OutlinedTextField(
-            value = state.searchQuery,
-            onValueChange = onQueryChanged,
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text(stringResource(R.string.discovery_search_hint)) },
-            leadingIcon = { Icon(Icons.Rounded.Search,
-                contentDescription = stringResource(R.string.discovery_search)) },
-            singleLine = true,
-            shape = RoundedCornerShape(18.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = onQueryChanged,
+                modifier = Modifier.weight(1f),
+                placeholder = { Text(stringResource(R.string.discovery_search_hint)) },
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = {
+                    focusManager.clearFocus()
+                    onSearch()
+                }),
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = {
+                    focusManager.clearFocus()
+                    onSearch()
+                },
+                enabled = state.searchQuery.isNotBlank(),
+            ) {
+                Text(stringResource(R.string.discovery_search))
+            }
+        }
         Spacer(Modifier.height(14.dp))
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
