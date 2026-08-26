@@ -49,7 +49,7 @@ size_t string_ext::utf8Count(const std::string &utf8_str) {
         strlist.push_front(utf8_str);
         size_t count = 0;
         do {
-            std::string &item = strlist.back();
+            std::string item = std::move(strlist.back());
             strlist.pop_back();
             if (utf8::is_valid(item)) {
                 count += utf8::distance(item.begin(), item.end());

@@ -59,4 +59,5 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(project(":base"))
+    testImplementation(libs.junit)
 }
