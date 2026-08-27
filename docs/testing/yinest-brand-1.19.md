@@ -30,6 +30,11 @@
 - APK 元数据：package `com.air5005.pagenest`、versionCode 20、versionName `1.19.260827`、minSdk 29、targetSdk 36。
 - APK 标签：默认 `YiNest`、简体中文 `羿巢阅读`。
 - 本地 APK 大小：126,289,974 字节；SHA-256：`e13554c0fe33487a44d19bd13e823cebb190f81460ad81370ba29a26238a97ea`。
+- GitHub Actions 发布流程成功：<https://github.com/air5005/pagenest/actions/runs/33041703496>。
+- GitHub Release：<https://github.com/air5005/pagenest/releases/tag/yinest-v1.19.260827>。
+- 云端 APK 文件名：`YiNest-1.19.260827-debug.apk`，大小 126,289,794 字节。
+- 云端 APK 下载复核 SHA-256 与 `SHA256SUMS.txt` 一致，均为 `8314ce9bc692b701efe90514daa71d18e152439a1b12cb5f641236949f42d27e`。
+- 云端 APK 再次读取确认：package `com.air5005.pagenest`、versionCode 20、versionName `1.19.260827`、默认标签 `YiNest`、简体中文标签 `羿巢阅读`。
 
 ## 真机状态
 
