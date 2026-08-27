@@ -71,6 +71,38 @@ class SystemTtsEngineTest {
     }
 
     @Test
+    fun `initialized platform with no enumerated voices uses its default voice`() = runTest {
+        val platform = FakePlatformTts().apply { availableVoices.clear() }
+        val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, backgroundScope)
+
+        val result = async { engine.speak(request("小米默认音色")) }
+        runCurrent()
+
+        assertEquals(emptyList<String>(), platform.selectedVoices)
+        assertEquals("小米默认音色", platform.spoken.single().text)
+        platform.complete(platform.spoken.single().utteranceId)
+        assertEquals(SpeechEngineResult.Completed, result.await())
+    }
+
+    @Test
+    fun `unknown configured voice falls back to a locale offline voice`() = runTest {
+        val platform = FakePlatformTts().apply {
+            availableVoices.clear()
+            availableVoices += PlatformSpeechVoice("xiaomi-zh", "Xiaomi Chinese", "zh-CN", false)
+        }
+        val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, backgroundScope)
+
+        val result = async {
+            engine.speak(request("跨引擎音色").copy(voiceId = "zh-CN-XiaoxiaoNeural"))
+        }
+        runCurrent()
+
+        assertEquals(listOf("xiaomi-zh"), platform.selectedVoices)
+        platform.complete(platform.spoken.single().utteranceId)
+        assertEquals(SpeechEngineResult.Completed, result.await())
+    }
+
+    @Test
     fun `speak applies bounded configuration and uses queue flush with a generation utterance id`() = runTest {
         val platform = FakePlatformTts().apply {
             availableVoices += PlatformSpeechVoice("zh-main", "Chinese", "zh-CN", false)

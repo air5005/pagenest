@@ -147,3 +147,11 @@ git rev-parse origin/master
 - 下一步：连接并授权目标小米手机，覆盖安装 1.15，验证在线推荐、搜索和
   Gutenberg EPUB 导入。
 - 证据：`docs/testing/online-discovery-resilience-1.15.md`。
+
+# 最新续接点（2026-08-27，PageNest 1.16）
+
+- 修复 HyperOS 系统 TTS 已初始化却因未枚举离线音色而被误判不可用的问题。
+- AUTO 模式在未同意联网或未配置 Azure Key 时直接使用系统语音。
+- 版本提升为 `1.16.260827` / versionCode 17。
+- 下一步：完成发布门禁并在目标小米手机上回归听书；随后继续阅读进度排队与首次索引性能阶段。
+- 证据：`docs/testing/hyperos-speech-fallback-1.16.md`。

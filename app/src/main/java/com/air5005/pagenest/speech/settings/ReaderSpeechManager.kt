@@ -19,6 +19,7 @@ import com.air5005.pagenest.speech.progress.RoomSpeechProgressCommitter
 import com.air5005.pagenest.speech.session.SpeechHighlightSink
 import com.air5005.pagenest.speech.session.SpeechOptions
 import com.air5005.pagenest.speech.session.SpeechSession
+import com.air5005.pagenest.speech.security.SpeechCredentialStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,6 +38,7 @@ class ReaderSpeechManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val router: SpeechEngineRouter,
     private val preferencesRepository: SpeechPreferencesRepository,
+    private val credentialStore: SpeechCredentialStore,
     private val progressCommitter: RoomSpeechProgressCommitter,
 ) : SpeechPlaybackActions {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -77,15 +79,23 @@ class ReaderSpeechManager @Inject constructor(
             }
             pending = null
             val preferences = preferencesRepository.preferences.first()
-            Logger.running("SPEECH_SESSION", "Speech session starting mode=${preferences.mode.name}")
+            val effectiveMode = ReaderSpeechRoutingPolicy.effectiveMode(
+                requested = preferences.mode,
+                onlineConsentGranted = preferences.onlineConsentGranted,
+                azureConfigured = credentialStore.loadAzure() != null,
+            )
+            Logger.running(
+                "SPEECH_SESSION",
+                "Speech session starting requestedMode=${preferences.mode.name} effectiveMode=${effectiveMode.name}",
+            )
             fallbackNoticePolicy.startSession()
             _routeIndicator.value = SpeechRouteIndicator(
-                engineId = if (preferences.mode == com.air5005.pagenest.speech.model.SpeechMode.OFFLINE) "system" else "azure",
+                engineId = if (effectiveMode == com.air5005.pagenest.speech.model.SpeechMode.OFFLINE) "system" else "azure",
                 fellBack = false,
             )
             prepared.initialPosition?.let { prepared.source.seek(it) }
             val engine = RoutingSpeechEngine(
-                mode = preferences.mode,
+                mode = effectiveMode,
                 route = { request, mode, onRoute -> router.speak(request, mode, onRoute) },
                 stopRoute = router::stop,
                 onRoute = { indicator ->
@@ -114,7 +124,7 @@ class ReaderSpeechManager @Inject constructor(
             session.start(
                 prepared.source,
                 SpeechOptions(
-                    mode = preferences.mode,
+                    mode = effectiveMode,
                     localeTag = preferences.localeTag,
                     voiceId = preferences.voiceId,
                     rate = preferences.rate,
@@ -153,9 +163,14 @@ class ReaderSpeechManager @Inject constructor(
     override fun applyPreferences() {
         scope.launch {
             val preferences = preferencesRepository.preferences.first()
+            val effectiveMode = ReaderSpeechRoutingPolicy.effectiveMode(
+                requested = preferences.mode,
+                onlineConsentGranted = preferences.onlineConsentGranted,
+                azureConfigured = credentialStore.loadAzure() != null,
+            )
             activeSession?.updateOptions(
                 SpeechOptions(
-                    mode = preferences.mode,
+                    mode = effectiveMode,
                     localeTag = preferences.localeTag,
                     voiceId = preferences.voiceId,
                     rate = preferences.rate,

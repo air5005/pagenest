@@ -352,14 +352,23 @@ class SystemTtsEngine internal constructor(
             }
 
             val localeTag = Locale.forLanguageTag(call.request.localeTag).toLanguageTag()
-            val offlineVoice = platform.voices().firstOrNull { voice ->
+            val platformVoices = platform.voices()
+            val localeOfflineVoices = platformVoices.filter { voice ->
                 !voice.networkConnectionRequired &&
-                    voice.localeTag.equals(localeTag, ignoreCase = true) &&
-                    (call.request.voiceId == null || voice.id == call.request.voiceId)
+                    voice.localeTag.equals(localeTag, ignoreCase = true)
             }
-            if (offlineVoice == null || !platform.selectVoice(offlineVoice.id)) {
-                call.complete(SpeechEngineResult.Failed(SpeechError.NoOfflineVoiceAvailable))
-                return null
+            val offlineVoice = localeOfflineVoices.firstOrNull { voice ->
+                voice.id == call.request.voiceId
+            } ?: localeOfflineVoices.firstOrNull()
+            when {
+                offlineVoice != null && !platform.selectVoice(offlineVoice.id) -> {
+                    call.complete(SpeechEngineResult.Failed(SpeechError.NoOfflineVoiceAvailable))
+                    return null
+                }
+                offlineVoice == null && platformVoices.isNotEmpty() -> {
+                    call.complete(SpeechEngineResult.Failed(SpeechError.NoOfflineVoiceAvailable))
+                    return null
+                }
             }
 
             platform.setRate(call.request.rate.coerceIn(MIN_RATE_OR_PITCH, MAX_RATE_OR_PITCH))
