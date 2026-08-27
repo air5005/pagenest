@@ -15,6 +15,9 @@
 - 发布门禁已通过：基础、解析、阅读和应用单元测试，Debug 主 APK、Debug 测试 APK 及 Lint，共 393 个 Gradle 任务成功。
 - 本地 APK 元数据：`com.air5005.pagenest`、versionCode 19、versionName `1.18.260827`、minSdk 29、targetSdk 36。
 - 本地 APK 大小：128,432,798 字节；SHA-256：`0c3dc63a0a0687cd78ff03571074c5aadc28cf2526e390a9e9e3134a7b920e06`。
+- GitHub Actions 发布流程成功：<https://github.com/air5005/pagenest/actions/runs/33037102110>。
+- GitHub Release：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.18.260827>。
+- 云端 APK 大小：126,289,814 字节；下载复核 SHA-256 与 `SHA256SUMS.txt` 一致，均为 `6b047de86991df1af5b120d670a325bbdcf893de3d862972bb9b0fa900a6ce5e`。
 
 ## 真机回归建议
 
