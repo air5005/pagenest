@@ -106,6 +106,7 @@ fun ReaderView(
     val chromeState by viewModel.readerChromeState.collectAsStateWithLifecycle()
     val appPreferences by viewModel.appPreferences.collectAsStateWithLifecycle()
     val readProgression by viewModel.readProgression.collectAsStateWithLifecycle()
+    val readerIndexUiState by viewModel.readerIndexUiState.collectAsStateWithLifecycle()
     var showMoreTools by remember { mutableStateOf(false) }
     var showDisplayTools by remember { mutableStateOf(false) }
 
@@ -274,6 +275,12 @@ fun ReaderView(
                 onStopSpeech = speechSettings::stop,
                 onExpandSpeech = { viewModel.setSpeechPanelExpanded(true) },
                 onInteraction = viewModel::onReaderInteraction,
+            )
+
+            ReaderIndexProgressNotice(
+                state = readerIndexUiState,
+                topPadding = if (chromeState.controlsVisible) 76.dp else 8.dp,
+                modifier = Modifier.align(Alignment.TopCenter),
             )
 
             if (chromeState.speechPanelExpanded) {

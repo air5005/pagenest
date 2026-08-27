@@ -316,6 +316,9 @@
     <string name="reader_speech_next">Próximo parágrafo</string>
     <string name="reader_speech_stop">Parar leitura</string>
     <string name="reader_speech_collapse">Recolher configurações de voz</string>
+    <string name="reader_index_building">A criar o índice de leitura. Pode continuar a ler.</string>
+    <string name="reader_index_building_progress">A criar o índice de leitura: %1$d/%2$d. Pode continuar a ler.</string>
+    <string name="reader_index_failed">Não foi possível criar o índice de leitura. A leitura atual não será afetada.</string>
     <string name="discovery">Descobrir</string>
     <string name="refreshing_library">Atualizando a biblioteca</string>
     <string name="no_scan_directory">Nenhuma pasta foi configurada para procurar livros</string>

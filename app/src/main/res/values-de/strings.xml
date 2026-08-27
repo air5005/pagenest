@@ -319,6 +319,9 @@
     <string name="reader_speech_next">Nächster Absatz</string>
     <string name="reader_speech_stop">Vorlesen beenden</string>
     <string name="reader_speech_collapse">Spracheinstellungen einklappen</string>
+    <string name="reader_index_building">Leseindex wird erstellt. Du kannst weiterlesen.</string>
+    <string name="reader_index_building_progress">Leseindex wird erstellt: %1$d/%2$d. Du kannst weiterlesen.</string>
+    <string name="reader_index_failed">Der Leseindex konnte nicht erstellt werden. Das Lesen ist weiterhin möglich.</string>
     <string name="discovery">Entdecken</string>
     <string name="refreshing_library">Bibliothek wird aktualisiert</string>
     <string name="no_scan_directory">Kein Ordner zum Scannen von Büchern festgelegt</string>

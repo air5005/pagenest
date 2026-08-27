@@ -247,8 +247,12 @@ open class PageViewController @Inject constructor(
     /****
      * 计算每一章节的字数，已经进度，便于计算用户阅读进度
      */
-    suspend fun calcChaptersWords(book: Book) = chapterWordCalculationStatus.track {
+    suspend fun calcChaptersWords(
+        book: Book,
+        onProgress: (completed: Int, total: Int?) -> Unit = { _, _ -> },
+    ) = chapterWordCalculationStatus.track {
         val start = System.currentTimeMillis()
+        onProgress(0, null)
         val chapterIndexWords: ArrayList<Triple<Int, Int, Int>> = arrayListOf()
         val wordCountTriple = BookHelper.loadWordCount(context, book, textParser)
         var totalWordCount = 0
@@ -261,8 +265,10 @@ open class PageViewController @Inject constructor(
         if (totalWordCount > 0) {
             chapterIndexWords.addAll(wordCountTriple)
             chapterIndexWords.removeLastOrNull()    //移除最后一条记录总数的条目
+            val chapterCount = chapterIndexWords.size
+            onProgress(0, chapterCount)
             book.wordCount = totalWordCount.toLong()
-            for (item in chapterIndexWords) {
+            for ((index, item) in chapterIndexWords.withIndex()) {
                 val progress = progressWordCount.toFloat() / totalWordCount
                 val wordCount = item.second
                 val picCount = item.third
@@ -288,6 +294,7 @@ open class PageViewController @Inject constructor(
                     nextTextChapter?.chapterProgress = progress
                     nextTextChapter?.totalWordCount = totalWordCount.toLong()
                 }
+                onProgress(index + 1, chapterCount)
             }
             updateBookUseCase.invoke(book)
         }

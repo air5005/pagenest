@@ -317,6 +317,9 @@
     <string name="reader_speech_next">次の段落</string>
     <string name="reader_speech_stop">読み上げを停止</string>
     <string name="reader_speech_collapse">音声設定を閉じる</string>
+    <string name="reader_index_building">読書インデックスを作成中です。読書は続けられます。</string>
+    <string name="reader_index_building_progress">読書インデックスを作成中 %1$d/%2$d。読書は続けられます。</string>
+    <string name="reader_index_failed">読書インデックスを作成できませんでした。現在の読書には影響しません。</string>
     <string name="discovery">見つける</string>
     <string name="refreshing_library">ライブラリを更新しています</string>
     <string name="no_scan_directory">書籍のスキャン先フォルダーが設定されていません</string>

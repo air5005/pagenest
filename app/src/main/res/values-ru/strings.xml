@@ -317,6 +317,9 @@
     <string name="reader_speech_next">Следующий абзац</string>
     <string name="reader_speech_stop">Остановить чтение</string>
     <string name="reader_speech_collapse">Свернуть настройки речи</string>
+    <string name="reader_index_building">Создаётся индекс чтения. Можно продолжать читать.</string>
+    <string name="reader_index_building_progress">Создаётся индекс чтения: %1$d/%2$d. Можно продолжать читать.</string>
+    <string name="reader_index_failed">Не удалось создать индекс чтения. Текущее чтение не прервано.</string>
     <string name="discovery">Обзор</string>
     <string name="refreshing_library">Обновление библиотеки</string>
     <string name="no_scan_directory">Папка для поиска книг не настроена</string>

@@ -83,6 +83,7 @@ import kotlinx.coroutines.withContext
 import java.util.Calendar
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 
 @HiltViewModel
 @Stable
@@ -149,6 +150,9 @@ class MainReadViewModel @Inject constructor(
     val showMenu: StateFlow<Boolean> = _readerChromeState
         .map { state -> state.controlsVisible }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private val readerIndexProgress = ReaderIndexProgress()
+    val readerIndexUiState: StateFlow<ReaderIndexUiState> = readerIndexProgress.state
 
     //显示章节列表
     private val _isChaptersDrawerOpen = MutableStateFlow<Boolean>(false)
@@ -381,9 +385,13 @@ class MainReadViewModel @Inject constructor(
 
         chapterWordIndexJob?.cancel()
         chapterWordIndexBookId = book.id
+        readerIndexProgress.start()
         chapterWordIndexJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                pageController.calcChaptersWords(book)
+                pageController.calcChaptersWords(book) { completed, total ->
+                    total?.let { readerIndexProgress.update(completed, it) }
+                }
+                readerIndexProgress.complete()
                 if (book.wordCount <= 0L || currentBookId.value != book.id) return@launch
 
                 val refreshedChapters = getChaptersByBookIdUserCase(book.id).firstOrNull().orEmpty()
@@ -397,6 +405,13 @@ class MainReadViewModel @Inject constructor(
                 throw cancelled
             } catch (error: Throwable) {
                 Logger.e(error)
+                if (currentBookId.value == book.id) {
+                    readerIndexProgress.fail()
+                    viewModelScope.launch {
+                        delay(INDEX_FAILURE_NOTICE_MILLIS)
+                        readerIndexProgress.dismissFailure()
+                    }
+                }
             }
         }
     }
@@ -408,6 +423,7 @@ class MainReadViewModel @Inject constructor(
 
     override fun onCleared() {
         chapterWordIndexJob?.cancel()
+        readerIndexProgress.complete()
         pendingReaderProgress.switchTo(Long.MIN_VALUE)
         if (readerSpeechManager.isActive) pageController.detachReaderView() else pageController.clear()
         currentDayStartTime = 0
@@ -419,6 +435,10 @@ class MainReadViewModel @Inject constructor(
         lastLocatorChangeTime = 0L
         super.onCleared()
         Logger.i("MainReadViewModel::onCleared")
+    }
+
+    private companion object {
+        const val INDEX_FAILURE_NOTICE_MILLIS = 4_000L
     }
 
     override fun onCenterClick() {

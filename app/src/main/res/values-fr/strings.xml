@@ -317,6 +317,9 @@
     <string name="reader_speech_next">Paragraphe suivant</string>
     <string name="reader_speech_stop">Arrêter la lecture</string>
     <string name="reader_speech_collapse">Réduire les réglages vocaux</string>
+    <string name="reader_index_building">Création de l’index de lecture. Vous pouvez continuer à lire.</string>
+    <string name="reader_index_building_progress">Création de l’index de lecture : %1$d/%2$d. Vous pouvez continuer à lire.</string>
+    <string name="reader_index_failed">Impossible de créer l’index de lecture. La lecture en cours reste disponible.</string>
     <string name="discovery">Découvrir</string>
     <string name="refreshing_library">Actualisation de la bibliothèque</string>
     <string name="no_scan_directory">Aucun dossier d’analyse des livres n’est configuré</string>

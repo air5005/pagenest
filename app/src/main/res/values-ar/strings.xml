@@ -319,6 +319,9 @@
     <string name="reader_speech_next">الفقرة التالية</string>
     <string name="reader_speech_stop">إيقاف القراءة</string>
     <string name="reader_speech_collapse">طي إعدادات الصوت</string>
+    <string name="reader_index_building">جارٍ إنشاء فهرس القراءة، ويمكنك متابعة القراءة</string>
+    <string name="reader_index_building_progress">جارٍ إنشاء فهرس القراءة %1$d/%2$d، ويمكنك متابعة القراءة</string>
+    <string name="reader_index_failed">تعذر إنشاء فهرس القراءة، ولن تتأثر القراءة الحالية</string>
     <string name="discovery">اكتشف</string>
     <string name="refreshing_library">جارٍ تحديث المكتبة</string>
     <string name="no_scan_directory">لم يتم تعيين مجلد لمسح الكتب</string>
