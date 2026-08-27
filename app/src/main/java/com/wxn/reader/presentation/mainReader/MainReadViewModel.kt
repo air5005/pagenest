@@ -68,7 +68,8 @@ import com.air5005.pagenest.speech.playback.SpeechNowPlaying
 import com.air5005.pagenest.speech.settings.ReaderSpeechManager
 import com.air5005.pagenest.speech.model.SpeechPlaybackState
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +79,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -231,6 +233,10 @@ class MainReadViewModel @Inject constructor(
     private val _readProgression = MutableStateFlow<Double>(0.0)
     val readProgression : StateFlow<Double> = _readProgression.asStateFlow()
 
+    private val pendingReaderProgress = PendingReaderProgress()
+    private var chapterWordIndexJob: Job? = null
+    private var chapterWordIndexBookId: Long? = null
+
     private val _curChapterIndex = MutableStateFlow<Int>(0)
     val curChapterIndex : StateFlow<Int> = _curChapterIndex.asStateFlow()
 
@@ -338,6 +344,7 @@ class MainReadViewModel @Inject constructor(
 
             if (fetchBook(bookId)) {
                 var newBook = _book.value ?: return@launchIO
+                pendingReaderProgress.switchTo(newBook.id)
                 if (openedBookId >= 0) {
                     _appPreferences.value?.let { pref ->
                         if (pref.lastBookId != openedBookId) {
@@ -364,9 +371,33 @@ class MainReadViewModel @Inject constructor(
     }
 
     private fun loadChapterWords(book: Book) {
-        viewModelScope.launchIO {
-            delay(1500)
-            pageController.calcChaptersWords(book)
+        val shouldStart = BookWordIndexPolicy.shouldStart(
+            wordCount = book.wordCount,
+            requestedBookId = book.id,
+            runningBookId = chapterWordIndexBookId,
+            isRunning = chapterWordIndexJob?.isActive == true,
+        )
+        if (!shouldStart) return
+
+        chapterWordIndexJob?.cancel()
+        chapterWordIndexBookId = book.id
+        chapterWordIndexJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                pageController.calcChaptersWords(book)
+                if (book.wordCount <= 0L || currentBookId.value != book.id) return@launch
+
+                val refreshedChapters = getChaptersByBookIdUserCase(book.id).firstOrNull().orEmpty()
+                withContext(Dispatchers.Main.immediate) {
+                    if (currentBookId.value != book.id) return@withContext
+                    allChapters.clear()
+                    allChapters.addAll(refreshedChapters)
+                    pendingReaderProgress.consume(book.id)?.let(::navigateToProgress)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                Logger.e(error)
+            }
         }
     }
 
@@ -376,6 +407,8 @@ class MainReadViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        chapterWordIndexJob?.cancel()
+        pendingReaderProgress.switchTo(Long.MIN_VALUE)
         if (readerSpeechManager.isActive) pageController.detachReaderView() else pageController.clear()
         currentDayStartTime = 0
 //        _initialLocator.value = null
@@ -833,9 +866,17 @@ class MainReadViewModel @Inject constructor(
     fun changePageByProgress(newProgress: Double):Boolean {
         val curTextChapter = pageController.curTextChapter ?: return false
         if (curTextChapter.totalWordCount == 0L || pageController.isCalcChapterWords) {
+            currentBookId.value?.let { bookId ->
+                pendingReaderProgress.remember(bookId, newProgress)
+            }
+            _book.value?.let(::loadChapterWords)
             ToastUtil.show(stringResource(R.string.is_load_chapter_info))
-            return false
+            return currentBookId.value != null
         }
+        return navigateToProgress(newProgress)
+    }
+
+    private fun navigateToProgress(newProgress: Double): Boolean {
         return ReaderProgressNavigator.navigate(newProgress, allChapters) { newChapterIndex, progress ->
             Logger.d("MainReadViewModel::changePageByProgress:newProgress[$progress],targetChapterIndex=$newChapterIndex")
             pageController.changeChapter(newChapterIndex, progress)

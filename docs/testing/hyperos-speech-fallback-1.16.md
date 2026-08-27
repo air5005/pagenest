@@ -24,3 +24,6 @@
 - versionCode：17
 - versionName：`1.16.260827`
 - 标签：`pagenest-v1.16.260827`
+- GitHub Actions 发布任务成功：<https://github.com/air5005/pagenest/actions/runs/33033411897>。
+- Release：<https://github.com/air5005/pagenest/releases/tag/pagenest-v1.16.260827>。
+- 远端 APK 与 `SHA256SUMS.txt` 一致：`4e53fd7623e08137791532d58993f0a40f7479ec4160c3f046eaf1e9caf6a388`；下载后再次确认包名、versionCode 17、versionName `1.16.260827`、minSdk 29、targetSdk 36。
