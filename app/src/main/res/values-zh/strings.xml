@@ -1,5 +1,5 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">页栖</string>
+    <string name="app_name">羿巢阅读</string>
     <string name="highlight">高亮</string>
     <string name="underline">下划线</string>
     <string name="note">笔记</string>
@@ -27,8 +27,8 @@
     <string name="cancel">取消</string>
     <string name="all_books">所有书籍</string>
     <string name="unlock_premium">解锁高级版</string>
-    <string name="unlock_uread_premium">解锁页栖高级版</string>
-    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">解锁所有高级功能，获得页栖高级版最佳阅读体验</string>
+    <string name="unlock_uread_premium">解锁羿巢阅读高级版</string>
+    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">解锁所有高级功能，获得羿巢阅读高级版最佳阅读体验</string>
     <string name="remove_ads">移除广告</string>
     <string name="get_full_access_to_custom_app_theme">获取自定义应用主题完全访问权限</string>
     <string name="get_unlimited_number_of_shelves">获取无限数量的书架</string>
@@ -112,7 +112,7 @@
     <string name="text_color">文本颜色</string>
     <string name="select_color">选择 %1$s 颜色</string>
     <string name="no_books_in">%1$s 中没有书籍</string>
-    <string name="to_get_started_please_select_a_directory_where_you_would_like_to_load_your_books">选择一个书籍目录，页栖会在本机整理你的阅读空间。</string>
+    <string name="to_get_started_please_select_a_directory_where_you_would_like_to_load_your_books">选择一个书籍目录，羿巢阅读会在本机整理你的阅读空间。</string>
     <string name="select_directory">选择书籍目录</string>
     <string name="select_scan_directory">选择扫描目录</string>
     <string name="please_select_a_directory_where_your_ebooks_are_stored_you_can_edit_this_later_in_settings">请选择存储电子书的目录，你可以稍后在设置中编辑</string>
@@ -222,7 +222,7 @@
     <string name="subjects_with_comma">主题（逗号分隔）</string>
     <string name="narrator">朗读者</string>
     <string name="translated_text">翻译文本：[API调用结果 \"%1$s\"]</string>
-    <string name="welcome_to_uread">欢迎来到页栖</string>
+    <string name="welcome_to_uread">欢迎来到羿巢阅读</string>
     <string name="remove_note">删除笔记</string>
     <string name="dialog_content_remove_note">确定要删除此笔记吗？</string>
     <string name="ok">确定</string>

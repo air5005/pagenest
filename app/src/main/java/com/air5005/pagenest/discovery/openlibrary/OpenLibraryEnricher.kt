@@ -193,7 +193,7 @@ class OpenLibraryEnricher(
         private const val OPEN_LIBRARY_HOST = "openlibrary.org"
         private const val SEARCH_LIMIT = 5
         private const val READ_BUFFER_BYTES = 8 * 1024
-        private const val USER_AGENT = "PageNest/1.10 (+https://github.com/air5005/pagenest)"
+        private const val USER_AGENT = "YiNest/1.10 (+https://github.com/air5005/pagenest)"
         private val WORK_ID = Regex("/works/(OL\\d+W)")
         private val DEFAULT_JSON = Json {
             ignoreUnknownKeys = true

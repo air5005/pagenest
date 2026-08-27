@@ -1,5 +1,5 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">PageNest</string>
+    <string name="app_name">YiNest</string>
     <string name="highlight">Surligner</string>
     <string name="underline">Souligner</string>
     <string name="note">Note</string>
@@ -27,8 +27,8 @@
     <string name="cancel">Annuler</string>
     <string name="all_books">Tous les livres</string>
     <string name="unlock_premium">Débloquer Premium</string>
-    <string name="unlock_uread_premium">Débloquer PageNest Premium</string>
-    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Débloquez toutes les fonctionnalités premium et obtenez la meilleure expérience de lecture avec PageNest Premium.</string>
+    <string name="unlock_uread_premium">Débloquer YiNest Premium</string>
+    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Débloquez toutes les fonctionnalités premium et obtenez la meilleure expérience de lecture avec YiNest Premium.</string>
     <string name="remove_ads">Supprimer les publicités</string>
     <string name="get_full_access_to_custom_app_theme">Obtenez un accès complet au thème personnalisé de l\'application</string>
     <string name="get_unlimited_number_of_shelves">Obtenez un nombre illimité d\'étagères</string>
@@ -222,7 +222,7 @@
     <string name="subjects_with_comma">Sujets (séparés par des virgules)</string>
     <string name="narrator">Narrateur</string>
     <string name="translated_text">Texte traduit : [Résultat d\'appel API pour \"%1$s\"]</string>
-    <string name="welcome_to_uread">Bienvenue sur PageNest</string>
+    <string name="welcome_to_uread">Bienvenue sur YiNest</string>
     <string name="remove_note">Supprimer la note</string>
     <string name="dialog_content_remove_note">Êtes-vous sûr de vouloir supprimer cette note ?</string>
     <string name="ok">OK</string>

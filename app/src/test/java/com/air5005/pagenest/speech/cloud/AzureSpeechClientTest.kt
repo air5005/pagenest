@@ -64,7 +64,7 @@ class AzureSpeechClientTest {
         )
         assertEquals("credential-value", sent.headers["Ocp-Apim-Subscription-Key"])
         assertEquals("audio-24khz-48kbitrate-mono-mp3", sent.headers["X-Microsoft-OutputFormat"])
-        assertEquals("PageNest", sent.headers[HttpHeaders.UserAgent])
+        assertEquals("YiNest", sent.headers[HttpHeaders.UserAgent])
         assertEquals("application/ssml+xml", sent.body.contentType?.withoutParameters().toString())
         val body = (sent.body as TextContent).text
         assertTrue(body.contains("甲&lt;&amp;乙"))

@@ -248,7 +248,7 @@ class AzureSpeechClient private constructor(
         private const val OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3"
         private const val SSML_CONTENT_TYPE = "application/ssml+xml"
         private const val AUDIO_CONTENT_TYPE = "audio/mpeg"
-        private const val USER_AGENT = "PageNest"
+        private const val USER_AGENT = "YiNest"
         fun production(): AzureSpeechClient = AzureSpeechClient(
             HttpClient(OkHttp) { followRedirects = false },
         )

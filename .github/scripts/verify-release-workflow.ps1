@@ -10,7 +10,7 @@ if (-not (Test-Path -LiteralPath $workflowPath)) {
 $workflowLines = Get-Content -LiteralPath $workflowPath
 $workflow = $workflowLines -join "`n"
 $requirements = [ordered]@{
-    'PageNest tag trigger'        = "'pagenest-v*'"
+    'YiNest tag trigger'          = "'yinest-v*'"
     'pinned checkout action'      = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
     'pinned Java setup action'    = 'actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c'
     'pinned Gradle setup action'  = 'gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb'
@@ -23,7 +23,7 @@ $requirements = [ordered]@{
     'native library NDK version'  = 'ndk;29.0.13599879'
     'portable Gradle invocation'  = 'bash ./gradlew :app:assembleDebug --no-daemon'
     'exact debug APK output'      = 'app/build/outputs/apk/debug/app-debug.apk'
-    'versioned APK asset'         = 'PageNest-${tag}-debug.apk'
+    'versioned APK asset'         = 'YiNest-${version}-debug.apk'
     'SHA-256 checksum asset'      = 'SHA256SUMS.txt'
     'release creation'            = 'gh release create'
     'idempotent release upload'   = 'gh release upload'

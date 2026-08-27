@@ -157,7 +157,7 @@ class OpenLibraryCatalogSource(
         private val DEFAULT_JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
         private fun userAgent(): String =
-            "PageNest/${BuildConfig.VERSION_NAME} (+https://github.com/air5005/pagenest)"
+            "YiNest/${BuildConfig.VERSION_NAME} (+https://github.com/air5005/pagenest)"
     }
 }
 

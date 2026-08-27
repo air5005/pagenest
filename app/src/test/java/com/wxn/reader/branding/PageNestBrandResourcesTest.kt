@@ -25,10 +25,10 @@ class PageNestBrandResourcesTest {
     }
 
     @Test
-    fun appNameAndWelcomeCopyUsePageNestBrand() {
-        assertEquals("页栖", text(R.string.app_name, "zh-CN"))
-        assertEquals("欢迎来到页栖", text(R.string.welcome_to_uread, "zh-CN"))
-        assertEquals("Welcome to PageNest", text(R.string.welcome_to_uread, "en-US"))
+    fun appNameAndWelcomeCopyUseYiNestBrand() {
+        assertEquals("羿巢阅读", text(R.string.app_name, "zh-CN"))
+        assertEquals("欢迎来到羿巢阅读", text(R.string.welcome_to_uread, "zh-CN"))
+        assertEquals("Welcome to YiNest", text(R.string.welcome_to_uread, "en-US"))
     }
 
     @Test

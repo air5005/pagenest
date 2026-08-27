@@ -102,6 +102,6 @@ class OkHttpBookDownloadTransport(
     }
 
     companion object {
-        private const val USER_AGENT = "PageNest/GitHub"
+        private const val USER_AGENT = "YiNest/GitHub"
     }
 }

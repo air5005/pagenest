@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'pagenest-v*'
+      - 'yinest-v*'
 
 permissions:
   contents: read
@@ -51,7 +52,8 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          asset="PageNest-${tag}-debug.apk"
+          version="${tag##*-v}"
+          asset="YiNest-${version}-debug.apk"
           mkdir -p release
           cp app/build/outputs/apk/debug/app-debug.apk "release/${asset}"
           cd release
@@ -87,7 +89,8 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          title="PageNest ${tag#pagenest-v}"
+          version="${tag##*-v}"
+          title="YiNest ${version}"
           if gh release view "${tag}" >/dev/null 2>&1; then
             gh release upload "${tag}" release/* --clobber
           else

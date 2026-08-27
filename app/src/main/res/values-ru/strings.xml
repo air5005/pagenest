@@ -1,5 +1,5 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">PageNest</string>
+    <string name="app_name">YiNest</string>
     <string name="highlight">Выделить</string>
     <string name="underline">Подчеркнуть</string>
     <string name="note">Заметка</string>
@@ -27,8 +27,8 @@
     <string name="cancel">Отмена</string>
     <string name="all_books">Все книги</string>
     <string name="unlock_premium">Разблокировать Премиум</string>
-    <string name="unlock_uread_premium">Разблокировать PageNest Премиум</string>
-    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Разблокируйте все премиум-функции и получите лучший пользовательский опыт с PageNest Премиум.</string>
+    <string name="unlock_uread_premium">Разблокировать YiNest Премиум</string>
+    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Разблокируйте все премиум-функции и получите лучший пользовательский опыт с YiNest Премиум.</string>
     <string name="remove_ads">Убрать рекламу</string>
     <string name="get_full_access_to_custom_app_theme">Получите полный доступ к пользовательской теме приложения</string>
     <string name="get_unlimited_number_of_shelves">Получите неограниченное количество полок</string>
@@ -221,7 +221,7 @@
     <string name="subjects_with_comma">Темы (через запятую)</string>
     <string name="narrator">Рассказчик</string>
     <string name="translated_text">Переведенный текст: [Результат вызова API для \"%1$s\"]</string>
-    <string name="welcome_to_uread">Добро пожаловать в PageNest</string>
+    <string name="welcome_to_uread">Добро пожаловать в YiNest</string>
     <string name="remove_note">Удалить заметку</string>
     <string name="dialog_content_remove_note">Вы уверены, что хотите удалить эту заметку?</string>
     <string name="ok">OK</string>

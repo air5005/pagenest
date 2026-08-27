@@ -21,7 +21,7 @@ import org.junit.Test
 
 class OpenLibraryCatalogSourceTest {
     @Test
-    fun `search identifies PageNest and keeps only public readable works`() = runTest {
+    fun `search identifies YiNest and keeps only public readable works`() = runTest {
         lateinit var captured: HttpRequestData
         val source = sourceReturning(fixture()) { captured = it }
 
@@ -32,7 +32,7 @@ class OpenLibraryCatalogSourceTest {
         assertEquals("/search.json", captured.url.encodedPath)
         assertEquals("Alice", captured.url.parameters["q"])
         assertEquals("en", captured.url.parameters["lang"])
-        assertTrue(captured.headers[HttpHeaders.UserAgent].orEmpty().startsWith("PageNest/"))
+        assertTrue(captured.headers[HttpHeaders.UserAgent].orEmpty().startsWith("YiNest/"))
         assertEquals(listOf("Public Book"), page.books.map { it.title })
         val book = page.books.single()
         assertEquals(RightsStatus.PUBLIC_DOMAIN, book.rightsStatus)

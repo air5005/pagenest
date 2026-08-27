@@ -35,7 +35,7 @@ class OpenLibraryEnricherTest {
         assertEquals("Jane Austen", captured.url.parameters["author"])
         assertEquals("5", captured.url.parameters["limit"])
         assertEquals(OpenLibraryEnricher.REQUEST_FIELDS, captured.url.parameters["fields"])
-        assertTrue(captured.headers[HttpHeaders.UserAgent].orEmpty().contains("PageNest"))
+        assertTrue(captured.headers[HttpHeaders.UserAgent].orEmpty().contains("YiNest"))
         assertEquals("OL66554W", metadata.workId)
         assertEquals(OpenLibraryEbookAccess.PUBLIC, metadata.ebookAccess)
         assertEquals("https://covers.openlibrary.org/b/id/12345-L.jpg?default=false", metadata.coverUrl)

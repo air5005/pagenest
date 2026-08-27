@@ -1,5 +1,5 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">页栖</string>
+    <string name="app_name">YiNest</string>
     <string name="highlight">Highlight</string>
     <string name="underline">Underline</string>
     <string name="note">Note</string>
@@ -27,8 +27,8 @@
     <string name="cancel">Cancel</string>
     <string name="all_books">All Books</string>
     <string name="unlock_premium">Unlock Premium</string>
-    <string name="unlock_uread_premium">Unlock PageNest Premium</string>
-    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Unlock all premium features and get the best reading experience with PageNest Premium.</string>
+    <string name="unlock_uread_premium">Unlock YiNest Premium</string>
+    <string name="unlock_all_premium_features_and_get_the_best_reading_experience_with_uread_premium">Unlock all premium features and get the best reading experience with YiNest Premium.</string>
     <string name="remove_ads">Remove ads</string>
     <string name="get_full_access_to_custom_app_theme">Get full access to custom app theme</string>
     <string name="get_unlimited_number_of_shelves">Get unlimited number of shelves</string>
@@ -225,7 +225,7 @@
     <string name="search_in_google">Search in Google</string>
     <string name="ok">OK</string>
     <string name="translated_text">Translated text: [API call result for \'%1$s\']</string>
-    <string name="welcome_to_uread">Welcome to PageNest</string>
+    <string name="welcome_to_uread">Welcome to YiNest</string>
     <string name="remove_note">Remove Note</string>
     <string name="dialog_content_remove_note">Are you sure you want to remove this note?</string>
     <string name="definition_of_word">Definition of \"%1$s\"</string>
