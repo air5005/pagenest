@@ -26,8 +26,8 @@ $adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
 电脑端需要 JDK 17、Android SDK 36、Build Tools 36.0.0 和最新版 Platform Tools。完整安装说明见 [开发环境指南](../DEVELOPMENT.md)。在仓库根目录打开 PowerShell：
 
 ```powershell
-$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
-$env:Path = "$env:LOCALAPPDATA\Android\Sdk\platform-tools;$env:Path"
+$env:JAVA_HOME = "$env:LOCALAPPDATA\Programs\PageNestDev\jdk-17.0.20.1+1"
+$env:Path = "$env:JAVA_HOME\bin;$env:LOCALAPPDATA\Android\Sdk\platform-tools;$env:Path"
 java -version
 adb version
 ```
@@ -73,7 +73,7 @@ adb devices -l
 先运行不依赖手机的完整门禁：
 
 ```powershell
-$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
+$env:JAVA_HOME = "$env:LOCALAPPDATA\Programs\PageNestDev\jdk-17.0.20.1+1"
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
 ```
 

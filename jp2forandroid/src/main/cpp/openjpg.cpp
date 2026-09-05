@@ -2,6 +2,7 @@
 
 #include "opj_config.h"
 #include <jni.h> 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,7 @@ typedef unsigned int OPJ_BITFIELD;
 #include "jp2.h"
 #include "opj_codec.h"
 #include "opj_malloc.h"
+#include "pixel_buffer_size.h"
 
 #include <android/log.h>
 
@@ -147,6 +149,20 @@ static int imagetoargb(opj_image_t *image, image_data_t *outImage) {
 
     outImage->hasAlpha = false;
 
+    if (!image || !image->comps || image->numcomps == 0) {
+        LOGE("Image has no components");
+        return 1;
+    }
+
+    const OPJ_UINT32 width = image->comps[0].w;
+    const OPJ_UINT32 height = image->comps[0].h;
+    uint64_t byteCount;
+    if (!pagenest::checkedArgbBufferSize(width, height, SIZE_MAX, &byteCount)) {
+        LOGE("Unsupported image dimensions: %u x %u", width, height);
+        return 1;
+    }
+    const size_t pixelBytes = static_cast<size_t>(byteCount);
+
     if (image->comps[0].prec < 8) {
         LOGE("Unsupported number of components: %d\n", image->comps[0].prec);
         return 1;
@@ -166,12 +182,12 @@ static int imagetoargb(opj_image_t *image, image_data_t *outImage) {
         w = image->comps[0].w;        
         h = image->comps[0].h;
         
-        outImage->pixels = (w > 0 && h > 0 && h <= SIZE_MAX / (sizeof(int) * w)) ? (int *) malloc(sizeof(int) * w * h) : NULL;
+        outImage->pixels = (int *) malloc(pixelBytes);
         outImage->height = h;
         outImage->width = w;
         
         if (!outImage->pixels) {
-            LOGE("Could not allocate %lu bytes of memory.\n", w * h * sizeof(int));
+            LOGE("Could not allocate %zu bytes of memory.\n", pixelBytes);
             return 1;
         }
         
@@ -247,12 +263,12 @@ static int imagetoargb(opj_image_t *image, image_data_t *outImage) {
         w = image->comps[0].w;        
         h = image->comps[0].h;
         
-        outImage->pixels = (int *) malloc(sizeof(int) * w * h);
+        outImage->pixels = (int *) malloc(pixelBytes);
         outImage->height = h;
         outImage->width = w;
         
         if (!outImage->pixels) {
-            LOGE("Could not allocate %lu bytes of memory.\n", w * h * sizeof(int));
+            LOGE("Could not allocate %zu bytes of memory.\n", pixelBytes);
             return 1;
         }
 
@@ -552,8 +568,7 @@ int decodeJP2Stream(opj_stream_t *l_stream, opj_dparameters_t *parameters, image
 
     if (image->color_space == OPJ_CLRSPC_SYCC) {
         color_sycc_to_rgb(image);
-    } else if ((image->color_space == OPJ_CLRSPC_CMYK)/* &&
-               (parameters.cod_format != TIF_DFMT)*/) {
+    } else if (image->color_space == OPJ_CLRSPC_CMYK) {
         color_cmyk_to_rgb(image);
     } else if (image->color_space == OPJ_CLRSPC_EYCC) {
         color_esycc_to_rgb(image);
@@ -573,7 +588,7 @@ int decodeJP2Stream(opj_stream_t *l_stream, opj_dparameters_t *parameters, image
     }
     
     //convert the image data to image_data_t which will be returned to Java
-    imagetoargb(image, outImage);
+    const int conversionResult = imagetoargb(image, outImage);
 
     /* free remaining structures */
     if (l_codec) {
@@ -583,7 +598,7 @@ int decodeJP2Stream(opj_stream_t *l_stream, opj_dparameters_t *parameters, image
     /* free image data structure */
     opj_image_destroy(image);
     
-    return EXIT_SUCCESS;
+    return conversionResult;
 }
 
 #define BYTE_ARRAY_SRC_CHUNK_LENGTH 4096

@@ -37,6 +37,28 @@ import kotlin.coroutines.EmptyCoroutineContext
 
 class SystemTtsEngineCloseAdmissionTest {
     @Test
+    fun `immediate owner installs listener before constructor returns`() {
+        val ownerScope = CoroutineScope(
+            SupervisorJob() + Executor { command -> command.run() }.asCoroutineDispatcher(),
+        )
+        val platform = CloseRecordingPlatform()
+        val engine = SystemTtsEngine(PlatformTextToSpeechFactory { platform }, ownerScope)
+        try {
+            assertTrue("TTS listener must be ready for an immediate owner", platform.listenerInstalled.count == 0L)
+            assertEquals(0, platform.shutdownCalls.get())
+            assertEquals(
+                listOf(SpeechVoice("offline", "Offline", "zh-CN")),
+                runBlocking { engine.voices("zh-CN") },
+            )
+        } finally {
+            engine.close()
+            ownerScope.cancel()
+        }
+        assertEquals(1, platform.stopCalls.get())
+        assertEquals(1, platform.shutdownCalls.get())
+    }
+
+    @Test
     fun `pre-start fallback publishes close before inline resumed caller reenters close`() {
         val queuedExecutor = QueuedExecutor()
         val ownerDispatcher = queuedExecutor.asCoroutineDispatcher()

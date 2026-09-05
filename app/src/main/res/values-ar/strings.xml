@@ -238,14 +238,14 @@
     <string name="model_light">فاتح</string>
     <string name="model_dark">غامق</string>
     <string name="adding_new_book_to_library">إضافة كتب جديدة إلى المكتبة</string>
-    <string name="adding_books_num">إضافة الكتب(%d%\/d)</string>
+    <string name="adding_books_num">إضافة الكتب(%1$d/%2$d)</string>
     <string name="added_books">تمت إضافة %1$d كتب\t</string>
     <string name="remove_nums_books">حذف %1$d كتب\t</string>
     <string name="error_updateing_library">خطأ في تحديث المكتبة: %1$s</string>
     <string name="failed_to_add_shelf">فشل إضافة الرف %1$d</string>
     <string name="failed_remove_shelf">فشل إزالة الرف %1$s</string>
     <string name="failed_delete_book">فشل حذف الكتاب %1$s\t</string>
-    <string name="failed_delete_book_info">فشل حذف الكتاب %1$s\t s$2%</string>
+    <string name="failed_delete_book_info">فشل حذف الكتاب %1$s %2$s</string>
     <string name="book_remove_success">تم إزالة الكتب بنجاح\t</string>
     <string name="books_add_shelf_success">تمت إضافة الكتب إلى الرف بنجاح</string>
     <string name="add_book_shelf_failed">فشل إضافة الكتب إلى الرف %1$s</string>

@@ -1,24 +1,26 @@
-# 页栖开发环境指南
+# 羿巢阅读（YiNest）开发环境指南
 
-本文档说明在 Windows 上开发、构建和调试页栖 Android 应用所需的软件、官方下载地址、安装步骤和设备连接方法。
+本文档说明在 Windows 上开发、构建和调试羿巢阅读 Android 应用所需的软件、安装步骤和设备连接方法。`PageNestDev` 工具目录、`PageNest_API_36` 模拟器名及 `com.air5005.pagenest` 包名为现有兼容标识，不是对外品牌名称。
 
 ## 1. 当前开发基线
 
-以下版本已于 2026-08-22 在本机安装并验证：
+以下是 2026-09-05 本机已安装的开发环境。路径中的 `%LOCALAPPDATA%` 表示当前用户的本地应用数据目录；在 PowerShell 中使用 `$env:LOCALAPPDATA`。
 
 | 组件 | 版本 | 安装位置 |
 | --- | --- | --- |
-| Android Studio | 2026.1.3.7（Quail 3） | `C:\Program Files\Android\Android Studio` |
-| JDK | Microsoft OpenJDK 17.0.20.1 | `C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot` |
-| Android SDK Command-line Tools | latest（15859902） | `%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest` |
+| Android Studio | 2026.1.4.7（Quail 4） | `%LOCALAPPDATA%\Programs\PageNestDev\android-studio` |
+| JDK | Microsoft OpenJDK 17.0.20.1 | `%LOCALAPPDATA%\Programs\PageNestDev\jdk-17.0.20.1+1` |
+| Android SDK Command-line Tools | 22.0（安装包 15859902） | `%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest` |
 | Android SDK Platform | Android 36 | `%LOCALAPPDATA%\Android\Sdk\platforms\android-36` |
-| Android SDK Build Tools | 36.0.0 | `%LOCALAPPDATA%\Android\Sdk\build-tools\36.0.0` |
+| Android SDK Build Tools | 35.0.0、36.0.0 | `%LOCALAPPDATA%\Android\Sdk\build-tools` |
 | Android SDK Platform Tools / ADB | 37.0.1 | `%LOCALAPPDATA%\Android\Sdk\platform-tools` |
-| Android NDK | 29.0.13599879 | `%LOCALAPPDATA%\Android\Sdk\ndk\29.0.13599879` |
+| Android NDK | 27.0.12077973、29.0.13599879（r29-beta2） | `%LOCALAPPDATA%\Android\Sdk\ndk` |
 | CMake | 3.22.1 | `%LOCALAPPDATA%\Android\Sdk\cmake\3.22.1` |
+| Android Emulator | 37.1.11 | `%LOCALAPPDATA%\Android\Sdk\emulator` |
+| AVD 系统镜像 | API 36 / Google APIs / x86_64 | `%LOCALAPPDATA%\Android\Sdk\system-images\android-36\google_apis\x86_64` |
 | Git | 已安装 | 由系统 Git 提供 |
 
-项目使用 Gradle Wrapper 固定 Gradle 版本，因此不需要安装全局 Gradle。应用工程建立后，应使用仓库中的 `gradlew.bat` 执行构建和测试。
+项目通过 Gradle Wrapper 固定 Gradle 8.11.1，无需安装全局 Gradle；使用仓库中的 `gradlew.bat` 构建和测试。两个 NDK 版本均需保留：不同原生模块使用不同版本，29.0.13599879 是项目固定的 beta2 版本，不应描述为稳定版或随意替换。
 
 ## 2. 必需软件与官方下载地址
 
@@ -28,12 +30,18 @@
 - Windows 安装说明：<https://developer.android.com/studio/install>
 - Winget 包：`Google.AndroidStudio`
 
-推荐使用最新稳定版，不使用 Canary 或 Beta 版本作为项目默认开发环境。
+本机已使用官方 ZIP 包完成用户级安装。复现本机环境时使用上表版本；升级 IDE、SDK 或 NDK 前应单独验证项目兼容性。
+
+### JDK 17
+
+- Microsoft OpenJDK 官方下载页：<https://learn.microsoft.com/en-us/java/openjdk/download>
+- Winget 包：`Microsoft.OpenJDK.17`
+- 本机使用官方 Windows x64 ZIP 包，解压到上表中的用户级目录。
 
 ### Android SDK Command-line Tools
 
 - 官方下载页：<https://developer.android.com/studio#command-tools>
-- Windows 当前安装包：<https://dl.google.com/android/repository/commandlinetools-win-15859902_latest.zip>
+- 本机使用的 Windows 安装包：<https://dl.google.com/android/repository/commandlinetools-win-15859902_latest.zip>
 - SHA-256：`90ae805d20434428bffcb699c290860f19bb5f66a67e6b330067e3de801fb04a`
 - 命令行工具说明：<https://developer.android.com/tools/sdkmanager>
 
@@ -53,36 +61,35 @@ Windows 无法通过 ADB 识别小米设备时，再安装对应设备的 OEM US
 
 ## 3. Windows 安装流程
 
-### 3.1 安装 Android Studio
+### 3.1 安装 Android Studio 与 JDK 17
 
-在 PowerShell 中执行：
-
-```powershell
-winget install --id Google.AndroidStudio --exact `
-  --silent `
-  --accept-package-agreements `
-  --accept-source-agreements `
-  --disable-interactivity
-```
-
-验证安装：
+本机已完成安装，继续开发无需重复安装。先检查现有工具：
 
 ```powershell
-winget list --id Google.AndroidStudio --exact
-Test-Path 'C:\Program Files\Android\Android Studio\bin\studio64.exe'
+Test-Path "$env:LOCALAPPDATA\Programs\PageNestDev\android-studio\bin\studio64.exe"
+& "$env:LOCALAPPDATA\Programs\PageNestDev\jdk-17.0.20.1+1\bin\java.exe" -version
 ```
 
-本项目固定的 Gradle 8.11.1 需使用 JDK 17。Android Studio 2026.1.3.7 自带的 JBR 25.0.2 无法解析当前 Kotlin DSL 构建脚本，因此命令行构建请将 `JAVA_HOME` 指向上表中的 Microsoft OpenJDK 17。
-
-安装项目 JDK：
+在其他 Windows 电脑上，可以使用官方 ZIP 包做用户级安装，也可以使用 Winget。先验证 Winget：
 
 ```powershell
-winget install --id Microsoft.OpenJDK.17 --exact `
-  --silent `
-  --accept-package-agreements `
-  --accept-source-agreements `
-  --disable-interactivity
+winget.exe --version
+# 若当前进程的 Path 未包含 WindowsApps，尝试完整路径：
+& "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe" --version
 ```
+
+本机 Winget 版本已验证为 `1.29.290`。命令别名在某个终端不可见，不代表 Winget 未安装；新开终端或使用上述完整路径即可进一步确认。
+
+采用 Winget 安装时，可以执行：
+
+```powershell
+winget install --id Google.AndroidStudio --exact
+winget install --id Microsoft.OpenJDK.17 --exact
+```
+
+这些包的安装器可能要求管理员权限，且安装路径与上表的用户级 ZIP 安装不同。若出现权限错误，可改用官方 ZIP 安装；ZIP 安装通常不会出现在 `winget list` 中。上述未指定版本的 Winget 命令会选择其源提供的版本，执行前应核对是否符合项目基线。
+
+构建使用 JDK 17：命令行 `JAVA_HOME` 指向实际安装的 JDK 17 目录；Android Studio 中也将项目的 Gradle JDK 设为同一目录，避免自动采用 IDE 自带的其他 Java 版本。
 
 ### 3.2 安装 Android SDK
 
@@ -91,7 +98,7 @@ winget install --id Microsoft.OpenJDK.17 --exact `
 1. 打开 Android Studio。
 2. 进入 `Tools > SDK Manager`。
 3. 在 `SDK Platforms` 中安装 Android 36。
-4. 在 `SDK Tools` 中安装 Android SDK Build-Tools、Android SDK Platform-Tools 和 Android SDK Command-line Tools。
+4. 在 `SDK Tools` 中勾选 `Show Package Details`，按上表安装 Build Tools、Platform Tools、Command-line Tools、两个 NDK 版本和 CMake。需要模拟器时另装 Emulator 与对应系统镜像。
 
 也可以使用命令行工具。将下载包解压后整理成以下结构：
 
@@ -108,7 +115,7 @@ winget install --id Microsoft.OpenJDK.17 --exact `
 然后安装 SDK 组件：
 
 ```powershell
-$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
+$env:JAVA_HOME = "$env:LOCALAPPDATA\Programs\PageNestDev\jdk-17.0.20.1+1"
 $sdkRoot = "$env:LOCALAPPDATA\Android\Sdk"
 $sdkManager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
 
@@ -116,7 +123,9 @@ $sdkManager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
 & $sdkManager --sdk_root=$sdkRoot `
   'platform-tools' `
   'platforms;android-36' `
+  'build-tools;35.0.0' `
   'build-tools;36.0.0' `
+  'ndk;27.0.12077973' `
   'ndk;29.0.13599879' `
   'cmake;3.22.1'
 ```
@@ -130,18 +139,27 @@ $sdkManager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
 ```text
 ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk
 ANDROID_SDK_ROOT=%LOCALAPPDATA%\Android\Sdk
-JAVA_HOME=C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot
+JAVA_HOME=%LOCALAPPDATA%\Programs\PageNestDev\jdk-17.0.20.1+1
 ```
 
 将下列目录加入当前用户的 `Path`：
 
 ```text
-C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot\bin
+%LOCALAPPDATA%\Programs\PageNestDev\jdk-17.0.20.1+1\bin
 %LOCALAPPDATA%\Android\Sdk\platform-tools
 %LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest\bin
+%LOCALAPPDATA%\Android\Sdk\cmake\3.22.1\bin
+%LOCALAPPDATA%\Programs\PageNestDev\android-studio\bin
 ```
 
-修改后应重新打开 PowerShell、终端和 Android Studio，使新环境变量生效。
+在 Windows 用户环境变量设置中填写上述目录的实际展开路径。本机已经配置这些用户变量；已有终端不会自动刷新。修改后应重新打开 PowerShell、终端和 Android Studio，使新环境变量生效。需要在当前 PowerShell 立即构建时，可以临时设置：
+
+```powershell
+$env:JAVA_HOME = "$env:LOCALAPPDATA\Programs\PageNestDev\jdk-17.0.20.1+1"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
+$env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:Path"
+```
 
 ### 3.4 可选 Release 签名
 
@@ -169,20 +187,34 @@ sdkmanager --list_installed
 预期至少能看到：
 
 ```text
+build-tools;35.0.0
 build-tools;36.0.0
 cmake;3.22.1
+ndk;27.0.12077973
 ndk;29.0.13599879
 platform-tools
 platforms;android-36
 ```
 
-项目工程创建后，再执行：
+在仓库根目录执行：
 
 ```powershell
-.\gradlew.bat test
-.\gradlew.bat lint
-.\gradlew.bat assembleDebug
+.\gradlew.bat --version
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
+
+确认 Gradle 显示 8.11.1、构建 JVM 使用 JDK 17。Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`，单元测试报告位于 `app/build/reports/tests/testDebugUnitTest/index.html`，Lint 报告位于 `app/build/reports/lint-results-debug.html`。以当前代码实际生成的报告为准，不把一次历史构建结果当作后续修改的验收结果。
+
+JPEG 2000 像素缓冲区尺寸检查另有独立的 Windows 原生回归测试，使用已安装的 NDK 编译器，不需要启动模拟器。修改该检查时还需运行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\jp2forandroid\src\test\cpp\run_pixel_buffer_size_test.ps1 `
+  -ProjectDirectory "$PWD\jp2forandroid" `
+  -OutputDirectory "$PWD\jp2forandroid\build\pixel-buffer-size-tests"
+```
+
+该测试覆盖正常尺寸、零/负尺寸、32 位内存分配和 JNI 数组长度边界；它不替代 Android 各 ABI 编译或实际 JPEG 2000 图像解码验收。
 
 ## 5. 连接小米 HyperOS 3 真机
 
@@ -232,20 +264,41 @@ Android 11 及以上设备可以使用无线调试：
 
 ## 6. Android 模拟器
 
-模拟器是可选组件。本机当前检测到 BIOS/固件虚拟化未启用，因此暂不安装 Emulator 和 AVD 系统镜像。
+本机已安装 Android Emulator 37.1.11，WHPX 硬件加速已验证可用，并已完成以下 AVD 的 Android 16 启动及 Debug APK 安装、冷启动验证：
 
-如需使用模拟器：
+| 项目 | 配置 |
+| --- | --- |
+| AVD 名称 | `PageNest_API_36` |
+| 设备模板 | Pixel 6 |
+| 系统镜像 | API 36 / Google APIs / x86_64 |
+
+在 Android Studio 的 Device Manager 中启动该 AVD，或在 PowerShell 中执行：
+
+```powershell
+& "$env:ANDROID_HOME\emulator\emulator.exe" -accel-check
+& "$env:ANDROID_HOME\emulator\emulator.exe" -list-avds
+& "$env:ANDROID_HOME\emulator\emulator.exe" -avd PageNest_API_36
+```
+
+在另一个终端检查设备并安装 APK；如果列出多个设备，使用 `adb -s <序列号>` 明确选择目标：
+
+```powershell
+adb devices -l
+adb -s '<模拟器序列号>' install -r .\app\build\outputs\apk\debug\app-debug.apk
+```
+
+在其他电脑上配置模拟器时：
 
 1. 在 BIOS 中开启 Intel VT-x 或 AMD-V。
 2. 确认 Windows 虚拟化组件可用。
 3. 通过 Android Studio 的 SDK Manager 安装 Android Emulator。
 4. 通过 Device Manager 创建 AVD。
 
-在发布前仍应至少使用一台真实的小米 HyperOS 3 设备完成兼容性测试。
+模拟器用于日常开发，不具备小米 HyperOS 3 系统环境。本机尚未完成目标 HyperOS 3 真机验收；发布前仍须连接符合预检要求的真实设备，完成第 9 节门禁。
 
 ## 7. TDD 开发流程
 
-页栖采用 RED → GREEN → REFACTOR：
+羿巢阅读采用 RED → GREEN → REFACTOR：
 
 1. 先编写能够描述行为的失败测试，并确认测试因缺少功能而失败。
 2. 编写让测试通过的最小实现。
@@ -258,7 +311,7 @@ Android 11 及以上设备可以使用无线调试：
 ## 8. 暂不需要的软件
 
 - 全局 Gradle：使用项目的 Gradle Wrapper。
-- 数据库服务器或后端服务：首版是完整离线阅读器。
+- 数据库服务器或自建后端服务：本地阅读数据保存在设备中；在线发现和 Azure 语音按需访问对应服务。
 - Docker：首版开发不需要。
 
 ## 9. 语音阅读真机发布门禁
@@ -270,7 +323,7 @@ HyperOS 3 / Android 16 的设备准备、USB/无线调试、Azure 安全配置�
 提交语音阅读阶段前，先执行桌面门禁：
 
 ```powershell
-$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
+$env:JAVA_HOME = "$env:LOCALAPPDATA\Programs\PageNestDev\jdk-17.0.20.1+1"
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
 adb devices -l
 ```

@@ -584,7 +584,7 @@ Java_com_wxn_mobi_inative_NativeLib_getChapter(JNIEnv *env, jobject thiz, jobjec
     point.parentId = parentChapterIdStr;
     long book_id = bookId;
     int chapter_size = chapterSize;
-    LOGD("%s:chapterId=%s,text=%s,playOrder=%d,src=%s,book_id=%ld,chapter_size=%d", __func__, chapterIdStr, chapterNameStr, point.playOrder, srcStr, bookId,
+    LOGD("%s:chapterId=%s,text=%s,playOrder=%d,src=%s,book_id=%lld,chapter_size=%d", __func__, chapterIdStr, chapterNameStr, point.playOrder, srcStr, static_cast<long long>(bookId),
          chapter_size);
 
     if (create_util(book_id, nativeStr, type) != 1) {
@@ -713,7 +713,7 @@ Java_com_wxn_mobi_inative_NativeLib_getCssInfo(JNIEnv *env,
             return nullptr;
         }
         if (book_id != mobiutil->bookid()) {
-            LOGE("%s:failed,is not the same bookid, param book_id[%ld],mobiutil.bookid[%ld]", __func__, book_id, mobiutil->bookid());
+            LOGE("%s:failed,is not the same bookid, param book_id[%lld],mobiutil.bookid[%ld]", __func__, static_cast<long long>(book_id), mobiutil->bookid());
             return nullptr;
         }
     } else if (type == 2) {
@@ -722,7 +722,7 @@ Java_com_wxn_mobi_inative_NativeLib_getCssInfo(JNIEnv *env,
             return nullptr;
         }
         if (book_id != epubutil->bookid()) {
-            LOGE("%s:failed,is not the same bookid, param book_id[%ld],epubutil.bookid[%ld]", __func__, book_id, mobiutil->bookid());
+            LOGE("%s:failed,is not the same bookid, param book_id[%lld],epubutil.bookid[%ld]", __func__, static_cast<long long>(book_id), epubutil->bookid());
             return nullptr;
         }
     }

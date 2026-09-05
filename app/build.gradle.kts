@@ -38,8 +38,8 @@ android {
         applicationId = "com.air5005.pagenest"
         minSdk = 29
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.19.260827"
+        versionCode = 21
+        versionName = "1.20.260905"
         multiDexEnabled = true
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

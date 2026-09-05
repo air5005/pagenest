@@ -45,6 +45,27 @@ class SystemTtsEngine internal constructor(
 
     @Volatile
     private var ownerThread: Thread? = null
+
+    // Owner coroutines can run immediately, so initialize their callbacks before launch.
+    private val progressListener = object : PlatformUtteranceProgressListener {
+        override fun onDone(utteranceId: String) {
+            commands.trySend(Command.Progress(utteranceId, SpeechEngineResult.Completed))
+        }
+
+        override fun onError(utteranceId: String) {
+            commands.trySend(
+                Command.Progress(
+                    utteranceId,
+                    SpeechEngineResult.Failed(SpeechError.SystemTtsPlaybackFailed),
+                ),
+            )
+        }
+
+        override fun onStop(utteranceId: String) {
+            commands.trySend(Command.Progress(utteranceId, SpeechEngineResult.Cancelled))
+        }
+    }
+
     private val initializationJob: Job = ownerScope.launch {
         if (!initializationStartState.compareAndSet(NOT_STARTED, STARTED)) return@launch
         val platform = try {
@@ -443,25 +464,6 @@ class SystemTtsEngine internal constructor(
             platform.shutdown()
         } catch (_: Throwable) {
             // The channel is already closed; no caller can depend on this platform.
-        }
-    }
-
-    private val progressListener = object : PlatformUtteranceProgressListener {
-        override fun onDone(utteranceId: String) {
-            commands.trySend(Command.Progress(utteranceId, SpeechEngineResult.Completed))
-        }
-
-        override fun onError(utteranceId: String) {
-            commands.trySend(
-                Command.Progress(
-                    utteranceId,
-                    SpeechEngineResult.Failed(SpeechError.SystemTtsPlaybackFailed),
-                ),
-            )
-        }
-
-        override fun onStop(utteranceId: String) {
-            commands.trySend(Command.Progress(utteranceId, SpeechEngineResult.Cancelled))
         }
     }
 

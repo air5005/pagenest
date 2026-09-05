@@ -238,7 +238,7 @@
     <string name="model_light">Hell</string>
     <string name="model_dark">Dunkel</string>
     <string name="adding_new_book_to_library">Neue Bücher zur Bibliothek hinzufügen</string>
-    <string name="adding_books_num">Bücher hinzufügen(%d\/%d)</string>
+    <string name="adding_books_num">Bücher hinzufügen(%1$d/%2$d)</string>
     <string name="added_books">%1$d Bücher hinzugefügt</string>
     <string name="remove_nums_books">%1$d Bücher entfernen</string>
     <string name="error_updateing_library">Fehler beim Aktualisieren der Bibliothek:%1$s</string>
