@@ -44,6 +44,18 @@ Debug APK 包名 `com.air5005.pagenest`，版本 `1.20.260905`（versionCode 21�
 46A1113773A3E43213F77ECDC51E3FFEE3F8E3298E178803F923F6B54043E5DA
 ```
 
+## GitHub 发布归档
+
+- 发布提交：`e5ba88ee22a48ca4d1f962812f6708c7d5360c7d`。
+- 标签：`yinest-v1.20.260905`，指向上述发布提交。
+- GitHub Actions：[Archive Android APK Release #19](https://github.com/air5005/pagenest/actions/runs/33951681580)，结论 `success`。
+- GitHub Release：[YiNest 1.20.260905](https://github.com/air5005/pagenest/releases/tag/yinest-v1.20.260905)，非草稿、非预发布。
+- 云端 APK：`YiNest-1.20.260905-debug.apk`，126,289,830 字节。
+- 云端 APK SHA-256：`c1c3a801cfe13cc190e2f88e8b7da57f3a5581b8fadc67b07e6d2e7266d8635b`；下载后的实际摘要与同一 Release 的 `SHA256SUMS.txt` 一致。
+- 下载云端 APK 后重新读取包信息，确认 package `com.air5005.pagenest`、versionCode 21、versionName `1.20.260905`、minSdk 29、targetSdk 36。
+
+本机与 GitHub Actions 的调试签名及构建环境不同，因此本地 APK 和云端 APK 的字节数、摘要不同；对外归档以同一 GitHub Release 内 APK 与 `SHA256SUMS.txt` 的匹配结果为准。
+
 ## 未覆盖与后续项
 
 - 本轮只编译设备测试包，没有执行真机测试，也没有重新安装本次 APK 做设备端验收。此前模拟器启动验证不能替代本轮设备回归或 HyperOS 3 验收。
