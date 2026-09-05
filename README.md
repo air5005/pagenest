@@ -51,7 +51,7 @@ Debug APK 输出到 `app/build/outputs/apk/debug/app-debug.apk`。项目自带 G
 
 ## 当前状态
 
-项目已经具备可构建的 Android 应用、单元测试、Lint 检查和设备测试入口，当前配置版本为 `1.20.260905`。Windows 开发工具链与 API 36 模拟器已完成安装及启动验证；后续代码修改仍须重新执行对应检查。
+项目已经具备可构建的 Android 应用、单元测试、Lint 检查和设备测试入口，当前配置版本为 `1.21.260905`。Windows 开发工具链与 API 36 模拟器已完成安装及启动验证；后续代码修改仍须重新执行对应检查。
 
 小米 HyperOS 3 / Android 16 真机兼容性、语音后台连续播放及 60 分钟人工验收尚未完成，详见 [语音阅读真机发布门禁](docs/testing/voice-reading-hyperos3.md)。模拟器启动成功不等同于通过该门禁。
 

@@ -49,6 +49,7 @@ import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -255,6 +256,145 @@ class HomeViewModelImportFlowTest {
 
         coVerify(exactly = 0) { DocumentUtil.getFilesFromDirectory(any(), any()) }
         coVerify(exactly = 0) { service.execute(any()) }
+    }
+
+    @Test
+    fun selectingAnExistingScanDirectoryRefreshesItsBooks() = runBlocking {
+        viewModel.viewModelScope.cancel()
+        val uri = Uri.parse("content://scan")
+        val imported = document("content://scan/Imported.epub", "Imported.epub")
+        mockkObject(DocumentUtil)
+        coEvery { DocumentUtil.getFilesFromDirectory(any(), uri) } returns listOf(imported)
+        every { requestFactory.create(imported.uri) } returns request("Imported.epub")
+        coEvery { service.execute(any()) } returns ImportResult.Imported(1)
+        every { preferencesUtil.appPrefsFlow } returns flowOf(preferences(setOf(uri.toString())))
+
+        viewModel = createViewModel()
+        mainDispatcher.scheduler.runCurrent()
+
+        viewModel.addScanDirectory(uri)
+        mainDispatcher.scheduler.runCurrent()
+
+        awaitState { viewModel.importProgressState.value == ImportProgressState.Complete }
+        coVerify(exactly = 1) { service.execute(match { it.displayName == "Imported.epub" }) }
+    }
+
+    @Test
+    fun selectingANewScanDirectoryStartsScanningBeforePreferencesFinishSaving() = runBlocking {
+        viewModel.viewModelScope.cancel()
+        val uri = Uri.parse("content://scan")
+        val imported = document("content://scan/Imported.epub", "Imported.epub")
+        mockkObject(DocumentUtil)
+        coEvery { DocumentUtil.getFilesFromDirectory(any(), uri) } returns listOf(imported)
+        every { requestFactory.create(imported.uri) } returns request("Imported.epub")
+        coEvery { service.execute(any()) } returns ImportResult.Imported(1)
+        every { preferencesUtil.appPrefsFlow } returns flowOf(preferences(emptySet()))
+        coEvery { preferencesUtil.updateAppPreferences(any()) } coAnswers { awaitCancellation() }
+
+        viewModel = createViewModel()
+        mainDispatcher.scheduler.runCurrent()
+
+        viewModel.addScanDirectory(uri)
+        mainDispatcher.scheduler.runCurrent()
+
+        awaitState { viewModel.importProgressState.value == ImportProgressState.Complete }
+        coVerify(exactly = 1) { service.execute(match { it.displayName == "Imported.epub" }) }
+    }
+
+    @Test
+    fun directoryRefreshRequestsAreSerializedWhileAScanIsRunning() = runBlocking {
+        viewModel.viewModelScope.cancel()
+        val uri = Uri.parse("content://scan")
+        val imported = document("content://scan/Imported.epub", "Imported.epub")
+        val releaseFirstScan = CompletableDeferred<Unit>()
+        val serviceCalls = AtomicInteger(0)
+        mockkObject(DocumentUtil)
+        coEvery { DocumentUtil.getFilesFromDirectory(any(), uri) } returns listOf(imported)
+        every { requestFactory.create(imported.uri) } returns request("Imported.epub")
+        coEvery { service.execute(any()) } coAnswers {
+            if (serviceCalls.incrementAndGet() == 1) releaseFirstScan.await()
+            ImportResult.Imported(1)
+        }
+        every { preferencesUtil.appPrefsFlow } returns flowOf(preferences(setOf(uri.toString())))
+
+        viewModel = createViewModel()
+        mainDispatcher.scheduler.runCurrent()
+
+        viewModel.addScanDirectory(uri)
+        mainDispatcher.scheduler.runCurrent()
+        awaitState { serviceCalls.get() == 1 }
+
+        viewModel.addScanDirectory(uri)
+        mainDispatcher.scheduler.runCurrent()
+        delay(100)
+
+        assertEquals("A second directory scan must not run concurrently", 1, serviceCalls.get())
+        releaseFirstScan.complete(Unit)
+        awaitState {
+            serviceCalls.get() == 2 &&
+                viewModel.importProgressState.value == ImportProgressState.Complete
+        }
+    }
+
+    @Test
+    fun cancelledDirectoryScanDoesNotStrandTheLatestPendingRefresh() = runBlocking {
+        viewModel.viewModelScope.cancel()
+        val uri = Uri.parse("content://scan")
+        val imported = document("content://scan/Imported.epub", "Imported.epub")
+        val cancelFirstScan = CompletableDeferred<Unit>()
+        val serviceCalls = AtomicInteger(0)
+        mockkObject(DocumentUtil)
+        coEvery { DocumentUtil.getFilesFromDirectory(any(), uri) } returns listOf(imported)
+        every { requestFactory.create(imported.uri) } returns request("Imported.epub")
+        coEvery { service.execute(any()) } coAnswers {
+            if (serviceCalls.incrementAndGet() == 1) {
+                cancelFirstScan.await()
+                throw CancellationException("cancel only the current scan")
+            }
+            ImportResult.Imported(1)
+        }
+        every { preferencesUtil.appPrefsFlow } returns flowOf(preferences(setOf(uri.toString())))
+
+        viewModel = createViewModel()
+        mainDispatcher.scheduler.runCurrent()
+
+        viewModel.addScanDirectory(uri)
+        mainDispatcher.scheduler.runCurrent()
+        awaitState { serviceCalls.get() == 1 }
+        viewModel.addScanDirectory(uri)
+        mainDispatcher.scheduler.runCurrent()
+        cancelFirstScan.complete(Unit)
+
+        awaitState {
+            serviceCalls.get() == 2 &&
+                viewModel.importProgressState.value == ImportProgressState.Complete
+        }
+    }
+
+    @Test
+    fun refreshDuringSlowPreferenceSaveDoesNotLoseAnOptimisticDirectory() = runBlocking {
+        viewModel.viewModelScope.cancel()
+        val persistedPreferences = MutableStateFlow(preferences(emptySet()))
+        mockkObject(DocumentUtil)
+        coEvery { DocumentUtil.getFilesFromDirectory(any(), any()) } returns emptyList()
+        every { preferencesUtil.appPrefsFlow } returns persistedPreferences
+        coEvery { preferencesUtil.updateAppPreferences(any()) } coAnswers { awaitCancellation() }
+
+        viewModel = createViewModel()
+        mainDispatcher.scheduler.runCurrent()
+
+        viewModel.addScanDirectory(Uri.parse("content://scan/a"))
+        mainDispatcher.scheduler.runCurrent()
+        viewModel.refreshBooks()
+        mainDispatcher.scheduler.advanceTimeBy(501)
+        mainDispatcher.scheduler.runCurrent()
+        viewModel.addScanDirectory(Uri.parse("content://scan/b"))
+        mainDispatcher.scheduler.runCurrent()
+
+        assertEquals(
+            setOf("content://scan/a", "content://scan/b"),
+            viewModel.appPreferences.value?.scanDirectories,
+        )
     }
 
     @Test

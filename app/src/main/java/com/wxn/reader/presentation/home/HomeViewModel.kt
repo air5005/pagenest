@@ -47,6 +47,7 @@ import com.wxn.base.util.Logger
 import com.wxn.reader.util.PurchaseHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -145,6 +146,10 @@ class HomeViewModel
     private @Volatile var hasOpenedLastBook: Boolean = false
 
     private var refreshJob: Job? = null
+
+    private val directoryScanLock = Any()
+    private var directoryScanJob: Job? = null
+    private var pendingDirectoryScanPreferences: AppPreferences? = null
 
     private val _importProgressState = MutableStateFlow<ImportProgressState>(ImportProgressState.Idle)
     val importProgressState: StateFlow<ImportProgressState> = _importProgressState.asStateFlow()
@@ -334,17 +339,25 @@ class HomeViewModel
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             delay(500)
-            showSnackbar(stringResource(R.string.refreshing_library))
-                _appPreferences.value = appPreferencesUtil.appPrefsFlow.first()
-            val appPref = _appPreferences.value ?: return@launch
-            val scanDirectory = appPref.scanDirectories
-            if (scanDirectory.isNotEmpty()) {
-                Logger.running("BOOK_IMPORT", "Manual directory scan requested directories=${scanDirectory.size}")
-                observeBooks(appPref)
-            } else {
-                Logger.warning("BOOK_IMPORT", "Manual directory scan skipped reason=NO_DIRECTORY")
-                showSnackbar(stringResource(R.string.no_scan_directory))
+            val appPref = _appPreferences.value ?: appPreferencesUtil.appPrefsFlow.first().also {
+                _appPreferences.value = it
             }
+            startDirectoryScan(appPref)
+        }
+    }
+
+    private fun startDirectoryScan(appPref: AppPreferences) {
+        val scanDirectories = appPref.scanDirectories
+        if (scanDirectories.isNotEmpty()) {
+            showSnackbar(stringResource(R.string.refreshing_library))
+            Logger.running(
+                "BOOK_IMPORT",
+                "Manual directory scan requested directories=${scanDirectories.size}",
+            )
+            observeBooks(appPref)
+        } else {
+            Logger.warning("BOOK_IMPORT", "Manual directory scan skipped reason=NO_DIRECTORY")
+            showSnackbar(stringResource(R.string.no_scan_directory))
         }
     }
 
@@ -376,17 +389,55 @@ class HomeViewModel
     private fun hideSnackbar() = dismissSnackbar()
 
     private fun observeBooks(preferences: AppPreferences) {
-        viewModelScope.launch(Dispatchers.IO + CoroutineExceptionHandler { _, throwable ->
-            Logger.e(throwable)
-            _importProgressState.value =
-                ImportProgressState.Error(throwable.message ?: "Unknown error occurred")
-            _isAddingBooks.value = false
-            showSnackbar(
-                message = "Error during import: ${throwable.message}",
-            )
-        }) {
-            val start = System.currentTimeMillis()
+        synchronized(directoryScanLock) {
+            pendingDirectoryScanPreferences = preferences
+            ensureDirectoryScanWorkerLocked()
+        }
+    }
+
+    private fun ensureDirectoryScanWorkerLocked() {
+        if (directoryScanJob?.isActive == true || pendingDirectoryScanPreferences == null) return
+
+        val scanJob = viewModelScope.launch(
+            context = Dispatchers.IO + CoroutineExceptionHandler { _, throwable ->
+                Logger.e(throwable)
+                _importProgressState.value =
+                    ImportProgressState.Error(throwable.message ?: "Unknown error occurred")
+                _isAddingBooks.value = false
+                showSnackbar(
+                    message = "Error during import: ${throwable.message}",
+                )
+            },
+            start = CoroutineStart.LAZY,
+        ) {
             try {
+                while (true) {
+                    val nextPreferences = synchronized(directoryScanLock) {
+                        pendingDirectoryScanPreferences?.also {
+                            pendingDirectoryScanPreferences = null
+                        }
+                    } ?: return@launch
+
+                    scanBooks(nextPreferences)
+                }
+            } finally {
+                synchronized(directoryScanLock) {
+                    directoryScanJob = null
+                    val viewModelIsActive =
+                        viewModelScope.coroutineContext[Job]?.isActive == true
+                    if (viewModelIsActive && pendingDirectoryScanPreferences != null) {
+                        ensureDirectoryScanWorkerLocked()
+                    }
+                }
+            }
+        }
+        directoryScanJob = scanJob
+        scanJob.start()
+    }
+
+    private suspend fun scanBooks(preferences: AppPreferences) {
+        val start = System.currentTimeMillis()
+        try {
                 val step1 = System.currentTimeMillis()
                 Logger.d("HomeViewModel::observeBooks::step1=${step1 - start}")
 
@@ -445,17 +496,16 @@ class HomeViewModel
                     _isAddingBooks.value = false
                 }
 
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (e: Exception) {
-                _importProgressState.value = ImportProgressState.Error(e.message ?: "Unknown error occurred")
-                Logger.error("BOOK_IMPORT", "Directory scan failed", e)
-                showSnackbar(
-                    message = stringResource(R.string.error_updateing_library, e.message ?: "Unknown error occurred")
-                )
-            } finally {
-                _isAddingBooks.value = false
-            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (e: Exception) {
+            _importProgressState.value = ImportProgressState.Error(e.message ?: "Unknown error occurred")
+            Logger.error("BOOK_IMPORT", "Directory scan failed", e)
+            showSnackbar(
+                message = stringResource(R.string.error_updateing_library, e.message ?: "Unknown error occurred")
+            )
+        } finally {
+            _isAddingBooks.value = false
         }
     }
 
@@ -787,17 +837,23 @@ class HomeViewModel
 
     fun addScanDirectory(uri: Uri) {
         viewModelScope.launch {
-            val appPref = _appPreferences.value
-            val currentDirectories = appPref?.scanDirectories ?: return@launch
+            val appPref = _appPreferences.value ?: return@launch
+            val currentDirectories = appPref.scanDirectories
             val directory = uri.toString()
             permissionRepository.grantPersistableUriPermission(uri)
-            if (!currentDirectories.contains(directory)) {
-                val updatedDirectories = currentDirectories + directory
+            val isNewDirectory = directory !in currentDirectories
+            val updatedPreferences = if (isNewDirectory) {
                 Logger.d("SettingsViewModel:addScanDirectory:the Settings viewModel")
-                val newPrefs = appPref.copy(scanDirectories = updatedDirectories)
-                appPreferencesUtil.updateAppPreferences(newPrefs)
-                _appPreferences.value = newPrefs
-                refreshBooks()
+                appPref.copy(scanDirectories = currentDirectories + directory)
+            } else {
+                appPref
+            }
+
+            _appPreferences.value = updatedPreferences
+            startDirectoryScan(updatedPreferences)
+
+            if (isNewDirectory) {
+                appPreferencesUtil.updateAppPreferences(updatedPreferences)
             }
         }
     }

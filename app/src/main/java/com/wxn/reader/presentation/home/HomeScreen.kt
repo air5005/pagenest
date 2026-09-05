@@ -133,6 +133,11 @@ fun HomeScreen(
             }
         }
 
+    val getBooksLauncher =
+        rememberLauncherForActivityResult(bookImportPickerContract()) { uris ->
+            viewModel.importBooks(uris)
+        }
+
 //    LaunchedEffect(Unit) {
 //        delay(5000)
 //        if (!appPreferences.isPremium && Random.nextFloat() <= 0.10f) {
@@ -318,7 +323,7 @@ fun HomeScreen(
                             showAllBooks = true
                             selectedTab = 0
                         },
-                        onImportClick = { showSelectDirectoryDialog = true },
+                        onImportClick = { getBooksLauncher.launch(BOOK_IMPORT_MIME_TYPES) },
                         onRecentBookClick = viewModel::openDashboardBook,
                     )
                 } else if (currentDestination == HomeTopLevelDestination.DISCOVERY) {
